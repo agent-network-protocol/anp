@@ -458,6 +458,6 @@ class ShortTermKeyGenerater:
             return False
 
         self.state = "finished"
-        logging.info(f"generate_short_term_key_passive, success, secret_key_id: {self.secret_key_id}")
+        logging.info("generate_short_term_key_passive, success")
         return True
         
