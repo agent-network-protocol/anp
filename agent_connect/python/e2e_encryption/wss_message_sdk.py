@@ -181,7 +181,7 @@ class WssMessageSDK:
         key_info = self.short_term_keys.get(secret_key_id, None)
 
         if key_info is None:
-            logging.error(f"Cannot find secret key info: {secret_key_id}")
+            logging.error("Cannot find secret key info. Key ID not found or invalid.")
             # TODO: Send error message later
             return
 
