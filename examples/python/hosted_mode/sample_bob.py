@@ -27,7 +27,7 @@ sdk_short_term_key_callback_list = []
 
 def sdk_short_term_key_callback(local_did, remote_did, secret_key_json):
     # Here you can record in the database, can be used before expiration
-    print(f"SDK short_term_key_callback: {local_did}, {remote_did}, {secret_key_json}")
+    logging.info(f"SDK short_term_key_callback: {local_did}, {remote_did}, [REDACTED]")
     sdk_short_term_key_callback_list.append((local_did, remote_did, secret_key_json))
 
 def get_router_and_user_info(file_name="bob.json"):
