@@ -1,0 +1,90 @@
+{
+  "protocolType": "ANP",
+  "protocolVersion": "1.0.0",
+  "type": "AgentDescription",
+  "url": "https://grand-hotel.com/agents/hotel-assistant",
+  "name": "Grand Hotel Assistant",
+  "did": "did:wba:grand-hotel.com:service:hotel-assistant",
+  "owner": {
+    "type": "Organization",
+    "name": "Grand Hotel Management Group",
+    "url": "https://grand-hotel.com"
+  },
+  "description": "Grand Hotel Assistant is an intelligent hospitality agent providing comprehensive hotel services including room booking, concierge services, guest assistance, and real-time communication capabilities.",
+  "created": "2024-12-31T12:00:00Z",
+  "securityDefinitions": {
+    "didwba_sc": {
+      "scheme": "didwba",
+      "in": "header",
+      "name": "Authorization"
+    }
+  },
+  "security": "didwba_sc",
+  "Infomations": [
+    {
+      "type": "Product",
+      "description": "Luxury hotel rooms with premium amenities and personalized services.",
+      "url": "https://grand-hotel.com/products/luxury-rooms.json"
+    },
+    {
+      "type": "Product", 
+      "description": "Comprehensive concierge and guest services including dining, spa, and local attractions.",
+      "url": "https://grand-hotel.com/products/concierge-services.json"
+    },
+    {
+      "type": "Information",
+      "description": "Complete hotel information including facilities, amenities, location, and policies.",
+      "url": "https://grand-hotel.com/info/hotel-basic-info.json"
+    },
+    {
+      "type": "VideoObject",
+      "description": "Hotel virtual tour showcasing rooms, facilities, dining areas, and recreational amenities.",
+      "url": "https://grand-hotel.com/media/hotel-tour-video.mp4"
+    }
+  ],
+  "interfaces": [
+    {
+      "type": "NaturalLanguageInterface",
+      "protocol": "YAML",
+      "version": "1.2.2",
+      "url": "https://grand-hotel.com/api/nl-interface.yaml",
+      "description": "Natural language interface for conversational hotel services and guest assistance."
+    },
+    {
+      "type": "StructuredInterface",
+      "protocol": "YAML",
+      "humanAuthorization": true,
+      "version": "1.1",
+      "url": "https://grand-hotel.com/api/booking-interface.yaml",
+      "description": "Structured interface for hotel room booking and reservation management."
+    },
+    {
+      "type": "StructuredInterface",
+      "protocol": "openrpc",
+      "url": "https://grand-hotel.com/api/services-interface.json",
+      "description": "openrpc interface for accessing hotel services and amenities."
+    },
+    {
+      "type": "StructuredInterface",
+      "protocol": "MCP",
+      "version": "1.0",
+      "url": "https://grand-hotel.com/api/mcp-interface.json",
+      "description": "MCP-compatible interface for seamless integration with MCP-based systems."
+    },
+    {
+      "type": "StructuredInterface",
+      "protocol": "WebRTC",
+      "version": "1.0",
+      "url": "https://grand-hotel.com/api/webrtc-interface.yaml",
+      "description": "WebRTC interface for real-time video communication and streaming services."
+    }
+  ],
+  "proof": {
+    "type": "EcdsaSecp256r1Signature2019",
+    "created": "2024-12-31T15:00:00Z",
+    "proofPurpose": "assertionMethod",
+    "verificationMethod": "did:wba:grand-hotel.com:service:hotel-assistant#keys-1",
+    "challenge": "1235abcd6789",
+    "proofValue": "z58DAdFfa9SkqZMVPxAQpic7ndSayn1PzZs6ZjWp1CktyGesjuTSwRdoWhAfGFCF5bppETSTojQCrfFPP2oumHKtz"
+  }
+}

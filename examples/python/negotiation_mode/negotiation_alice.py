@@ -6,21 +6,25 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 import asyncio
-import os
 import logging
+import os
 import sys
 from typing import Any, Dict
-import importlib.util
 
 g_current_dir: str = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(g_current_dir)
 # sys.path.append(g_current_dir + "/../../")
 
-from agent_connect.python.simple_node import SimpleNegotiationNode, RequesterSession
-from agent_connect.python.app_protocols import RequesterBase
-from agent_connect.python.utils.log_base import set_log_color_level
+from utils import (
+    generate_code_for_protocol_requester_interface,
+    generate_did_info,
+    get_llm_instance,
+    load_bob_did,
+)
 
-from utils import generate_code_for_protocol_requester_interface, generate_did_info, get_llm_instance, load_bob_did
+from agent_connect.app_protocols import RequesterBase
+from agent_connect.simple_node import RequesterSession, SimpleNegotiationNode
+from agent_connect.utils.log_base import set_log_color_level
 
 # Define protocol requirements
 requirement = """
@@ -52,7 +56,7 @@ async def main() -> None:
     llm=get_llm_instance()
     # create the node for Alice
     alice_node: SimpleNegotiationNode = SimpleNegotiationNode(
-        host_domain="localhost", 
+        host_domain="localhost",
         llm=llm,
         host_port="8000",
         host_ws_path="/ws",
@@ -70,11 +74,11 @@ async def main() -> None:
     alice_node.run()
 
     # connect to Bob, and negotiate the protocol
-    requester_session: RequesterSession = await alice_node.connect_to_did_with_negotiation(bob_did, 
-                                                                          requirement, 
-                                                                          input_description, 
+    requester_session: RequesterSession = await alice_node.connect_to_did_with_negotiation(bob_did,
+                                                                          requirement,
+                                                                          input_description,
                                                                           output_description)
-    
+
     # get the requester instance and the interface description
     requester_instance: RequesterBase = requester_session.requester_instance
     interface_description: Dict[str, Any] = requester_session.send_request_description
@@ -86,8 +90,8 @@ async def main() -> None:
 
     # generate the code for the protocol interface
     python_code_path = os.path.join(g_current_dir, "workflow_code/requester_flow.py")
-    call_requester_interface = await generate_code_for_protocol_requester_interface(llm, 
-                                                     interface_description, 
+    call_requester_interface = await generate_code_for_protocol_requester_interface(llm,
+                                                     interface_description,
                                                      python_code_path)
 
 
@@ -223,8 +227,8 @@ if __name__ == "__main__":
 
     # interface_description = json.loads(str_json)
 
-    # asyncio.run(generate_code_for_protocol_interface(get_llm_instance(), 
-    #                                       interface_description, 
+    # asyncio.run(generate_code_for_protocol_interface(get_llm_instance(),
+    #                                       interface_description,
     #                                       os.path.join(g_current_dir, "workflow_code/requester.py")))
 
 

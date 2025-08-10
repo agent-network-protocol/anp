@@ -1,34 +1,30 @@
 import os
-import sys
 import re
+import sys
 
 # Add the project root directory to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-import unittest
-import asyncio
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
-import json
 import base64
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.serialization import (
-    Encoding, PublicFormat, PrivateFormat, NoEncryption
-)
-import aiohttp
-from agent_connect.python.authentication.did_wba import (
-    create_did_wba_document,
-    resolve_did_wba_document,
-    resolve_did_wba_document_sync,
-    generate_auth_header,
-    verify_auth_header_signature,
-    generate_auth_json,
-    verify_auth_json_signature
-)
 import hashlib
-
+import json
 import logging
+import unittest
+from unittest.mock import MagicMock, patch
+
+import aiohttp
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from agent_connect.authentication.did_wba import (
+    create_did_wba_document,
+    generate_auth_header,
+    generate_auth_json,
+    resolve_did_wba_document,
+    verify_auth_header_signature,
+    verify_auth_json_signature,
+)
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -38,7 +34,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         self.test_hostname = "example.com"
         self.test_port = 8800
         self.test_path_segments = ["user", "alice"]
-        
+
     def test_create_did_wba_document(self):
         """Test DID document creation with various parameters"""
         # Test with all parameters
@@ -47,51 +43,51 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             self.test_port,
             self.test_path_segments
         )
-        
+
         # Verify basic structure
         self.assertIn("@context", did_doc)
         self.assertIsInstance(did_doc["@context"], list)
         self.assertIn("https://www.w3.org/ns/did/v1", did_doc["@context"])
-        
+
         # Verify DID format with encoded port
         expected_did = f"did:wba:{self.test_hostname}%3A{self.test_port}:user:alice"
         self.assertEqual(did_doc["id"], expected_did)
-        
+
         # Verify verification method
         self.assertIn("verificationMethod", did_doc)
         self.assertIsInstance(did_doc["verificationMethod"], list)
         self.assertTrue(len(did_doc["verificationMethod"]) > 0)
-        
+
         vm = did_doc["verificationMethod"][0]
         self.assertIn("id", vm)
         self.assertIn("type", vm)
         self.assertIn("controller", vm)
         self.assertIn("publicKeyJwk", vm)
-        
+
         # Verify authentication
         self.assertIn("authentication", did_doc)
         self.assertIsInstance(did_doc["authentication"], list)
-        
+
         # Test without optional parameters
         did_doc_simple, private_keys_simple = create_did_wba_document(self.test_hostname)
         self.assertEqual(did_doc_simple["id"], f"did:wba:{self.test_hostname}")
-        
+
         # Test with IP address (should raise ValueError)
         with self.assertRaises(ValueError):
             create_did_wba_document("127.0.0.1")
 
         print("test_create_did_wba_document passed")
-            
+
     def test_auth_header_generation_and_verification(self):
         """Test authentication header generation and verification with real keys"""
         # Generate a real secp256k1 key pair
         private_key = ec.generate_private_key(ec.SECP256K1())
         public_key = private_key.public_key()
-        
+
         # Create public key JWK using helper function
         def _encode_base64url(data: bytes) -> str:
             return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
-            
+
         def _public_key_to_jwk(public_key):
             numbers = public_key.public_numbers()
             x = _encode_base64url(numbers.x.to_bytes((numbers.x.bit_length() + 7) // 8, 'big'))
@@ -103,12 +99,12 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             kid = _encode_base64url(hashlib.sha256(compressed).digest())
             return {
                 "kty": "EC",
-                "crv": "secp256k1", 
+                "crv": "secp256k1",
                 "x": x,
                 "y": y,
                 "kid": kid
             }
-            
+
         # Create a DID document with the real key
         did_doc = {
             "@context": [
@@ -125,23 +121,23 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             }],
             "authentication": ["did:wba:example.com:user:alice#key-1"]
         }
-        
+
         service_domain = "api.example.com"
-        
+
         # Create a real signing callback using the private key
         def real_sign_callback(content: bytes, vm_fragment: str) -> str:
             return private_key.sign(
                 content,
                 ec.ECDSA(hashes.SHA256())
             )
-        
+
         # Generate auth header
         auth_header = generate_auth_header(
             did_doc,
             service_domain,
             real_sign_callback
         )
-        
+
         # Verify the generated header
         success, message = verify_auth_header_signature(
             auth_header,
@@ -151,7 +147,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         print(f"verify_auth_header_signature returns: success: {success}, message: {message}")
 
         self.assertTrue(success, f"Verification failed: {message}")
-        
+
         # Test with invalid service domain
         success, message = verify_auth_header_signature(
             auth_header,
@@ -159,7 +155,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             "wrong.domain.com"
         )
         self.assertFalse(success)
-        
+
         # Test with tampered signature
         tampered_header = re.sub(
             r'signature="[^"]+"',
@@ -181,23 +177,23 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             self.test_port,
             self.test_path_segments
         )
-        
+
         service_domain = "api.example.com"
-        
+
         # Create signing callback function
         def signing_callback(content: bytes, vm_fragment: str) -> bytes:
             # Get corresponding private key PEM from private_keys
             if vm_fragment not in private_keys:
                 raise ValueError(f"No private key found for {vm_fragment}")
-            
+
             private_key_pem, _ = private_keys[vm_fragment]
-            
+
             # Load private key from PEM
             private_key = serialization.load_pem_private_key(
                 private_key_pem,
                 password=None
             )
-                
+
             # Sign using private key
             if isinstance(private_key, ec.EllipticCurvePrivateKey):
                 return private_key.sign(
@@ -208,14 +204,14 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
                 return private_key.sign(content)
             else:
                 raise ValueError(f"Unsupported key type: {type(private_key)}")
-        
+
         # Generate auth header
         auth_header = generate_auth_header(
             did_doc,
             service_domain,
             signing_callback
         )
-        
+
         # Verify the generated header
         success, message = verify_auth_header_signature(
             auth_header,
@@ -224,7 +220,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         )
         print(f"Generated DID verification result: success={success}, message={message}")
         self.assertTrue(success, f"Verification failed: {message}")
-        
+
         # Test with invalid service domain
         wrong_success, wrong_message = verify_auth_header_signature(
             auth_header,
@@ -232,7 +228,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             "wrong.domain.com"
         )
         self.assertFalse(wrong_success, "Verification should fail with wrong domain")
-        
+
         # Test with tampered signature
         tampered_header = re.sub(
             r'signature="[^"]+"',
@@ -270,7 +266,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             }],
             "authentication": ["did:wba:example.com:user:alice#key-1"]
         }
-        
+
         # Configure mock for successful response
         mock_response = MagicMock()
         mock_response.status = 200
@@ -278,18 +274,18 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             return mock_did_doc
         mock_response.json = async_json
         mock_get.return_value.__aenter__.return_value = mock_response
-        
+
         # Test successful resolution
         did = "did:wba:example.com:user:alice"
         resolved_doc = await resolve_did_wba_document(did)
         self.assertEqual(resolved_doc, mock_did_doc)
-        
+
         # Test HTTP error case
         mock_response.status = 404
         mock_response.raise_for_status.side_effect = aiohttp.ClientError()
         resolved_doc = await resolve_did_wba_document(did)
         self.assertIsNone(resolved_doc)
-        
+
         # Test ID mismatch case
         mock_response.status = 200
         mock_response.raise_for_status.side_effect = None
@@ -300,12 +296,12 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         mock_response.json = wrong_json
         resolved_doc = await resolve_did_wba_document(did)
         self.assertIsNone(resolved_doc)
-        
+
         # Test connection error case
         mock_get.side_effect = aiohttp.ClientError()
         resolved_doc = await resolve_did_wba_document(did)
         self.assertIsNone(resolved_doc)
-        
+
         # Test general exception case
         mock_get.side_effect = Exception("Unexpected error")
         resolved_doc = await resolve_did_wba_document(did)
@@ -316,11 +312,11 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         # Generate a real secp256k1 key pair
         private_key = ec.generate_private_key(ec.SECP256K1())
         public_key = private_key.public_key()
-        
+
         # Create public key JWK using helper function
         def _encode_base64url(data: bytes) -> str:
             return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
-            
+
         def _public_key_to_jwk(public_key):
             numbers = public_key.public_numbers()
             x = _encode_base64url(numbers.x.to_bytes((numbers.x.bit_length() + 7) // 8, 'big'))
@@ -332,12 +328,12 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             kid = _encode_base64url(hashlib.sha256(compressed).digest())
             return {
                 "kty": "EC",
-                "crv": "secp256k1", 
+                "crv": "secp256k1",
                 "x": x,
                 "y": y,
                 "kid": kid
             }
-            
+
         # Create a DID document with the real key
         did_doc = {
             "@context": [
@@ -354,23 +350,23 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             }],
             "authentication": ["did:wba:example.com:user:alice#key-1"]
         }
-        
+
         service_domain = "api.example.com"
-        
+
         # Create a real signing callback using the private key
         def real_sign_callback(content: bytes, vm_fragment: str) -> str:
             return private_key.sign(
                 content,
                 ec.ECDSA(hashes.SHA256())
             )
-        
+
         # Generate authentication JSON
         auth_json = generate_auth_json(
             did_doc,
             service_domain,
             real_sign_callback
         )
-        
+
         # Verify the generated JSON
         success, message = verify_auth_json_signature(
             auth_json,
@@ -379,7 +375,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
         )
         print(f"verify_auth_json_signature returns: success: {success}, message: {message}")
         self.assertTrue(success, f"Verification failed: {message}")
-        
+
         # Test with invalid service domain
         wrong_success, wrong_message = verify_auth_json_signature(
             auth_json,
@@ -387,19 +383,19 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             "wrong.domain.com"
         )
         self.assertFalse(wrong_success, "Verification should fail with wrong domain")
-        
+
         # Test with tampered signature
         auth_data = json.loads(auth_json)
         auth_data['signature'] = "InvalidSignature"
         tampered_json = json.dumps(auth_data)
-        
+
         tampered_success, tampered_message = verify_auth_json_signature(
             tampered_json,
             did_doc,
             service_domain
         )
         self.assertFalse(tampered_success, "Verification should fail with tampered signature")
-        
+
         # Test with missing required fields
         incomplete_data = {
             "did": "did:wba:example.com:user:alice",
@@ -414,7 +410,7 @@ class TestDIDWBA(unittest.IsolatedAsyncioTestCase):
             service_domain
         )
         self.assertFalse(incomplete_success, "Verification should fail with missing required fields")
-        
+
         # Test with invalid JSON string
         invalid_json = "{ invalid json string"
         invalid_success, invalid_message = verify_auth_json_signature(

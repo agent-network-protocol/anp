@@ -1,10 +1,10 @@
 import json
 import logging
 import traceback
-from typing import Any, Dict, Optional, Awaitable, Callable
+from typing import Any, Optional
 from uuid import UUID
 
-from agent_connect.python.app_protocols.protocol_base.provider_base import ProviderBase
+from agent_connect.app_protocols.protocol_base.provider_base import ProviderBase
 
 
 class EducationProtocolProvider(ProviderBase):
@@ -12,7 +12,7 @@ class EducationProtocolProvider(ProviderBase):
 
     async def handle_message(self, message: bytes) -> None:
         """Handle received message, then call protocol callback function.
-        
+
         Args:
             message: Received binary message data.
         """
@@ -50,7 +50,7 @@ class EducationProtocolProvider(ProviderBase):
 
     def _parse_message(self, message: bytes) -> tuple[dict[str, Any], Optional[str]]:
         """Parse the incoming message to expected format.
-        
+
         Args:
             message: Received binary message data.
 
@@ -80,7 +80,7 @@ class EducationProtocolProvider(ProviderBase):
 
     def _construct_response_message(self, result: dict[str, Any], message_id: Optional[str]) -> bytes:
         """Construct the response message.
-        
+
         Args:
             result: Result from the protocol callback, containing 'code', 'data', and optionally 'error_message'.
             message_id: Original message ID for pairing request and response.
@@ -96,7 +96,7 @@ class EducationProtocolProvider(ProviderBase):
             response["data"] = result.get("data", {})
         else:
             response["error_message"] = result.get("error_message", "Unknown error occurred")
-        
+
         return json.dumps(response).encode('utf-8')
 
     def _construct_error_message(self, code: int, error_message: str, message_id: Optional[str]) -> bytes:

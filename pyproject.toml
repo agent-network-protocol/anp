@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "agent-connect"
-version = "0.3.4"
+version = "0.3.6"
 description = "An SDK that enables agents to connect with each other, allowing them to perform identity authentication, end-to-end encrypted communication, automatic protocol negotiation based on LLMs, and efficient data exchange."
 authors = ["changshan <chgaowei@gmail.com>"]
 license = "MIT"
@@ -30,6 +30,7 @@ python-dotenv = "^1.0.1"
 jsonschema = "^4.23.0"
 canonicaljson = "^2.0.0"
 jcs = "^0.2.1"
+pyjwt = "^2.9.0"
 
 [tool.poetry.group.api.dependencies]
 openai = { version = ">=1.54.3", optional = true }

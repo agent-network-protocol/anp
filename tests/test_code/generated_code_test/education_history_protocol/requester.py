@@ -1,17 +1,19 @@
-from agent_connect.python.app_protocols.protocol_base.requester_base import RequesterBase
-import logging
-import json
 import asyncio
-from uuid import uuid4
+import json
+import logging
 from typing import Any, Dict
+from uuid import uuid4
+
+from agent_connect.app_protocols.protocol_base.requester_base import RequesterBase
+
 
 class EducationHistoryRequester(RequesterBase):
     """Requester class for retrieving a user's education history."""
-    
+
     async def send_request(self, input: Dict[str, Any]) -> Dict[str, Any]:
         """Send request to retrieve user education history.
 
-        Constructs and sends a request message, waits for a response, 
+        Constructs and sends a request message, waits for a response,
         and processes the response message.
 
         Args:
@@ -19,7 +21,7 @@ class EducationHistoryRequester(RequesterBase):
                    'include_details'.
 
         Returns:
-            dict: A dictionary containing the response, including HTTP status 
+            dict: A dictionary containing the response, including HTTP status
                   code and either education history records or error information.
         """
         # Validate input parameters

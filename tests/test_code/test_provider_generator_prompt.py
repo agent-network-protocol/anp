@@ -6,26 +6,27 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 import asyncio
-import sys
 import logging
+import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from agent_connect.python.utils.llm.base_llm import BaseLLM, AzureLLM
-from agent_connect.python.utils.log_base import set_log_color_level
-from agent_connect.python.meta_protocol.code_generator.provider_generator import (
+from openai import AsyncAzureOpenAI
+
+from agent_connect.meta_protocol.code_generator.provider_generator import (
     _generate_provider_class,
     _generate_provider_description,
-    generate_provider_code
 )
+from agent_connect.utils.llm.base_llm import AzureLLM, BaseLLM
+from agent_connect.utils.log_base import set_log_color_level
 from tests.test_code.config import (
     AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_MODEL_NAME,
-    validate_config
+    validate_config,
 )
-from openai import AsyncAzureOpenAI
 
 # 使用与test_requester_generator_prompt.py相同的protocol_doc
 protocol_doc = '''
@@ -206,17 +207,17 @@ def get_llm_instance() -> BaseLLM:
 
 async def test_provider_generator():
     """测试provider代码生成流程"""
-    
+
     # 验证配置
     validate_config()
-    
+
     # 创建LLM实例
     llm = get_llm_instance()
     try:
         # 1. 测试生成provider描述
         logging.info("\n=== 测试生成provider描述 ===")
         description_json = await _generate_provider_description(protocol_doc, llm)
-        
+
         logging.info("生成的Provider描述:")
         logging.info("-" * 50)
         logging.info(description_json)
@@ -227,7 +228,7 @@ async def test_provider_generator():
         try:
             current_dir = Path(__file__).parent
             output_file = current_dir / "generated_code/generated_provider_description.json"
-            
+
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(description_json)
             logging.info(f"描述已成功写入: {output_file}")
@@ -237,7 +238,7 @@ async def test_provider_generator():
         # 2. 测试生成provider类
         logging.info("\n=== 测试生成provider类 ===")
         module_name, provider_code = await _generate_provider_class(protocol_doc, description_json, llm)
-        
+
         logging.info(f"生成的模块名: {module_name}")
         logging.info("生成的Provider代码:")
         logging.info("-" * 50)
@@ -249,7 +250,7 @@ async def test_provider_generator():
         try:
             current_dir = Path(__file__).parent
             output_file = current_dir / "generated_code/generated_provider_code.py"
-            
+
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(provider_code)
             logging.info(f"代码已成功写入: {output_file}")
@@ -259,10 +260,10 @@ async def test_provider_generator():
         # # 3. 测试完整的生成流程
         # logging.info("\n=== 测试完整的生成流程 ===")
         # final_module_name, final_code, final_description = await generate_provider_code(
-        #     protocol_doc, 
+        #     protocol_doc,
         #     llm
         # )
-        
+
         # logging.info(f"最终模块名: {final_module_name}")
         # logging.info("最终代码:")
         # logging.info("-" * 50)
@@ -278,4 +279,4 @@ async def test_provider_generator():
 
 if __name__ == "__main__":
     set_log_color_level(logging.INFO)
-    asyncio.run(test_provider_generator()) 
+    asyncio.run(test_provider_generator())

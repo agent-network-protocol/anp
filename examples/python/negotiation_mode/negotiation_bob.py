@@ -6,9 +6,8 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 import asyncio
-import json
-import os
 import logging
+import os
 import sys
 from typing import Any, Dict
 
@@ -16,15 +15,20 @@ g_current_dir: str = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(g_current_dir)
 # sys.path.append(g_current_dir + "/../../")
 
-from agent_connect.python.simple_node import SimpleNegotiationNode, ProviderSession
-from agent_connect.python.app_protocols import ProviderBase
-from agent_connect.python.utils.log_base import set_log_color_level
+from utils import (
+    generate_code_for_protocol_provider_callback,
+    generate_did_info,
+    get_llm_instance,
+)
 
-from utils import generate_code_for_protocol_provider_callback, generate_did_info, get_llm_instance
+from agent_connect.app_protocols import ProviderBase
+from agent_connect.simple_node import ProviderSession, SimpleNegotiationNode
+from agent_connect.utils.log_base import set_log_color_level
+
 
 # Mock callback function for getting capability information
-async def mock_capability_info(requirement: str, 
-                             input_description: str, 
+async def mock_capability_info(requirement: str,
+                             input_description: str,
                              output_description: str) -> str:
     """Mock callback function for getting capability information"""
     logging.info(f"Requirement: {requirement}")
@@ -44,21 +48,21 @@ async def new_provider_negotiation_session_callback(provider_session: ProviderSe
     print(f"New negotiation session from DID: {provider_session.remote_did}")
 
     # note: check remote did permission
-    
+
     # generate the protocol callback process code
     python_code_path = os.path.join(g_current_dir, "workflow_code/provider_flow.py")
     provider_instance: ProviderBase = provider_session.provider_instance
     protocol_callback_description: Dict[str, Any] = provider_session.protocol_callback_description
-    
+
     # 设置协议处理代码回调，并将代码和协议hash值保存，以便后面使用
     protocol_callback_code = await generate_code_for_protocol_provider_callback(llm=get_llm_instance(),
                                                                                 callback_description=protocol_callback_description,
                                                                                 code_path=python_code_path)
-    
+
     # 设置回调函数，用于响应请求
     provider_instance.set_protocol_callback(protocol_callback_code)
 
-    # notify the remote side that code generation has been completed, 
+    # notify the remote side that code generation has been completed,
     # and wait for the remote side to confirm
     success: bool = await provider_session.code_generated()
     if success:
@@ -92,7 +96,7 @@ async def main() -> None:
     while True:
         # process other system tasks
         await asyncio.sleep(1)
-    
+
     # finally stop the node
     await bob_node.stop()
 
@@ -103,7 +107,7 @@ if __name__ == "__main__":
 
 
     # callback_description = '''{
-    #                 "type": "function", 
+    #                 "type": "function",
     #                 "description": "Async function that processes education history retrieval messages",
     #                 "parameters": {
     #                   "type": "object",
@@ -210,13 +214,13 @@ if __name__ == "__main__":
     #                   "required": ["code", "message"]
     #                 }
     #               }'''
-    
+
     # callback_description = json.loads(callback_description)
 
     # callback_code = asyncio.run(generate_code_for_protocol_provider_callback(llm=get_llm_instance(),
     #                                                                            callback_description=callback_description,
     #                                                                            code_path=os.path.join(g_current_dir, "workflow_code/provider_flow.py")))
 
-    # print(callback_code)    
+    # print(callback_code)
 
 

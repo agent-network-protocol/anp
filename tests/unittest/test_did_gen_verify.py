@@ -6,12 +6,15 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 
-import unittest
 import json
-from agent_connect.python.utils.did_generate import did_generate, sign_did_document_secp256r1
-from agent_connect.python.utils.did_verify import verify_did_document, extract_public_key
-from cryptography.hazmat.primitives.asymmetric import ec
 import logging
+import unittest
+
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from agent_connect.utils.did_generate import did_generate, sign_did_document_secp256r1
+from agent_connect.utils.did_verify import extract_public_key, verify_did_document
+
 
 class TestDIDManagement(unittest.TestCase):
 

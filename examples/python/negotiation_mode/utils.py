@@ -5,36 +5,34 @@
 #
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
-import asyncio
 import importlib
 import json
 import os
-import logging
-from typing import Any, Dict, Tuple
-
 import sys
+from typing import Any, Dict
+
 g_current_dir: str = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(g_current_dir)
 # sys.path.append(g_current_dir + "/../../")
 
-from agent_connect.python.utils.llm.base_llm import AzureLLM, BaseLLM
-from agent_connect.python.utils.llm_output_processer import extract_code_from_llm_output
-from agent_connect.python.simple_node import SimpleNegotiationNode
-from openai import AsyncAzureOpenAI
-
 from config import (
     AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_MODEL_NAME,
-    validate_config
+    validate_config,
 )
+from openai import AsyncAzureOpenAI
+
+from agent_connect.simple_node import SimpleNegotiationNode
+from agent_connect.utils.llm.base_llm import AzureLLM, BaseLLM
+from agent_connect.utils.llm_output_processer import extract_code_from_llm_output
 
 g_current_dir: str = os.path.dirname(os.path.abspath(__file__))
 
 def generate_did_info(node: SimpleNegotiationNode, json_filename: str) -> None:
     """Generate or load DID information for a node
-    
+
     Args:
         node: The SimpleNegotiationNode instance
         json_filename: Name of the JSON file to store DID info (e.g. "alice.json")
@@ -53,7 +51,7 @@ def generate_did_info(node: SimpleNegotiationNode, json_filename: str) -> None:
         did_document_json: str
         private_key_pem, did, did_document_json = node.generate_did_document()
         node.set_did_info(private_key_pem, did, did_document_json)
-        
+
         with open(json_path, "w") as f:
             json.dump({
                 "private_key_pem": private_key_pem,
@@ -64,37 +62,37 @@ def generate_did_info(node: SimpleNegotiationNode, json_filename: str) -> None:
 def get_llm_instance() -> AzureLLM:
     """Return the Azure OpenAI LLM instance"""
     validate_config()
-    
+
     client: AsyncAzureOpenAI = AsyncAzureOpenAI(
         api_key=AZURE_OPENAI_API_KEY,
         api_version="2024-02-01",
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
         azure_deployment=AZURE_OPENAI_DEPLOYMENT,
     )
-    
+
     return AzureLLM(client=client, model_name=AZURE_OPENAI_MODEL_NAME)
 
 def load_bob_did() -> str:
     """Load Bob's DID from the JSON file"""
-    bob_json_path: str = os.path.join(g_current_dir, "bob.json") 
+    bob_json_path: str = os.path.join(g_current_dir, "bob.json")
     with open(bob_json_path, "r") as f:
         bob_info: Dict[str, str] = json.load(f)
-    return bob_info["did"] 
+    return bob_info["did"]
 
-async def generate_code_for_protocol_requester_interface(llm: BaseLLM, 
-                                         interface_description: Dict[str, Any], 
+async def generate_code_for_protocol_requester_interface(llm: BaseLLM,
+                                         interface_description: Dict[str, Any],
                                          code_path: str) -> str:
     """Generate protocol interface code based on interface description
-    
+
     Args:
         llm: LLM instance
         interface_description: Interface description dictionary
         code_path: Path to save the generated code
-        
+
     Returns:
         str: Generated code string
     """
-    
+
     system_prompt = """You are a professional Python developer.
 # Please generate async function code based on interface description. Code must meet the following requirements:
 1. Function definition: async def call_requester_interface(requester: RequesterBase) -> dict[str, Any]
@@ -130,7 +128,7 @@ The generated code should include complete async function definitions, type hint
     print(f"Generated protocol requester interface code: {code}")
 
     code = extract_code_from_llm_output(code)
-    
+
     # Check if the directory exists, if not, create it
     directory = os.path.dirname(code_path)
     if not os.path.exists(directory):
@@ -139,7 +137,7 @@ The generated code should include complete async function definitions, type hint
     if code_path:
         with open(code_path, "w") as f:
             f.write(code)
-            
+
     # Dynamically load the Python code from the specified path
     spec = importlib.util.spec_from_file_location("requester_module", code_path)
     requester_module = importlib.util.module_from_spec(spec)
@@ -158,12 +156,12 @@ async def generate_code_for_protocol_provider_callback(
     code_path: str
 ) -> str:
     """Generate provider callback function code based on callback description
-    
+
     Args:
         llm: LLM instance
         callback_description: Callback function description dictionary
         code_path: Path to save generated code
-        
+
     Returns:
         str: Generated callback handler function
     """
@@ -192,17 +190,17 @@ XXXX
 
 The generated code should include complete async function definition, type hints and comments.
 """
-    
+
 
     print(f"Generating protocol provider callback function code: {system_prompt}")
     print(f"Generating protocol provider callback function code: {user_prompt}")
     # Call LLM to generate code
     code = await llm.async_generate_response(system_prompt, user_prompt)
-    
+
     print(f"Generated protocol provider callback function code: {code}")
-    
+
     code = extract_code_from_llm_output(code)
-    
+
     # Ensure directory exists
     directory = os.path.dirname(code_path)
     if not os.path.exists(directory):
@@ -212,7 +210,7 @@ The generated code should include complete async function definition, type hints
     if code_path:
         with open(code_path, "w") as f:
             f.write(code)
-            
+
     # Dynamically load generated code
     spec = importlib.util.spec_from_file_location("provider_module", code_path)
     provider_module = importlib.util.module_from_spec(spec)

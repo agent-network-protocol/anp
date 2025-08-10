@@ -6,12 +6,15 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 
-import unittest
-import json
 import base64
+import json
+import unittest
 from datetime import datetime, timezone
-from ecdsa import SigningKey, VerifyingKey, NIST256p
-from agent_connect.python.agent_description.proof import generate_proof, verify_proof
+
+from ecdsa import NIST256p, SigningKey
+
+from agent_connect.agent_description.proof import generate_proof, verify_proof
+
 
 class TestProof(unittest.TestCase):
     def setUp(self):
@@ -21,7 +24,7 @@ class TestProof(unittest.TestCase):
         # Generate ECDSA key pair (secp256r1 curve, also known as NIST P-256)
         self.private_key = SigningKey.generate(curve=NIST256p)
         self.public_key = self.private_key.get_verifying_key()
-        
+
         # Create a sample document
         self.document = {
             "@context": [
@@ -67,11 +70,11 @@ class TestProof(unittest.TestCase):
         signed_doc = generate_proof(self.document, self.sign_callback)
 
         print(f"signed_doc: {signed_doc}")
-        
+
         # Verify document structure
         self.assertIn("proof", signed_doc)
         self.assertIn("proofValue", signed_doc["proof"])
-        
+
         # Verify proofValue is a URL-safe base64 string
         proof_value = signed_doc["proof"]["proofValue"]
         try:
@@ -79,7 +82,7 @@ class TestProof(unittest.TestCase):
             decoded = base64.urlsafe_b64decode(proof_value)
         except Exception as e:
             self.fail(f"proofValue is not a valid URL-safe base64 string: {e}")
-        
+
         # Verify signature
         is_valid = verify_proof(signed_doc, self.verify_callback)
         self.assertTrue(is_valid)
@@ -90,11 +93,11 @@ class TestProof(unittest.TestCase):
         """
         # Generate signature
         signed_doc = generate_proof(self.document, self.sign_callback)
-        
+
         # Tamper with document
         tampered_doc = json.loads(json.dumps(signed_doc))
         tampered_doc["name"] = "Tampered Name"
-        
+
         # Verification should fail
         is_valid = verify_proof(tampered_doc, self.verify_callback)
         self.assertFalse(is_valid)
@@ -105,13 +108,13 @@ class TestProof(unittest.TestCase):
         """
         # Generate signature
         signed_doc = generate_proof(self.document, self.sign_callback)
-        
+
         # Tamper with signature
         tampered_doc = json.loads(json.dumps(signed_doc))
         original_signature = tampered_doc["proof"]["proofValue"]
         # Modify the last character of the signature
         tampered_doc["proof"]["proofValue"] = original_signature[:-1] + ('1' if original_signature[-1] != '1' else '2')
-        
+
         # Verification should fail
         is_valid = verify_proof(tampered_doc, self.verify_callback)
         self.assertFalse(is_valid)
@@ -122,7 +125,7 @@ class TestProof(unittest.TestCase):
         """
         doc_without_proof = json.loads(json.dumps(self.document))
         del doc_without_proof["proof"]
-        
+
         with self.assertRaises(ValueError):
             generate_proof(doc_without_proof, self.sign_callback)
 
@@ -133,7 +136,7 @@ class TestProof(unittest.TestCase):
         # Test non-dict input
         with self.assertRaises(ValueError):
             generate_proof("not a dict", self.sign_callback)
-        
+
         # Test non-callback function
         with self.assertRaises(ValueError):
             generate_proof(self.document, "not a callback")

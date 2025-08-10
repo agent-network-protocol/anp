@@ -13,28 +13,20 @@
 # Then it generates an authentication header and tests the DID authentication.
 # It also verifies the token and the uploaded DID document.
 
-import os
-import sys
-import json
-import secrets
 import asyncio
-import aiohttp
+import json
 import logging
+import secrets
 from pathlib import Path
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import ec
-from canonicaljson import encode_canonical_json
 
-from agent_connect.python.authentication import (
-    create_did_wba_document,
-    resolve_did_wba_document,
-    DIDWbaAuthHeader
-)
-from agent_connect.python.utils.log_base import set_log_color_level
+import aiohttp
+from agent_connect.authentication import DIDWbaAuthHeader, create_did_wba_document
+from agent_connect.utils.log_base import set_log_color_level
+from canonicaljson import encode_canonical_json
 
 _is_local_testing = False
 
-# TODO: Change to your own server domain. 
+# TODO: Change to your own server domain.
 # Or use the test domain we provide (currently using agent-network-protocol.com, will later change to service.agent-network-protocol.com)
 # SERVER_DOMAIN = "pi-unlimited.com"
 SERVER_DOMAIN = "service.agent-network-protocol.com"
@@ -50,7 +42,7 @@ async def upload_did_document(url: str, did_document: dict) -> bool:
     try:
         local_url = convert_url_for_local_testing(url)
         logging.info("Converting URL from %s to %s", url, local_url)
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.put(
                 local_url,
@@ -67,7 +59,7 @@ async def download_did_document(url: str) -> dict:
     try:
         local_url = convert_url_for_local_testing(url)
         logging.info("Converting URL from %s to %s", url, local_url)
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(local_url) as response:
                 if response.status == 200:
@@ -83,10 +75,10 @@ async def test_did_auth(url: str, auth_client: DIDWbaAuthHeader) -> tuple[bool, 
     try:
         local_url = convert_url_for_local_testing(url)
         logging.info("Converting URL from %s to %s", url, local_url)
-        
+
         # 获取认证头
         auth_headers = auth_client.get_auth_header(local_url)
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 local_url,
@@ -104,10 +96,10 @@ async def verify_token(url: str, auth_client: DIDWbaAuthHeader) -> bool:
     try:
         local_url = convert_url_for_local_testing(url)
         logging.info("Converting URL from %s to %s", url, local_url)
-        
+
         # 使用已存储的令牌
         auth_headers = auth_client.get_auth_header(local_url)
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 local_url,
@@ -124,20 +116,20 @@ def save_private_key(unique_id: str, keys: dict, did_document: dict) -> str:
     user_dir = current_dir / "did_keys" / f"user_{unique_id}"
     # Create parent directories if they don't exist
     user_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Save private keys
     for method_fragment, (private_key_bytes, _) in keys.items():
         private_key_path = user_dir / f"{method_fragment}_private.pem"
         with open(private_key_path, 'wb') as f:
             f.write(private_key_bytes)
         logging.info("Saved private key '%s' to %s", method_fragment, private_key_path)
-    
+
     # Save DID document
     did_path = user_dir / "did.json"
     with open(did_path, 'w', encoding='utf-8') as f:
         json.dump(did_document, f, indent=2)
     logging.info("Saved DID document to %s", did_path)
-    
+
     return str(user_dir)
 
 async def verify_did_document(document_url: str, original_doc: dict) -> bool:
@@ -147,18 +139,18 @@ async def verify_did_document(document_url: str, original_doc: dict) -> bool:
     if not downloaded_doc:
         logging.error("Failed to download DID document")
         return False
-    
+
     try:
         original_jcs = encode_canonical_json(original_doc)
         downloaded_jcs = encode_canonical_json(downloaded_doc)
-        
+
         if downloaded_jcs == original_jcs:
             logging.info("Verification successful: uploaded and downloaded documents match")
             return True
         else:
             logging.error("Verification failed: documents do not match")
             return False
-            
+
     except Exception as e:
         logging.error("Error during JCS conversion: %s", e)
         return False
@@ -166,12 +158,12 @@ async def verify_did_document(document_url: str, original_doc: dict) -> bool:
 async def main():
     # 1. Generate unique identifier (8 bytes = 16 hex characters)
     unique_id = secrets.token_hex(8)
-    
+
     # 2. Set server information
     server_domain = SERVER_DOMAIN
     base_path = f"/wba/user/{unique_id}"
     did_path = f"{base_path}/did.json"
-    
+
     # 3. Create DID document
     logging.info("Creating DID document...")
     did_document, keys = create_did_wba_document(
@@ -179,12 +171,12 @@ async def main():
         path_segments=["wba", "user", unique_id],
         agent_description_url="https://service.agent-network-protocol.com/agents/example/ad.json"
     )
-    
+
     # 4. Save private keys and DID document
     user_dir = save_private_key(unique_id, keys, did_document)
     did_document_path = str(Path(user_dir) / "did.json")
     private_key_path = str(Path(user_dir) / "key-1_private.pem")
-    
+
     # 5. Upload DID document (This should be stored on your server)
     document_url = f"https://{server_domain}{did_path}"
     logging.info("Uploading DID document to %s", document_url)
@@ -193,33 +185,33 @@ async def main():
         logging.error("Failed to upload DID document")
         return
     logging.info("DID document uploaded successfully")
-    
+
     # 6. Verify uploaded document
     if not await verify_did_document(document_url, did_document):
         return
-    
+
     # 7. 创建 DIDWbaAuthHeader 实例
     logging.info("Creating DIDWbaAuthHeader instance...")
     auth_client = DIDWbaAuthHeader(
         did_document_path=did_document_path,
         private_key_path=private_key_path
     )
-    
+
     # 8. Test DID authentication and get token
     test_url = f"https://{server_domain}/wba/test"
     logging.info("Testing DID authentication at %s", test_url)
     auth_success, token = await test_did_auth(test_url, auth_client)
-    
+
     if not auth_success:
         logging.error("DID authentication test failed")
         return
-        
+
     logging.info("DID authentication test successful")
-    
+
     if token:
         logging.info("Received token from server")
         logging.info("Verifying token...")
-        
+
         # 9. Verify token
         token_success = await verify_token(test_url, auth_client)
         if token_success:

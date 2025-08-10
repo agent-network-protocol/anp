@@ -7,13 +7,14 @@
 
 
 import asyncio
-import unittest
 import json
-from unittest.mock import ANY, patch, AsyncMock
+import unittest
+from unittest.mock import AsyncMock, patch
 
-from agent_connect.python.wss_message_client import WssMessageClient
-from agent_connect.python.utils.crypto_tool import get_pem_from_private_key
-from agent_connect.python.utils.did_generate import did_generate
+from agent_connect.utils.crypto_tool import get_pem_from_private_key
+from agent_connect.utils.did_generate import did_generate
+from agent_connect.wss_message_client import WssMessageClient
+
 
 class TestWssMessageService(unittest.TestCase):
     def setUp(self):
@@ -25,7 +26,7 @@ class TestWssMessageService(unittest.TestCase):
     def tearDown(self):
         # Close the event loop at the end of the test
         self.loop.close()
-        
+
     @patch('websockets.connect', new_callable=AsyncMock)
     def test_connect(self, mock_connect):
         """Test if the connect function correctly calls websockets.connect and handles authentication"""
@@ -70,7 +71,7 @@ class TestWssMessageService(unittest.TestCase):
         # Call register_routers method
         private_key, public_key, mock_did, did_document_json = did_generate("wss://example.com/endpoint")
         pem_key = get_pem_from_private_key(private_key)
-        
+
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.wss_service.register_routers([(pem_key, did_document_json)]))
 

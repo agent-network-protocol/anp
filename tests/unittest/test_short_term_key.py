@@ -6,14 +6,14 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 
-import unittest
 import asyncio
-import json
-from typing import Dict, Any
-from cryptography.hazmat.primitives import serialization
-import sys
-import os
 import logging
+import os
+import sys
+import unittest
+from typing import Any, Dict
+
+from cryptography.hazmat.primitives import serialization
 
 current_script_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_script_path)
@@ -21,8 +21,9 @@ sys.path.append(current_directory)
 sys.path.append(current_directory + "/../")
 sys.path.append(current_directory + "/../../")
 
-from agent_connect.python.short_term_key_generater import ShortTermKeyGenerater
-from agent_connect.python.utils.did_generate import did_generate
+from agent_connect.short_term_key_generater import ShortTermKeyGenerater
+from agent_connect.utils.did_generate import did_generate
+
 
 class TestShortTermKeyGeneration(unittest.TestCase):
     def setUp(self):
@@ -79,7 +80,7 @@ class TestShortTermKeyGeneration(unittest.TestCase):
         result = await self.initiator.generate_short_term_key_active()
         logging.info(f'generate_short_term_key_active {result}')
         self.assertTrue(result, "Key exchange failed")
-    
+
     async def receive_key_exchange(self):
         """Start the key exchange process"""
         result = await self.receiver.generate_short_term_key_passive()

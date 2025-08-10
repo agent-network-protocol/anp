@@ -5,18 +5,16 @@
 #
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
-import logging
-import sys
-import os
 import asyncio
 import json
+import os
+import sys
 import traceback
 
 current_script_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_script_path)
 
-from agent_connect.python.e2e_encryption import WssMessageSDK
-
+from agent_connect.e2e_encryption import WssMessageSDK
 
 MESSAGE_WSS_URL = "wss://message.agent-network-protocol.com/ws"
 # MESSAGE_WSS_URL = "ws://127.0.0.1:9000/ws"
@@ -91,7 +89,7 @@ if __name__ == "__main__":
     try:
         # Retrieve the configuration file path from command-line parameters, if not available, use the default path
         file_name = sys.argv[1] if len(sys.argv) > 1 else "simple_node/alice.json"
-        
+
         # Run the main program
         asyncio.run(main(file_name))
     except KeyboardInterrupt:

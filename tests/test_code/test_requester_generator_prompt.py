@@ -6,26 +6,27 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 import asyncio
-import sys
 import logging
+import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from agent_connect.python.utils.llm.base_llm import BaseLLM, AzureLLM
-from agent_connect.python.utils.log_base import set_log_color_level
-from agent_connect.python.meta_protocol.code_generator.requester_generator import (
+from openai import AsyncAzureOpenAI
+
+from agent_connect.meta_protocol.code_generator.requester_generator import (
     _generate_requester_class,
     _generate_requester_description,
-    generate_requester_code
 )
+from agent_connect.utils.llm.base_llm import AzureLLM, BaseLLM
+from agent_connect.utils.log_base import set_log_color_level
 from tests.test_code.config import (
     AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_MODEL_NAME,
-    validate_config
+    validate_config,
 )
-from openai import AsyncAzureOpenAI
 
 protocol_doc = '''
 # Requirements
@@ -205,17 +206,17 @@ def get_llm_instance() -> BaseLLM:
 
 async def test_requester_generator():
     """Test the requester code generation process"""
-    
+
     # 验证配置
     validate_config()
-    
+
     # 创建 LLM 实例
     llm = get_llm_instance()
     try:
         # 1. 测试生成requester描述
         logging.info("\n=== 测试生成requester描述 ===")
         description_json = await _generate_requester_description(protocol_doc, llm)
-        
+
         logging.info("生成的Requester描述:")
         logging.info("-" * 50)
         logging.info(description_json)
@@ -228,7 +229,7 @@ async def test_requester_generator():
             current_dir = Path(__file__).parent
             # 构建目标文件的完整路径
             output_file = current_dir / "generated_code/generated_requester_description.json"
-            
+
             # 写入描述到文件
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(description_json)
@@ -239,7 +240,7 @@ async def test_requester_generator():
         # 2. 测试生成requester类
         logging.info("=== 测试生成requester类 ===")
         module_name, requester_code = await _generate_requester_class(protocol_doc, description_json, llm)
-        
+
         logging.info(f"生成的模块名: {module_name}")
         logging.info("生成的Requester代码:")
         logging.info("-" * 50)
@@ -253,7 +254,7 @@ async def test_requester_generator():
             current_dir = Path(__file__).parent
             # 构建目标文件的完整路径
             output_file = current_dir / "generated_code/generated_requester_code.py"
-            
+
             # 写入代码到文件
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(requester_code)
@@ -264,10 +265,10 @@ async def test_requester_generator():
         # # 3. 测试完整的生成流程
         # logging.info("\n=== 测试完整的生成流程 ===")
         # final_module_name, final_code, final_description = await generate_requester_code(
-        #     protocol_doc, 
+        #     protocol_doc,
         #     llm
         # )
-        
+
         # logging.info(f"最终模块名: {final_module_name}")
         # logging.info("最终代码:")
         # logging.info("-" * 50)
@@ -283,4 +284,4 @@ async def test_requester_generator():
 
 if __name__ == "__main__":
     set_log_color_level(logging.INFO)
-    asyncio.run(test_requester_generator()) 
+    asyncio.run(test_requester_generator())

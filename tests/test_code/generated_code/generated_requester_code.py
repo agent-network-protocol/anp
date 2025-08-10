@@ -1,9 +1,10 @@
+import asyncio
 import json
 import logging
+from typing import Any
 from uuid import uuid4
-from typing import Any, Dict
-import asyncio
-from agent_connect.python.app_protocols.protocol_base.requester_base import RequesterBase
+
+from agent_connect.app_protocols.protocol_base.requester_base import RequesterBase
 
 
 class EducationBackgroundRequester(RequesterBase):

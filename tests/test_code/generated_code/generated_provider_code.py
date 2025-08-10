@@ -4,7 +4,7 @@ import traceback
 from typing import Any, Dict, Tuple
 from uuid import UUID
 
-from agent_connect.python.app_protocols.protocol_base.provider_base import ProviderBase
+from agent_connect.app_protocols.protocol_base.provider_base import ProviderBase
 
 
 class EducationalBackgroundProvider(ProviderBase):
@@ -48,7 +48,7 @@ class EducationalBackgroundProvider(ProviderBase):
 
         Returns:
             A tuple containing the parsed dictionary and messageId.
-        
+
         Raises:
             ValueError: If message format is invalid or required parameters are missing.
         """

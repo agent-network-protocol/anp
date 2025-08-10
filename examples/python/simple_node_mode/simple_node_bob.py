@@ -8,16 +8,16 @@
 
 import asyncio
 import json
-import os
 import logging
-
-import sys  
+import os
+import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../../") 
+# sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../../")
 
-from agent_connect.python.simple_node import SimpleNode, SimpleNodeSession
-from agent_connect.python.utils.log_base import set_log_color_level
+from agent_connect.simple_node import SimpleNode, SimpleNodeSession
+from agent_connect.utils.log_base import set_log_color_level
+
 
 def generate_did_info(bob_node: SimpleNode):
     # Check if bob.json exists
@@ -36,7 +36,7 @@ def generate_did_info(bob_node: SimpleNode):
         print("Generating new Bob DID information")
         private_key_pem, did, did_document_json = bob_node.generate_did_document()
         bob_node.set_did_info(private_key_pem, did, did_document_json)
-        
+
         # Save Bob's DID information
         with open(bob_json_path, "w") as f:
             json.dump({
@@ -53,7 +53,7 @@ async def ws_new_session_callback(simple_session: SimpleNodeSession):
         message = await simple_session.receive_message()
         message = message.decode('utf-8') if message else None
         print(f"Received message content: {message}")
-        
+
         # Send reply
         reply = f"Hello {simple_session.remote_did}, I'm Bob!"
         success = await simple_session.send_message(reply)
@@ -66,7 +66,7 @@ async def ws_new_session_callback(simple_session: SimpleNodeSession):
 async def main():
     # 使用新的接口创建节点，只指定ws路径
     bob_node = SimpleNode(
-        host_domain="localhost", 
+        host_domain="localhost",
         new_session_callback=ws_new_session_callback,
         host_port="8000",
         host_ws_path="/ws"
@@ -77,7 +77,7 @@ async def main():
 
     # Start the node
     bob_node.run()
-    
+
     try:
         while True:
             await asyncio.sleep(1)

@@ -12,11 +12,12 @@
 import asyncio
 import json
 import logging
-import aiohttp
-import os
 from pathlib import Path
-from agent_connect.python.authentication import DIDWbaAuthHeader
-from agent_connect.python.utils.log_base import set_log_color_level
+
+import aiohttp
+
+from agent_connect.authentication import DIDWbaAuthHeader
+from agent_connect.utils.log_base import set_log_color_level
 
 # TODO: Change to your own server domain.
 TEST_DOMAIN = "service.agent-network-protocol.com"
@@ -26,7 +27,7 @@ async def test_did_auth(url: str, auth_client: DIDWbaAuthHeader) -> tuple[bool, 
     try:
         # Get authentication header
         auth_headers = auth_client.get_auth_header(url)
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 url,
@@ -44,38 +45,38 @@ async def main():
     # Get project root directory
     current_dir = Path(__file__).parent.absolute()
     project_root = current_dir.parent.parent.parent
-    
+
     # Set DID document and private key paths
     did_document_path = project_root / "examples" / "use_did_test_public" / "did.json"
     private_key_path = project_root / "examples" / "use_did_test_public" / "key-1_private.pem"
-    
+
     # Check if files exist
     if not did_document_path.exists():
         logging.error(f"DID document does not exist: {did_document_path}")
         return
-    
+
     if not private_key_path.exists():
         logging.error(f"Private key file does not exist: {private_key_path}")
         return
-    
+
     # Read DID document to get DID
     with open(did_document_path, 'r') as f:
         did_document = json.load(f)
         client_did = did_document.get('id')
         logging.info(f"Using DID: {client_did}")
-    
+
     # Create DIDWbaAuthHeader instance
     logging.info("Creating DIDWbaAuthHeader instance...")
     auth_client = DIDWbaAuthHeader(
         did_document_path=str(did_document_path),
         private_key_path=str(private_key_path)
     )
-    
+
     # Test DID authentication
     test_url = f"https://{TEST_DOMAIN}/wba/test"
     logging.info(f"Testing DID authentication at: {test_url}")
     auth_success, token = await test_did_auth(test_url, auth_client)
-    
+
     if auth_success:
         logging.info("DID authentication test successful!")
         if token:

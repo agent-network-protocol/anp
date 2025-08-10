@@ -5,18 +5,18 @@
 #
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
-import sys
-import os
+import argparse
 import asyncio
 import json
-import argparse
+import os
+import sys
 
 current_script_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_script_path)
 sys.path.append(current_directory)
 sys.path.append(current_directory + "/../")
 
-from agent_connect.python.authentication import DIDAllClient
+from agent_connect.authentication import DIDAllClient
 
 MESSAGE_WSS_URL = "wss://message.agent-network-protocol.com/ws"
 DID_HTTP_URL = 'https://did.agent-network-protocol.com'
@@ -36,7 +36,7 @@ def get_output_filename():
 async def main():
     output_filename = get_output_filename()
     print(f"Output filename: {output_filename}")
-    
+
     # Initialize DID service client
     did_client = DIDAllClient(DID_HTTP_URL, TEST_API_KEY)
 
@@ -46,7 +46,7 @@ async def main():
     if not router_private_key_pem or not router_did or not router_document:
         print("Router DID document generation failed")
         return
-    
+
     did_private_key_pem, did, did_document = await did_client.generate_register_did_document(MESSAGE_WSS_URL, router_did)
     if not did_private_key_pem or not did or not did_document:
         print("DID registration failed")

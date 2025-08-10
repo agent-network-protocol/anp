@@ -5,19 +5,18 @@
 #
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
-import logging
-import sys
-import os
 import asyncio
 import json
+import logging
+import os
+import sys
 
 current_script_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_script_path)
 sys.path.append(current_directory)
 sys.path.append(current_directory + "/../")
 
-from agent_connect.python.e2e_encryption import WssMessageSDK
-
+from agent_connect.e2e_encryption import WssMessageSDK
 
 MESSAGE_WSS_URL = "wss://message.agent-network-protocol.com/ws"
 # MESSAGE_WSS_URL = "ws://127.0.0.1:9000/ws"
@@ -59,9 +58,9 @@ async def main(file_name="bob.json"):
     user_private_key, user_did, user_document = get_router_and_user_info(file_name)
     if not router_private_key or not user_private_key:
         return
-    
+
     _, _, _, _, alice_user_did, _ = get_router_and_user_info("alice.json")
-    
+
     sdk = await WssMessageSDK.create(
         MESSAGE_WSS_URL,
         TEST_API_KEY,
@@ -93,11 +92,11 @@ async def main(file_name="bob.json"):
         return
 
     await asyncio.sleep(5)
-    
+
     # Send test message
     test_message = "Hello from User to Router"
     await sdk.send_data(test_message, user_did, alice_user_did)
-    
+
     while True:
         await asyncio.sleep(1)
 

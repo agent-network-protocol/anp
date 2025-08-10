@@ -7,16 +7,16 @@
 
 import asyncio
 import json
-import os
 import logging
-
-import sys  
+import os
+import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../../") 
+# sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../../")
 
-from agent_connect.python.simple_node import SimpleNode, SimpleNodeSession
-from agent_connect.python.utils.log_base import set_log_color_level
+from agent_connect.simple_node import SimpleNode, SimpleNodeSession
+from agent_connect.utils.log_base import set_log_color_level
+
 
 def generate_did_info(alice_node: SimpleNode):
     # Check if alice.json exists
@@ -32,7 +32,7 @@ def generate_did_info(alice_node: SimpleNode):
         print("Generating new Alice DID information")
         private_key_pem, did, did_document_json = alice_node.generate_did_document()
         alice_node.set_did_info(private_key_pem, did, did_document_json)
-        
+
         # Save Alice's DID information
         with open(alice_json_path, "w") as f:
             json.dump({
@@ -47,26 +47,26 @@ async def ws_new_session_callback(simple_session: SimpleNodeSession):
 async def main():
     # 使用新的接口创建节点，只指定ws路径
     alice_node = SimpleNode(
-        host_domain="localhost", 
+        host_domain="localhost",
         new_session_callback=ws_new_session_callback,
         host_port="8001",
         host_ws_path="/ws"
     )
-    
+
     generate_did_info(alice_node)
 
     print(f"Alice's DID: {alice_node.did}")
 
     # Start the node
     alice_node.run()
-    
+
     # Read bob's DID
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Get the current file's directory
     bob_json_path = os.path.join(current_dir, "bob.json")  # Construct the path to alice.json
     with open(bob_json_path, "r") as f:
         bob_info = json.load(f)
     bob_did = bob_info["did"]
-    
+
     try:
         # Connect to bob
         alice_session = await alice_node.connect_to_did(bob_did)
@@ -78,7 +78,7 @@ async def main():
             print(f"Successfully sent message to {bob_did}")
         else:
             print(f"Failed to send message to {bob_did}")
-        
+
         # Wait for bob's reply
         while True:
             reply = await alice_session.receive_message()

@@ -1,11 +1,11 @@
+import asyncio
 import json
 import logging
 import traceback
-import asyncio
 import uuid
 from typing import Any, Dict
 
-from agent_connect.python.app_protocols.protocol_base.requester_base import RequesterBase
+from agent_connect.app_protocols.protocol_base.requester_base import RequesterBase
 
 
 class EducationalBackgroundRequester(RequesterBase):
