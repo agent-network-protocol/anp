@@ -24,7 +24,7 @@ TEST_API_KEY = '10090.bo9JAoRCAbQV43FD8kzX5SyEgxCs2R9z'   # Test API key, daily 
 sdk_short_term_key_callback_list = []
 
 def sdk_short_term_key_callback(local_did, remote_did, secret_key_json):
-    print(f"SDK short_term_key_callback: {local_did}, {remote_did}, {secret_key_json}")
+    print(f"SDK short_term_key_callback: {local_did}, {remote_did}, [secret_key_json REDACTED]")
     sdk_short_term_key_callback_list.append((local_did, remote_did, secret_key_json))
 
 
