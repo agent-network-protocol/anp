@@ -89,7 +89,9 @@ class DidWbaVerifier:
     # ------------------------
     # Public API
     # ------------------------
-    async def verify_auth_header(self, authorization: str, domain: str) -> dict[str, Any]:
+    async def verify_auth_header(
+        self, authorization: str, domain: str
+    ) -> dict[str, Any]:
         """Verify an HTTP Authorization header.
 
         - If header starts with "Bearer ", validate the JWT and return {"did": ...}.
@@ -127,11 +129,17 @@ class DidWbaVerifier:
         # Extract header parts
         header_parts = extract_auth_header_parts(authorization)
         if not header_parts:
-            raise DidWbaVerifierError("Invalid authorization header format", status_code=401)
+            raise DidWbaVerifierError(
+                "Invalid authorization header format", status_code=401
+            )
 
         # Unpack order: (did, nonce, timestamp, verification_method, signature)
         did, nonce, timestamp, verification_method, signature = header_parts
-        logger.info("Processing DID WBA authentication - DID: %s, Verification Method: %s", did, verification_method)
+        logger.info(
+            "Processing DID WBA authentication - DID: %s, Verification Method: %s",
+            did,
+            verification_method,
+        )
 
         # Verify timestamp
         if not self._verify_timestamp(timestamp):
@@ -148,9 +156,6 @@ class DidWbaVerifier:
             raise DidWbaVerifierError("Failed to resolve DID document", status_code=401)
 
         logger.info("Successfully resolved DID document: %s", did)
-        logger.info("DID document: %s", did_document)
-        logger.info("Domain: %s", domain)
-        logger.info("Authorization: %s", authorization)
 
         # Verify signature
         try:
@@ -159,23 +164,26 @@ class DidWbaVerifier:
                 did_document=did_document,
                 service_domain=domain,
             )
-            logger.info("Signature verification result: %s, message: %s", is_valid, message)
+            logger.info(
+                "Signature verification result: %s, message: %s", is_valid, message
+            )
             if not is_valid:
-                raise DidWbaVerifierError(f"Invalid signature: {message}", status_code=401)
+                raise DidWbaVerifierError(
+                    f"Invalid signature: {message}", status_code=401
+                )
         except DidWbaVerifierError:
             raise
         except Exception as exc:  # Defensive: wrap any unforeseen issues
             logger.error("Error verifying signature: %s", exc)
-            raise DidWbaVerifierError(f"Error verifying signature: {exc}", status_code=401)
+            raise DidWbaVerifierError(
+                f"Error verifying signature: {exc}", status_code=401
+            )
 
-        # If JWT keys are provided, issue a token; otherwise return DID only
-        if self.config.jwt_private_key and self.config.jwt_public_key:
-            access_token = self._create_access_token(data={"sub": did})
-            logger.info("Authentication successful, access token generated")
-            return {"access_token": access_token, "token_type": "bearer", "did": did}
+        # Generate access token
+        access_token = self._create_access_token(data={"sub": did})
+        logger.info("Authentication successful, access token generated")
 
-        logger.info("Authentication successful without JWT issuance (no JWT keys configured)")
-        return {"did": did}
+        return {"access_token": access_token, "token_type": "bearer", "did": did}
 
     def _verify_timestamp(self, timestamp_str: str) -> bool:
         """Verify if a timestamp is within the allowed period."""
@@ -193,7 +201,7 @@ class DidWbaVerifier:
                 return False
 
             # Expired if older than configured window
-            past_diff = (current_time - request_time)
+            past_diff = current_time - request_time
             if past_diff > timedelta(minutes=self.config.timestamp_expiration_minutes):
                 logger.error(
                     "Timestamp expired. Current: %s, Request: %s, Older by: %s seconds",
@@ -222,9 +230,17 @@ class DidWbaVerifier:
                     result = await result
                 accepted = bool(result)
                 if accepted:
-                    logger.info("External nonce validator accepted nonce: %s for DID: %s", nonce, did)
+                    logger.info(
+                        "External nonce validator accepted nonce: %s for DID: %s",
+                        nonce,
+                        did,
+                    )
                 else:
-                    logger.warning("External nonce validator rejected nonce: %s for DID: %s", nonce, did)
+                    logger.warning(
+                        "External nonce validator rejected nonce: %s for DID: %s",
+                        nonce,
+                        did,
+                    )
                 return accepted
             except Exception as exc:
                 logger.error("External nonce validator error: %s", exc)
@@ -235,8 +251,10 @@ class DidWbaVerifier:
 
         # Clean up expired nonces
         expired = [
-            n for n, t in self._valid_server_nonces.items()
-            if current_time - t > timedelta(minutes=self.config.nonce_expiration_minutes)
+            n
+            for n, t in self._valid_server_nonces.items()
+            if current_time - t
+            > timedelta(minutes=self.config.nonce_expiration_minutes)
         ]
         for n in expired:
             del self._valid_server_nonces[n]
@@ -254,36 +272,57 @@ class DidWbaVerifier:
     # ------------------------
     # JWT flow
     # ------------------------
-    def _create_access_token(self, data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    def _create_access_token(
+        self, data: dict[str, Any], expires_delta: timedelta | None = None
+    ) -> str:
         """Create a new JWT access token (RS256 by default)."""
         if not self.config.jwt_private_key:
             logger.error("Failed to load JWT private key")
-            raise DidWbaVerifierError("Internal server error during token generation", status_code=500)
+            raise DidWbaVerifierError(
+                "Internal server error during token generation", status_code=500
+            )
 
         payload = data.copy()
         now = datetime.now(UTC)
         payload.update({"iat": now})
-        exp = now + (expires_delta or timedelta(minutes=self.config.access_token_expire_minutes))
+        exp = now + (
+            expires_delta or timedelta(minutes=self.config.access_token_expire_minutes)
+        )
         payload.update({"exp": exp})
 
-        token = jwt.encode(payload, self.config.jwt_private_key, algorithm=self.config.jwt_algorithm)
+        token = jwt.encode(
+            payload, self.config.jwt_private_key, algorithm=self.config.jwt_algorithm
+        )
         return token
 
     def _handle_bearer_auth(self, token_header_value: str) -> dict[str, Any]:
         """Validate a Bearer token and return DID information."""
         try:
-            token = token_header_value[7:] if token_header_value.startswith("Bearer ") else token_header_value
+            token = (
+                token_header_value[7:]
+                if token_header_value.startswith("Bearer ")
+                else token_header_value
+            )
 
             if not self.config.jwt_public_key:
                 logger.error("Failed to load JWT public key")
-                raise DidWbaVerifierError("Internal server error during token verification", status_code=500)
+                raise DidWbaVerifierError(
+                    "Internal server error during token verification", status_code=500
+                )
 
-            payload = jwt.decode(token, self.config.jwt_public_key, algorithms=[self.config.jwt_algorithm])
+            payload = jwt.decode(
+                token,
+                self.config.jwt_public_key,
+                algorithms=[self.config.jwt_algorithm],
+            )
 
             # Basic claims validation
             for claim in ("sub", "iat", "exp"):
                 if claim not in payload:
-                    raise DidWbaVerifierError(f"Invalid token payload: missing '{claim}' field", status_code=401)
+                    raise DidWbaVerifierError(
+                        f"Invalid token payload: missing '{claim}' field",
+                        status_code=401,
+                    )
 
             did = payload["sub"]
             if not isinstance(did, str) or not did.startswith("did:wba:"):
@@ -321,5 +360,3 @@ class DidWbaVerifier:
         except Exception as exc:
             logger.error("Error during token authentication: %s", exc)
             raise DidWbaVerifierError("Authentication error", status_code=500)
-
-
