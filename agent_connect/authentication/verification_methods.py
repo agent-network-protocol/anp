@@ -1,14 +1,11 @@
-from abc import ABC, abstractmethod
 import base64
+import logging
+from abc import ABC, abstractmethod
+from typing import Dict
+
 import base58
-from typing import Dict, Union, Tuple
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.serialization import (
-    Encoding, PublicFormat, PrivateFormat, NoEncryption
-)
-import logging
 
 # Define supported curve mapping
 CURVE_MAPPING = {

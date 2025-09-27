@@ -6,7 +6,7 @@ from .did_wba import (
     resolve_did_wba_document_sync,
     verify_auth_header_signature,
 )
-from .did_wba_auth_header import DIDWbaAuthHeader
+from .did_wba_authenticator import DIDWbaAuthHeader
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
 
 # Define what should be exported when using "from agent_connect.authentication import *"
