@@ -38,7 +38,7 @@ Corresponding to the three-layer architecture of the Agent Network Protocol, Age
    Implements W3C DID-based authentication and end-to-end encrypted communication, including DID document generation, verification, retrieval, and end-to-end encryption based on DID and ECDHE (Elliptic Curve Diffie-Hellman Ephemeral). Currently supports **HTTP-based DID authentication**.
 
 2. 🌍 **Meta-Protocol Module**
-   Built on LLM (Large Language Models) and meta-protocols, this module handles application protocol negotiation, protocol code implementation, protocol debugging, and protocol processing.
+   Built on LLM (Large Language Models) and meta-protocols, this module handles application protocol negotiation, protocol code implementation, protocol debugging, and protocol processing. The current release ships the scaffolding but the flows are not yet wired into the default examples.
 
 3. 📡 **Application Layer Protocol Integration Framework**
    Manages protocol specifications and code for communication with other agents, including protocol loading, unloading, configuration, and processing. This framework enables agents to easily load and run required protocols on demand, accelerating protocol negotiation.
@@ -82,35 +82,77 @@ To establish ANP as an industry standard, we plan to form an ANP Standardization
 pip install agent-connect
 ```
 
-### Running
+### Local Development Setup
 
-After installing the agent-connect library, you can run our demos to experience its capabilities.
+Use [uv](https://github.com/astral-sh/uv) to create an isolated environment and install the project in editable mode:
 
-Clone the repository:
+```bash
+uv venv .venv
+uv pip install --python .venv/bin/python --editable .
+```
+
+You can now invoke scripts with uv. The examples below assume the commands are executed from the repository root:
+
+```bash
+uv run --python .venv/bin/python python -m pip --version
+```
+
+> Tip: set `UV_PYTHON=.venv/bin/python` in your shell to omit the `--python` flag from subsequent `uv run` commands.
+
+Clone the repository (if you have not already):
 
 ```bash
 git clone https://github.com/agent-network-protocol/AgentConnect.git
 ```
 
-#### Decentralized Authentication Based on did:wba and HTTP
+### Repository Structure
+
+The `agent_connect/` package contains the SDK modules that power the examples and published wheel:
+
+- `agent_connect/authentication`: DID WBA helpers covering document creation, signing, authentication headers, and verification services.
+- `agent_connect/anp_crawler`: Utilities that traverse ANP registries and example endpoints; useful for quick interoperability checks.
+- `agent_connect/utils`: Shared helpers such as cryptographic primitives and serialization helpers that are reused across modules.
+- `agent_connect/meta_protocol`: Meta-protocol negotiation scaffolding based on LLM prompts. The interfaces are present but the flows are not yet activated in this release.
+- `agent_connect/e2e_encryption`: Planned end-to-end encryption utilities. The current SDK publishes the package for forward compatibility, although no active features depend on it yet.
+
+Example scripts live under `examples/`, documentation in `docs/`, and packaging artifacts within `dist/`.
+
+### Using AgentConnect
+
+The `agent_connect` package can be imported directly after installation:
+
+```python
+from agent_connect.authentication import create_did_wba_document
+
+document, keys = create_did_wba_document(hostname="demo.agent-network")
+print(document["id"])
+```
+
+#### DID WBA Offline Authentication Workflow
 
 did:wba is a Web-based Decentralized Identifier. More information: [did:wba, a Web-based Decentralized Identifier](https://github.com/agent-network-protocol/AgentNetworkProtocol/blob/main/blogs/did%3Awba%2C%20a%20Web-based%20Decentralized%20Identifier.md).
 
-Our latest version supports decentralized authentication based on did:wba and HTTP. We provide a did:wba server for testing. Server API documentation: [did:wba Server Test API Documentation](https://github.com/agent-network-protocol/AgentNetworkProtocol/blob/main/docs/did%3Awba%20server%20test%20interface.md). 
+The `examples/python/did_wba_examples/` directory provides a step-by-step walkthrough that stays fully local (no HTTP traffic required) and demonstrates how to build, validate, and verify DID headers using the SDK:
 
-Example code path: `examples/did_wba_examples`. Including:
+1. **`create_did_document.py`** – Generates a `did:wba` identifier, writes the DID document to `examples/python/did_wba_examples/generated/did.json`, and stores the associated key pair. Run:
 
-- basic.py: A basic example of DID WBA authentication. Creates a DID document and private key, uploads the DID document to the server, and tests DID authentication.
-- full.py: Builds on basic.py, adding token verification and DID document validation.
-- client.py: A client example for testing if your server supports DID WBA authentication, using pre-created DID documents and private keys.
+   ```bash
+   uv run --python .venv/bin/python python examples/python/did_wba_examples/create_did_document.py
+   ```
 
-Run these files directly to experience DID WBA authentication:
+2. **`validate_did_document.py`** – Loads (or regenerates) the DID document and checks the required contexts, verification method wiring, and HTTPS service endpoint. Run:
 
-```bash
-python basic.py
-python full.py
-python client.py
-```
+   ```bash
+   uv run --python .venv/bin/python python examples/python/did_wba_examples/validate_did_document.py
+   ```
+
+3. **`authenticate_and_verify.py`** – Uses `DIDWbaAuthHeader` to sign an authentication header with `docs/did_public/public-private-key.pem`, then verifies it with `DidWbaVerifier` configured with the RS256 demo keys under `docs/jwt_rs256/`. The script issues and validates a bearer token entirely in memory. Run:
+
+   ```bash
+   uv run --python .venv/bin/python python examples/python/did_wba_examples/authenticate_and_verify.py
+   ```
+
+These scripts showcase how to compose the building blocks from `agent_connect/authentication`. When adapting to your infrastructure, replace the demo documents and keys with your own material, or plug in a real DID resolver instead of the local stub used in the examples.
 
 You can also experience DID WBA authentication through our demo page: [DID WBA Authentication Page](https://service.agent-network-protocol.com/wba/examples/). This page demonstrates the process of creating a DID identity on one platform (pi-unlimited.com) and then verifying the identity on another platform (service.agent-network-protocol.com).
 

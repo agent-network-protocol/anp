@@ -147,11 +147,7 @@ ANP Crawler 重构方案
 ### 类设计架构
 
 ```
-ANPSession (会话管理类) - anp_session.py
-├── 管理单次爬取会话
-├── 记录已访问的 URL
-├── 缓存获取结果
-└── 提供统一的接口入口
+
 
 ANPClient (HTTP客户端类) - anp_client.py  
 ├── 复用 ANPTool 的 DID 认证能力
