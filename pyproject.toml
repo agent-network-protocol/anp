@@ -1,48 +1,50 @@
-[tool.poetry]
+[project]
 name = "agent-connect"
 version = "0.3.6"
 description = "An SDK that enables agents to connect with each other, allowing them to perform identity authentication, end-to-end encrypted communication, automatic protocol negotiation based on LLMs, and efficient data exchange."
-authors = ["changshan <chgaowei@gmail.com>"]
-license = "MIT"
+authors = [
+    {name = "changshan", email = "chgaowei@gmail.com"}
+]
+license = {text = "MIT"}
 readme = "README.md"
-packages = [{include = "agent_connect"}]
-repository = "https://github.com/agent-network-protocol/AgentConnect"
-homepage = "https://agent-network-protocol.com/"
-documentation = "https://github.com/agent-network-protocol/AgentNetworkProtocol"
-
+requires-python = ">=3.8"
+keywords = ["agent", "protocol", "authentication", "encryption", "communication"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 
-[tool.poetry.dependencies]
-python = ">=3.8"
-ecdsa = "^0.19.0"
-cryptography = "^43.0.3"
-asn1crypto = "^1.5.1"
-base58 = "^2.1.1"
-aiohttp = "^3.10.10"
-requests = "^2.32.3"
-websockets = "^13.1"
-pydantic = ">=2.9.2,<3.0.0"
-python-dotenv = "^1.0.1"
-jsonschema = "^4.23.0"
-canonicaljson = "^2.0.0"
-jcs = "^0.2.1"
-pyjwt = "^2.9.0"
+dependencies = [
+    "ecdsa>=0.19.0",
+    "cryptography>=43.0.3",
+    "asn1crypto>=1.5.1",
+    "base58>=2.1.1",
+    "aiohttp>=3.10.10",
+    "requests>=2.32.3",
+    "websockets>=13.1",
+    "pydantic>=2.9.2,<3.0.0",
+    "python-dotenv>=1.0.1",
+    "jsonschema>=4.23.0",
+    "canonicaljson>=2.0.0",
+    "jcs>=0.2.1",
+    "pyjwt>=2.9.0",
+]
 
-[tool.poetry.group.api.dependencies]
-openai = { version = ">=1.54.3", optional = true }
-fastapi = { version = ">=0.115.4,<1.0.0", optional = true }
-uvicorn = { version = ">=0.32.0,<1.0.0", optional = true }
+[project.optional-dependencies]
+api = [
+    "openai>=1.54.3",
+    "fastapi>=0.115.4,<1.0.0",
+    "uvicorn>=0.32.0,<1.0.0",
+]
 
-[tool.poetry.extras]
-api = ["openai", "fastapi", "uvicorn"]
+[project.urls]
+Homepage = "https://agent-network-protocol.com/"
+Repository = "https://github.com/agent-network-protocol/AgentConnect"
+Documentation = "https://github.com/agent-network-protocol/AgentNetworkProtocol"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[virtualenvs]
-in-project = true
+
