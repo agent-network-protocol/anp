@@ -1,106 +1,117 @@
-# ANPCrawler示例 - AMAP服务
+<div align="center">
+  
+[English](README.md) | [中文](README.cn.md)
 
-本目录包含使用ANPCrawler访问AMAP代理服务的示例代码。
+</div>
 
-## 文件说明
+# ANPCrawler Examples - AMAP Service
 
-- `amap_crawler_example.py` - 完整的示例，展示所有ANPCrawler功能
-- `simple_amap_example.py` - 简化示例，快速入门
-- `README.md` - 本说明文件
+This directory contains examples using ANPCrawler to access AMAP agent services.
 
-## 前置条件
+## Contents
 
-1. **环境设置**
-   ```bash
-   uv venv .venv
-   uv pip install --python .venv/bin/python --editable .
-   ```
+- `amap_crawler_example.py` - Complete example showcasing all ANPCrawler features
+- `simple_amap_example.py` - Simplified example for quick start
+- `README.md` - This documentation file
 
-2. **DID认证文件**
-   确保以下文件存在：
-   - `docs/did_public/public-did-doc.json`
-   - `docs/did_public/public-private-key.pem`
+## Prerequisites
 
-## 运行示例
+### Environment Setup
+```bash
+# Option 1: Install via pip
+pip install agent-connect
 
-### 简单示例
+# Option 2: Source installation (recommended for developers)
+git clone https://github.com/agent-network-protocol/AgentConnect.git
+cd AgentConnect
+uv sync
+```
+
+### DID Authentication Files
+Ensure the following files exist:
+- `docs/did_public/public-did-doc.json`
+- `docs/did_public/public-private-key.pem`
+
+## Running Examples
+
+### Simple Example
 ```bash
 uv run python examples/python/anp_crawler_examples/simple_amap_example.py
 ```
 
-### 完整示例
+### Complete Example
 ```bash
 uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 ```
 
-## 示例功能
+## Example Features
 
-### 1. 获取代理描述文档
+### 1. Fetch Agent Description Document
 ```python
-# 访问URL并获取ad.json内容
+# Access URL and retrieve ad.json content
 content_json, interfaces_list = await crawler.fetch_text(
     "https://agent-connect.ai/agents/travel/mcp/agents/amap/ad.json"
 )
 ```
 
-### 2. 解析JSON-RPC接口
+### 2. Parse JSON-RPC Interfaces
 ```python
-# 自动解析接口并转换为OpenAI工具格式
+# Automatically parse interfaces and convert to OpenAI tool format
 tools = crawler.list_available_tools()
 ```
 
-### 3. 调用JSON-RPC方法
+### 3. Call JSON-RPC Methods
 ```python
-# 调用发现的工具/方法
+# Call discovered tools/methods
 result = await crawler.execute_tool_call(tool_name, arguments)
 ```
 
-## 示例输出
+## Example Output
 
-运行示例后，您将看到：
+After running examples, you will see:
 
-1. **代理描述文档内容** - 完整的ad.json内容
-2. **发现的接口** - 从代理描述中提取的JSON-RPC接口
-3. **可用工具列表** - 可以调用的工具名称
-4. **工具调用结果** - 实际JSON-RPC调用的返回结果
+1. **Agent Description Document Content** - Complete ad.json content
+2. **Discovered Interfaces** - JSON-RPC interfaces extracted from agent description
+3. **Available Tool List** - Names of callable tools
+4. **Tool Call Results** - Actual JSON-RPC call return results
 
-## 故障排除
+## Troubleshooting
 
-### 文件不存在错误
+### File Not Found Error
 ```
-FileNotFoundError: DID文档文件不存在
+FileNotFoundError: DID document file not found
 ```
-**解决方案**: 确保以下文件存在:
+**Solution**: Ensure the following files exist:
 - `docs/did_public/public-did-doc.json`
 - `docs/did_public/public-private-key.pem`
 
-### 网络连接错误
-确保您的网络可以访问 `agent-connect.ai` 域名。
+### Network Connection Error
+Ensure your network can access the `agent-connect.ai` domain.
 
-### 认证失败
-检查DID文档和私钥文件是否正确生成和匹配。
+### Authentication Failure
+Check if DID document and private key files are correctly generated and matched.
 
-## 代码结构
+## Code Structure
 
 ```python
-# 1. 初始化爬虫
+# 1. Initialize crawler
 crawler = ANPCrawler(
     did_document_path="path/to/did.json",
     private_key_path="path/to/private-key.pem"
 )
 
-# 2. 获取代理描述
+# 2. Fetch agent description
 content, interfaces = await crawler.fetch_text(url)
 
-# 3. 列出工具
+# 3. List tools
 tools = crawler.list_available_tools()
 
-# 4. 调用工具
+# 4. Call tools
 result = await crawler.execute_tool_call(tool_name, arguments)
 ```
 
-## 相关文档
+## Related Documentation
 
-- [ANPCrawler API文档](../../../agent_connect/anp_crawler/)
-- [DID WBA认证示例](../did_wba_examples/)
-- [项目根目录CLAUDE.md](../../../CLAUDE.md)
+- [ANPCrawler API Documentation](../../../agent_connect/anp_crawler/)
+- [DID WBA Authentication Examples](../did_wba_examples/)
+- [Project Root README](../../../README.md)
