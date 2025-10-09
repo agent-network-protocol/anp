@@ -3,7 +3,7 @@ ANP Crawler package public API exports.
 
 Import from this package to access the core crawler components:
 
-from agent_connect.anp_crawler import (
+from anp.anp_crawler import (
     ANPCrawler,
     ANPClient,
     ANPInterface,

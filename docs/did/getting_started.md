@@ -28,7 +28,7 @@ DID文档是描述去中心化身份的JSON-LD文档，包含以下核心元素�
 以下示例展示如何使用AgentConnect创建DID文档和相应的私钥：
 
 ```python
-from agent_connect.authentication import create_did_wba_document
+from anp.authentication import create_did_wba_document
 
 # Create DID document and key pair
 did_document, keys = create_did_wba_document(
@@ -163,7 +163,7 @@ DID WBA身份验证过程包括：
 AgentConnect提供`DIDWbaAuthHeader`类，简化了身份验证过程：
 
 ```python
-from agent_connect.authentication import DIDWbaAuthHeader
+from anp.authentication import DIDWbaAuthHeader
 
 # Create DIDWbaAuthHeader instance
 auth_client = DIDWbaAuthHeader(
@@ -256,7 +256,7 @@ import asyncio
 import aiohttp
 import json
 from pathlib import Path
-from agent_connect.authentication import create_did_wba_document, DIDWbaAuthHeader
+from anp.authentication import create_did_wba_document, DIDWbaAuthHeader
 
 async def main():
     # 1. Generate unique identifier
@@ -373,7 +373,7 @@ AgentConnect提供了日志功能，可帮助调试DID相关问题：
 
 ```python
 import logging
-from agent_connect.utils.log_base import set_log_color_level
+from anp.utils.log_base import set_log_color_level
 
 # Set log level
 set_log_color_level(logging.DEBUG)  # or INFO, WARNING, ERROR

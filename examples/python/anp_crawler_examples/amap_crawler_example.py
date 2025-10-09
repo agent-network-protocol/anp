@@ -12,11 +12,11 @@ import os
 import sys
 from pathlib import Path
 
-# 添加项目根目录到路径，以便导入agent_connect模块
+# 添加项目根目录到路径，以便导入anp模块
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from agent_connect.anp_crawler.anp_crawler import ANPCrawler
+from anp.anp_crawler.anp_crawler import ANPCrawler
 
 # 配置日志
 logging.basicConfig(

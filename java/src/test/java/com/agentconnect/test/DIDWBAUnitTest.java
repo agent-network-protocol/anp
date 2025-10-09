@@ -35,9 +35,9 @@ public class DIDWBAUnitTest {
     @Test
     public void extractAuthHeaderParts() {
         //注意替换成你自己的did和私钥目录
-        String didDocumentPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/agent_connect/java/src" +
+        String didDocumentPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/anp/java/src" +
                 "/test/resources/did_keys/user_d606bcc81672bece/did.json";
-        String privateKeyPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/agent_connect/java/src/test" +
+        String privateKeyPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/anp/java/src/test" +
                 "/resources/did_keys/user_d606bcc81672bece/key-1_private.pem";
         DIDWbaAuthHeader authClient = new DIDWbaAuthHeader(didDocumentPath, privateKeyPath);
 
@@ -49,9 +49,9 @@ public class DIDWBAUnitTest {
     @Test
     public void verifyAuthHeaderSignature() throws IOException {
         //注意替换成你自己的did和私钥目录
-        String didDocumentPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/agent_connect/java/src" +
+        String didDocumentPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/anp/java/src" +
                 "/test/resources/did_keys/user_d606bcc81672bece/did.json";
-        String privateKeyPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/agent_connect/java/src/test" +
+        String privateKeyPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/anp/java/src/test" +
                 "/resources/did_keys/user_d606bcc81672bece/key-1_private.pem";
         //注意替换成你自己的did
         String did = "did:wba:service.agent-network-protocol.com:wba:user:d606bcc81672bece";

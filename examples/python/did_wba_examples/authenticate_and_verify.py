@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlparse
 
-from agent_connect.authentication import DIDWbaAuthHeader
-from agent_connect.authentication import did_wba_verifier as verifier_module
-from agent_connect.authentication.did_wba_verifier import (
+from anp.authentication import DIDWbaAuthHeader
+from anp.authentication import did_wba_verifier as verifier_module
+from anp.authentication.did_wba_verifier import (
     DidWbaVerifier,
     DidWbaVerifierConfig,
 )

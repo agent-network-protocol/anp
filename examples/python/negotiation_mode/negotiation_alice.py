@@ -22,9 +22,9 @@ from utils import (
     load_bob_did,
 )
 
-from agent_connect.app_protocols import RequesterBase
-from agent_connect.simple_node import RequesterSession, SimpleNegotiationNode
-from agent_connect.utils.log_base import set_log_color_level
+from anp.app_protocols import RequesterBase
+from anp.simple_node import RequesterSession, SimpleNegotiationNode
+from anp.utils.log_base import set_log_color_level
 
 # Define protocol requirements
 requirement = """

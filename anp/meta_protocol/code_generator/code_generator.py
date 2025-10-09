@@ -22,13 +22,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
-from agent_connect.meta_protocol.code_generator.provider_generator import (
+from anp.meta_protocol.code_generator.provider_generator import (
     generate_provider_code,
 )
-from agent_connect.meta_protocol.code_generator.requester_generator import (
+from anp.meta_protocol.code_generator.requester_generator import (
     generate_requester_code,
 )
-from agent_connect.utils.llm.base_llm import BaseLLM
+from anp.utils.llm.base_llm import BaseLLM
 
 
 class ProtocolCodeGenerator:

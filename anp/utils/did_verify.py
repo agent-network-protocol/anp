@@ -11,7 +11,7 @@ from typing import Any, Dict, Tuple
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from agent_connect.utils.crypto_tool import (
+from anp.utils.crypto_tool import (
     verify_did_with_public_key,
     verify_signature_for_json,
 )

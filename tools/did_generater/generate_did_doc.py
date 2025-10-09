@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from agent_connect.authentication.did_wba import create_did_wba_document
-from agent_connect.utils.log_base import set_log_color_level
+from anp.authentication.did_wba import create_did_wba_document
+from anp.utils.log_base import set_log_color_level
 
 
 def parse_did(did: str) -> Tuple[str, List[str], str]:

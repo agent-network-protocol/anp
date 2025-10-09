@@ -19,7 +19,7 @@ public class DidWbaFullExample {
     // Or use the test domain we provide (currently using agent-network-protocol.com, 
     // will later change to service.agent-network-protocol.com)
     private static final String SERVER_DOMAIN = "service.agent-network-protocol.com";
-    private static final String didKeysPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/agent_connect/java/src" +
+    private static final String didKeysPath = "/Users/yanliqing/Documents/llm/ANP/anp-fork/AgentConnect/anp/java/src" +
             "/test/resources";
     public static void main(String[] args) {
         try {

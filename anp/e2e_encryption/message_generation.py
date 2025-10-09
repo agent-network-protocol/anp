@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from agent_connect.utils.crypto_tool import (
+from anp.utils.crypto_tool import (
     encrypt_aes_gcm_sha256,
     generate_16_char_from_random_num,
     generate_random_hex,

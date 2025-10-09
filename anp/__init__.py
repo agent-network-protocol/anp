@@ -9,6 +9,6 @@
 # # simple node
 # from .simple_node import simple_node
 
-# # Define what should be exported when using "from agent_connect import *"
+# # Define what should be exported when using "from anp import *"
 # __all__ = ['WssMessageSDK', 'simple_node', 'didallclient']
 

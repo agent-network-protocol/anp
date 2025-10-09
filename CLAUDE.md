@@ -14,7 +14,7 @@ uv pip install --python .venv/bin/python --editable .
 ```bash
 uv run pytest                              # Run full test suite
 uv run pytest -k <pattern>                 # Run specific tests
-uv run pytest --cov=agent_connect          # Run tests with coverage
+uv run pytest --cov=anp          # Run tests with coverage
 ```
 
 **Build and Distribution:**
@@ -42,7 +42,7 @@ python tools/did_generater/generate_did_doc.py <did> [--agent-description-url UR
 
 AgentConnect implements the Agent Network Protocol (ANP) through a three-layer architecture:
 
-**Core Modules (`agent_connect/`):**
+**Core Modules (`anp/`):**
 - `authentication/`: DID WBA (Web-based Decentralized Identifiers) authentication system
   - `did_wba.py`: Core DID document creation, resolution, and verification
   - `did_wba_authenticator.py`: Authentication header generation (`DIDWbaAuthHeader`)
@@ -106,7 +106,7 @@ AZURE_OPENAI_MODEL_NAME=<name>
 
 ## Testing Guidelines
 
-Tests are located in `agent_connect/unittest/` following pytest conventions. Test files use `test_<area>.py` naming and functions use `test_<behavior>`. Focus on authentication handshakes, encryption boundaries, protocol negotiation flows, and error conditions.
+Tests are located in `anp/unittest/` following pytest conventions. Test files use `test_<area>.py` naming and functions use `test_<behavior>`. Focus on authentication handshakes, encryption boundaries, protocol negotiation flows, and error conditions.
 
 ## Code Style
 

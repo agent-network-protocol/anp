@@ -27,8 +27,8 @@ Both `meta_protocol` and `e2e_encryption` packages coexist in the repository for
 
 ## Minimal Example
 ```python
-from agent_connect.anp_crawler.anp_client import ANPClient
-from agent_connect.anp_crawler.anp_parser import ANPDocumentParser
+from anp.anp_crawler.anp_client import ANPClient
+from anp.anp_crawler.anp_parser import ANPDocumentParser
 
 client = ANPClient(
     did_document_path="docs/did_public/public-did-doc.json",

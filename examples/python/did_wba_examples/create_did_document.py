@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_connect.authentication import create_did_wba_document
+from anp.authentication import create_did_wba_document
 
 
 def main() -> None:

@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from agent_connect.utils.llm.base_llm import BaseLLM
+from anp.utils.llm.base_llm import BaseLLM
 
 NEGOTIATION_INITIAL_SYSTEM_PROMPT = """
 You are a protocol design expert. Your task is to design a communication protocol document based on given requirements and input/output descriptions.

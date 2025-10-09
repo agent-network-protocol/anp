@@ -14,7 +14,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from agent_connect.anp_crawler.anp_crawler import ANPCrawler
+from anp.anp_crawler.anp_crawler import ANPCrawler
 
 
 async def simple_amap_example():

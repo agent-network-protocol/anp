@@ -24,12 +24,12 @@ sys.path.append(current_directory)
 sys.path.append(current_directory + "/../")
 sys.path.append(current_directory + "/../../")
 
-from agent_connect.e2e_encryption.message_generation import (
+from anp.e2e_encryption.message_generation import (
     generate_destination_hello,
     generate_finished_message,
     generate_source_hello,
 )
-from agent_connect.utils.crypto_tool import (
+from anp.utils.crypto_tool import (
     decrypt_aes_gcm_sha256,
     derive_tls13_data_keys,
     generate_16_char_from_random_num,

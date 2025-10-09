@@ -21,9 +21,9 @@ from utils import (
     get_llm_instance,
 )
 
-from agent_connect.app_protocols import ProviderBase
-from agent_connect.simple_node import ProviderSession, SimpleNegotiationNode
-from agent_connect.utils.log_base import set_log_color_level
+from anp.app_protocols import ProviderBase
+from anp.simple_node import ProviderSession, SimpleNegotiationNode
+from anp.utils.log_base import set_log_color_level
 
 
 # Mock callback function for getting capability information

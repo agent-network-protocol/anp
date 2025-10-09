@@ -181,9 +181,9 @@ ValueError: DID identifier must start with 'did:wba:'
 
 ### 导入依赖
 ```python
-from agent_connect.authentication import create_did_wba_document
-from agent_connect.authentication import DIDWbaAuthHeader
-from agent_connect.authentication.did_wba_verifier import DidWbaVerifier
+from anp.authentication import create_did_wba_document
+from anp.authentication import DIDWbaAuthHeader
+from anp.authentication.did_wba_verifier import DidWbaVerifier
 ```
 
 ### 基本使用模式
@@ -212,7 +212,7 @@ result = await verifier.verify_auth_header(authorization, domain)
 - [DID-WBA规范](https://github.com/agent-network-protocol/AgentNetworkProtocol)
 - [ANP Crawler示例](../anp_crawler_examples/README.md)
 - [AgentConnect核心文档](../../../README.cn.md)
-- [Authentication模块API](../../../agent_connect/authentication/)
+- [Authentication模块API](../../../anp/authentication/)
 
 ## 安全注意事项
 

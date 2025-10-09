@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-# Import agent_connect for DID authentication
+# Import anp for DID authentication
 from .did_wba import generate_auth_header
 
 

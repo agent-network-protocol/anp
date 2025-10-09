@@ -112,6 +112,6 @@ result = await crawler.execute_tool_call(tool_name, arguments)
 
 ## Related Documentation
 
-- [ANPCrawler API Documentation](../../../agent_connect/anp_crawler/)
+- [ANPCrawler API Documentation](../../../anp/anp_crawler/)
 - [DID WBA Authentication Examples](../did_wba_examples/)
 - [Project Root README](../../../README.md)

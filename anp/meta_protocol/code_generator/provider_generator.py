@@ -9,8 +9,8 @@ import json
 import logging
 from typing import Any, Dict, Tuple
 
-from agent_connect.utils.llm.base_llm import BaseLLM
-from agent_connect.utils.llm_output_processer import extract_code_from_llm_output
+from anp.utils.llm.base_llm import BaseLLM
+from anp.utils.llm_output_processer import extract_code_from_llm_output
 
 PROVIDER_DESCRIPTION_PROMPT = """
 As an experienced protocol architect and system developer, please help us analyze protocol documentation to build accurate and comprehensive Python API description documents.
@@ -188,7 +188,7 @@ class ProviderBase(ABC):
 # Please generate provider class according to the following requirements:
 1. Class must inherit from ProviderBase, import ProviderBase class as follows:
 ```
-from agent_connect.app_protocols import ProviderBase
+from anp.app_protocols import ProviderBase
 ```
 
 2. Class name should use the class name defined in API documentation

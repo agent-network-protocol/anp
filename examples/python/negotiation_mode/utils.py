@@ -24,9 +24,9 @@ from config import (
 )
 from openai import AsyncAzureOpenAI
 
-from agent_connect.simple_node import SimpleNegotiationNode
-from agent_connect.utils.llm.base_llm import AzureLLM, BaseLLM
-from agent_connect.utils.llm_output_processer import extract_code_from_llm_output
+from anp.simple_node import SimpleNegotiationNode
+from anp.utils.llm.base_llm import AzureLLM, BaseLLM
+from anp.utils.llm_output_processer import extract_code_from_llm_output
 
 g_current_dir: str = os.path.dirname(os.path.abspath(__file__))
 
@@ -99,7 +99,7 @@ async def generate_code_for_protocol_requester_interface(llm: BaseLLM,
 2. Function must be async (async def)
 3. Function name must be call_requester_interface
 4. Function input parameter is RequesterBase instance
-5. RequesterBase import method: from agent_connect.app_protocols import RequesterBase
+5. RequesterBase import method: from anp.app_protocols import RequesterBase
 6. Call instance's send_request method in function, and construct appropriate test parameters based on description
 7. send_request definition: async def send_request(self, input: dict[str, Any]) -> dict[str, Any]:
 7. Function returns dictionary from send_request method

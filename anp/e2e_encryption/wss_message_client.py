@@ -14,7 +14,7 @@ from datetime import datetime
 import websockets
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from agent_connect.utils.crypto_tool import (
+from anp.utils.crypto_tool import (
     generate_random_hex,
     generate_router_json,
     load_private_key_from_pem,

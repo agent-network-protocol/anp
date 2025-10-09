@@ -12,8 +12,8 @@ examples/python/negotiation_mode/protocol_code/
 examples/negotiation_mode/*.json
 examples/simple_node_mode/*.json
 examples/python/did_wba_examples/did_keys/user_*/
-agent_connect/java/src/test/resources/*
-agent_connect/java/*
+anp/java/src/test/resources/*
+anp/java/*
 .idea
 examples/did_wba_examples/did_keys/*
 examples/negotiation_mode/*

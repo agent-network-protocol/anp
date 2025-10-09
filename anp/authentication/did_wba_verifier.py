@@ -22,7 +22,7 @@ from typing import Any
 import jwt
 
 # External DID WBA auth helpers (3rd-party dependency)
-from agent_connect.authentication import (
+from anp.authentication import (
     extract_auth_header_parts,
     resolve_did_wba_document,
     verify_auth_header_signature,

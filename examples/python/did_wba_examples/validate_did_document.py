@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-from agent_connect.authentication import create_did_wba_document
+from anp.authentication import create_did_wba_document
 
 REQUIRED_CONTEXTS = {
     "https://www.w3.org/ns/did/v1",

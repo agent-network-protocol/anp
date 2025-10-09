@@ -9,8 +9,8 @@ import json
 import logging
 from typing import Any, Dict, Tuple
 
-from agent_connect.utils.llm.base_llm import BaseLLM
-from agent_connect.utils.llm_output_processer import extract_code_from_llm_output
+from anp.utils.llm.base_llm import BaseLLM
+from anp.utils.llm_output_processer import extract_code_from_llm_output
 
 REQUESTER_DESCRIPTION_PROMPT = """
 As an experienced protocol architect and system developer, please help us analyze the protocol documentation thoroughly to build accurate and comprehensive API description files.
@@ -180,7 +180,7 @@ class RequesterBase(ABC):
 # Please generate the requester class according to the following requirements:
 1. The class must inherit from RequesterBase, import RequesterBase class using:
 ```
-from agent_connect.app_protocols import RequesterBase
+from anp.app_protocols import RequesterBase
 ```
 
 2. The class name should use the class name defined in the API documentation

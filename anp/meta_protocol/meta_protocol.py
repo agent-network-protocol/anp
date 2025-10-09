@@ -14,14 +14,14 @@ import traceback
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
-from agent_connect.meta_protocol.code_generator.code_generator import (
+from anp.meta_protocol.code_generator.code_generator import (
     ProtocolCodeGenerator,
 )
-from agent_connect.meta_protocol.protocol_negotiator import (
+from anp.meta_protocol.protocol_negotiator import (
     NegotiationStatus,
     ProtocolNegotiator,
 )
-from agent_connect.utils.llm.base_llm import BaseLLM
+from anp.utils.llm.base_llm import BaseLLM
 
 
 class ProtocolType(Enum):

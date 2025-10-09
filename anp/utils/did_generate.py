@@ -12,7 +12,7 @@ from typing import Any, Dict, Tuple
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from agent_connect.utils.crypto_tool import (
+from anp.utils.crypto_tool import (
     generate_bitcoin_address,
     generate_secp256r1_private_key,
     generate_secp256r1_public_key,
