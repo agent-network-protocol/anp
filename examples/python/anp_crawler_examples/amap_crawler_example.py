@@ -117,7 +117,7 @@ class AmapCrawlerExample:
                         # 获取接口规格文档
                         spec_content, spec_interfaces = await self.crawler.fetch_text(interface_url)
 
-                        print(f"\n" + "="*60)
+                        print("\n" + "="*60)
                         print(f"接口规格文档: {interface_url}")
                         print("="*60)
 
@@ -138,7 +138,7 @@ class AmapCrawlerExample:
         """列出所有可用的工具"""
         tools = self.crawler.list_available_tools()
 
-        print(f"\n" + "="*60)
+        print("\n" + "="*60)
         print("可用的工具列表:")
         print("="*60)
 
@@ -159,7 +159,7 @@ class AmapCrawlerExample:
 
     async def demonstrate_tool_call(self, tool_name: str, arguments: dict):
         """演示工具调用"""
-        print(f"\n" + "="*60)
+        print("\n" + "="*60)
         print(f"正在调用工具: {tool_name}")
         print(f"参数: {json.dumps(arguments, indent=2, ensure_ascii=False)}")
         print("="*60)
@@ -209,7 +209,7 @@ class AmapCrawlerExample:
                 await self.demonstrate_tool_call(first_tool, sample_arguments)
 
             # 5. 显示会话统计
-            print(f"\n" + "="*60)
+            print("\n" + "="*60)
             print("会话统计:")
             print("="*60)
             print(f"访问的URL数量: {len(self.crawler.get_visited_urls())}")
