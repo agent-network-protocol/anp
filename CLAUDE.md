@@ -34,6 +34,10 @@ uv run python examples/python/did_wba_examples/authenticate_and_verify.py
 python examples/python/negotiation_mode/negotiation_bob.py    # Start Bob first
 python examples/python/negotiation_mode/negotiation_alice.py  # Then Alice
 
+# FastANP examples
+uv run python examples/python/fastanp_examples/basic_example.py
+uv run python examples/python/fastanp_examples/fastapi_example.py
+
 # DID document generation tool
 python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
 ```
@@ -64,6 +68,15 @@ AgentConnect implements the Agent Network Protocol (ANP) through a three-layer a
   - `anp_interface.py`: Interface extraction and conversion utilities
   - `anp_client.py`: HTTP client for ANP resource fetching
 
+- `fastanp/`: Fast development framework for ANP agents
+  - `fastanp.py`: Main FastANP application class with decorator-based interface registration
+  - `interface_manager.py`: Function registration and OpenRPC generation
+  - `information.py`: Dynamic information management
+  - `ad_generator.py`: Agent description document generation
+  - `models.py`: Pydantic models for ANP components
+  - `utils.py`: Utility functions for URL normalization and type conversion
+  - `middleware.py`: Authentication middleware for FastAPI integration
+
 - `utils/`: Shared cryptographic and utility functions
   - `crypto_tool.py`: Low-level cryptographic primitives
   - `llm/`: LLM integration abstractions
@@ -92,6 +105,13 @@ AgentConnect implements the Agent Network Protocol (ANP) through a three-layer a
 - Parse OpenRPC specifications embedded in agent descriptions
 - Extract and convert protocol interfaces for interoperability
 
+**FastANP Framework:**
+- Decorator-based interface registration (`@app.interface`)
+- Automatic OpenRPC document generation
+- Dynamic information management
+- Built-in authentication middleware
+- FastAPI integration for web deployment
+
 ## Configuration
 
 **Environment Variables (`.env`):**
@@ -102,11 +122,48 @@ AZURE_OPENAI_DEPLOYMENT=<model>
 AZURE_OPENAI_MODEL_NAME=<name>
 ```
 
+**Optional Dependencies:**
+- `api`: FastAPI integration for FastANP framework
+- `dev`: Development tools (pytest, pytest-asyncio)
+
+**Install optional dependencies:**
+```bash
+# For FastAPI integration
+uv sync --extra api
+
+# For development
+uv sync --extra dev
+
+# For both
+uv sync --extra api,dev
+```
+
 **Security Note:** Never commit secrets to the repository. Use `.env` files loaded via `python-dotenv`.
 
 ## Testing Guidelines
 
-Tests are located in `anp/unittest/` following pytest conventions. Test files use `test_<area>.py` naming and functions use `test_<behavior>`. Focus on authentication handshakes, encryption boundaries, protocol negotiation flows, and error conditions.
+Tests are distributed across multiple locations:
+- `anp/unittest/`: Core unit tests for ANP components
+- `anp/anp_crawler/test/`: Tests for ANP crawler functionality
+- `anp/fastanp/`: Tests for FastANP framework (integrated in module)
+- Root level: Integration tests like `test_fastanp_basic.py`
+
+Test files use `test_<area>.py` naming and functions use `test_<behavior>`. Focus on authentication handshakes, encryption boundaries, protocol negotiation flows, and error conditions.
+
+**Running specific test categories:**
+```bash
+# Core unit tests
+uv run pytest anp/unittest/
+
+# ANP crawler tests
+uv run pytest anp/anp_crawler/test/
+
+# FastANP tests
+uv run pytest anp/fastanp/
+
+# Integration tests
+uv run pytest test_fastanp_basic.py
+```
 
 ## Code Style
 
