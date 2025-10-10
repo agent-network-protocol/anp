@@ -30,6 +30,16 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 - **接口解析**：解析JSON-RPC接口并转换为可调用的工具
 - **协议交互**：支持与符合ANP协议的智能体进行通信
 
+### FastANP（快速开发框架）
+基于FastAPI构建ANP智能体的插件化框架：
+- **插件架构**：FastAPI作为主框架，FastANP作为辅助插件
+- **自动OpenRPC**：从Python函数自动生成OpenRPC文档
+- **上下文注入**：自动会话和认证上下文注入
+- **灵活路由**：完全控制所有路由包括ad.json
+- **会话管理**：基于DID + Access Token的内置会话管理
+
+完整文档请参考 [FastANP README](anp/fastanp/README.md)
+
 ## 使用方式
 
 ### 方式一：通过pip安装
@@ -93,6 +103,42 @@ uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 ```
 
 **详细文档**：[ANP Crawler示例说明](examples/python/anp_crawler_examples/README.cn.md)
+
+### FastANP智能体开发示例
+位置：`examples/python/fastanp_examples/`
+
+#### 主要示例
+- **简单智能体** (`simple_agent.py`)
+  最小化FastANP设置，包含单个接口方法
+
+- **酒店预订智能体** (`hotel_booking_agent.py`)
+  完整示例，包含多个接口、Pydantic模型和会话管理
+
+#### 运行示例
+```bash
+# 简单智能体
+uv run python examples/python/fastanp_examples/simple_agent.py
+
+# 酒店预订智能体
+uv run python examples/python/fastanp_examples/hotel_booking_agent.py
+```
+
+#### 测试示例
+```bash
+# 使用Python客户端测试
+uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
+
+# 或使用curl手动测试
+# 获取智能体描述
+curl http://localhost:8000/ad.json | jq
+
+# 调用JSON-RPC方法
+curl -X POST http://localhost:8000/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "search_rooms", "params": {"query": {"check_in_date": "2025-01-01", "check_out_date": "2025-01-05", "guest_count": 2, "room_type": "deluxe"}}}'
+```
+
+**详细文档**：[FastANP示例说明](examples/python/fastanp_examples/README.md)
 
 ## 工具推荐
 
