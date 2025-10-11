@@ -169,7 +169,7 @@ class DidWbaVerifier:
             )
             if not is_valid:
                 raise DidWbaVerifierError(
-                    f"Invalid signature: {message}", status_code=401
+                    f"Invalid signature: {message}", status_code=403
                 )
         except DidWbaVerifierError:
             raise

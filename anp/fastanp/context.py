@@ -131,33 +131,29 @@ class SessionManager:
         self.cleanup_interval = timedelta(minutes=cleanup_interval_minutes)
         self.last_cleanup = datetime.now()
     
-    def _generate_session_id(self, did: str, token: str) -> str:
+    def _generate_session_id(self, did: str) -> str:
         """
-        Generate session ID from DID and token.
+        Generate session ID from DID only.
         
         Args:
             did: DID identifier
-            token: Access token
             
         Returns:
             Session ID hash
         """
-        combined = f"{did}:{token}"
-        return hashlib.sha256(combined.encode()).hexdigest()
+        return hashlib.sha256(did.encode()).hexdigest()
     
     def get_or_create(
         self,
         did: str,
-        token: Optional[str] = None,
         anonymous: bool = False
     ) -> Session:
         """
-        Get existing session or create new one.
+        Get existing session or create new one based on DID.
         
         Args:
             did: DID identifier
-            token: Access token (optional for anonymous sessions)
-            anonymous: Whether to create anonymous session
+            anonymous: Whether this is an anonymous session
             
         Returns:
             Session object
@@ -165,17 +161,14 @@ class SessionManager:
         # Cleanup old sessions periodically
         self._cleanup_if_needed()
         
-        # For anonymous sessions, use DID only
-        if anonymous or not token:
-            session_id = self._generate_session_id(did, "anonymous")
-        else:
-            session_id = self._generate_session_id(did, token)
+        # Generate session ID from DID
+        session_id = self._generate_session_id(did)
         
         # Get or create session
         if session_id in self.sessions:
             session = self.sessions[session_id]
             session.touch()
-            logger.debug(f"Retrieved existing session: {session_id[:8]}...")
+            logger.debug(f"Retrieved existing session: {session_id[:8]}... for DID: {did}")
         else:
             session = Session(session_id, did)
             self.sessions[session_id] = session

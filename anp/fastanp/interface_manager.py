@@ -398,19 +398,19 @@ class InterfaceManager:
     def register_jsonrpc_endpoint(
         self,
         app: FastAPI,
-        rpc_path: str = "/rpc",
-        auth_dependency: Optional[Callable] = None
+        rpc_path: str = "/rpc"
     ) -> None:
         """
         Register unified JSON-RPC endpoint with FastAPI.
         
+        Auth is handled by middleware and stored in request.state.
+        
         Args:
             app: FastAPI application instance
             rpc_path: JSON-RPC endpoint path
-            auth_dependency: Optional authentication dependency
         """
         # Define JSON-RPC handler
-        async def handle_jsonrpc(request: Request, auth_result: dict = None):
+        async def handle_jsonrpc(request: Request):
             """Handle JSON-RPC 2.0 requests with automatic context injection."""
             # Create function name to RegisteredFunction mapping dynamically
             func_map = {rf.name: rf for rf in self.functions.values()}
@@ -468,6 +468,9 @@ class InterfaceManager:
                 registered_func = func_map[method_name]
                 func = registered_func.func
                 
+                # Get auth result from request.state (set by middleware)
+                auth_result = getattr(request.state, 'auth_result', None)
+                
                 # Prepare parameters with type conversion
                 final_params = {}
                 sig = inspect.signature(func)
@@ -480,6 +483,14 @@ class InterfaceManager:
                     if param.annotation == Context or (
                         hasattr(param.annotation, '__name__') and 
                         param.annotation.__name__ == 'Context'
+                    ):
+                        # Will be injected below
+                        continue
+                    
+                    # Check if this is a Request parameter
+                    if param.annotation == Request or (
+                        hasattr(param.annotation, '__name__') and 
+                        param.annotation.__name__ == 'Request'
                     ):
                         # Will be injected below
                         continue
@@ -503,15 +514,17 @@ class InterfaceManager:
                 
                 # Inject Context if needed
                 if registered_func.has_context_param:
-                    # Extract DID and token from auth_result
-                    did = auth_result.get('did', 'anonymous') if auth_result else 'anonymous'
-                    token = auth_result.get('access_token') if auth_result else None
+                    # Extract DID from auth_result (or request.state)
+                    did = getattr(request.state, 'did', None)
+                    if did is None and auth_result:
+                        did = auth_result.get('did', 'anonymous')
+                    if did is None:
+                        did = 'anonymous'
                     
-                    # Get or create session
+                    # Get or create session based on DID only
                     session = self.session_manager.get_or_create(
                         did=did,
-                        token=token,
-                        anonymous=(not auth_result)
+                        anonymous=(did == 'anonymous')
                     )
                     
                     # Create Context
@@ -522,7 +535,7 @@ class InterfaceManager:
                         auth_result=auth_result
                     )
                     
-                    # Find context parameter name
+                    # Find context parameter name and inject
                     for param_name, param in sig.parameters.items():
                         if param.annotation == Context or (
                             hasattr(param.annotation, '__name__') and 
@@ -530,6 +543,15 @@ class InterfaceManager:
                         ):
                             final_params[param_name] = context
                             break
+                
+                # Inject Request if needed
+                for param_name, param in sig.parameters.items():
+                    if param.annotation == Request or (
+                        hasattr(param.annotation, '__name__') and 
+                        param.annotation.__name__ == 'Request'
+                    ):
+                        final_params[param_name] = request
+                        break
                 
                 # Call function with params
                 if inspect.iscoroutinefunction(func):
@@ -575,21 +597,12 @@ class InterfaceManager:
                 )
         
         # Register JSON-RPC endpoint
-        if auth_dependency:
-            from fastapi import Depends
-            app.add_api_route(
-                rpc_path,
-                handle_jsonrpc,
-                methods=["POST"],
-                tags=["rpc"],
-                dependencies=[Depends(auth_dependency)]
-            )
-        else:
-            app.add_api_route(
-                rpc_path,
-                handle_jsonrpc,
-                methods=["POST"],
-                tags=["rpc"]
-            )
+        # Auth is handled by middleware, no dependency needed
+        app.add_api_route(
+            rpc_path,
+            handle_jsonrpc,
+            methods=["POST"],
+            tags=["rpc"]
+        )
         
         logger.info(f"Registered JSON-RPC endpoint at {rpc_path}")

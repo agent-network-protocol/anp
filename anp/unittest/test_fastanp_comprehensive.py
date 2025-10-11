@@ -451,21 +451,109 @@ class TestFastANPComprehensive:
         print("✓ InterfaceProxy access test passed")
 
     def test_auth_excluded_paths(self):
-        """测试认证排除路径"""
-        # 这个测试验证中间件是否正确排除了特定路径
-        # 由于我们关闭了中间件，这个测试主要是验证配置
-        excluded_paths = [
+        """测试认证排除路径配置"""
+        # 验证认证排除路径配置正确
+        from anp.fastanp.middleware import AUTH_EXCLUDED_PATHS
+        
+        expected_paths = [
             "/ad.json",
             "/docs",
             "/openapi.json",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/info/",
         ]
-
-        # 验证配置存在
-        from anp.fastanp.middleware import AUTH_EXCLUDED_PATHS
-        assert AUTH_EXCLUDED_PATHS == excluded_paths
-
-        print("✓ Auth excluded paths test passed")
+        
+        assert AUTH_EXCLUDED_PATHS == expected_paths
+        print("✓ Auth excluded paths configuration test passed")
+    
+    def test_auth_middleware_enforcement(self):
+        """测试认证中间件强制认证"""
+        # 创建启用了认证中间件的应用
+        app = FastAPI()
+        anp = FastANP(
+            app=app,
+            name="Auth Test Agent",
+            description="Test auth middleware",
+            base_url=TEST_BASE_URL,
+            did_document_path=TEST_DID_DOCUMENT_PATH,
+            private_key_path=TEST_PRIVATE_KEY_PATH,
+            public_key_path=TEST_PUBLIC_KEY_PATH,
+            require_auth=False,
+            enable_auth_middleware=True  # Enable strict auth
+        )
+        
+        @app.get("/ad.json")
+        def get_ad():
+            return {"name": "test"}
+        
+        @app.get("/custom-api")
+        def custom_api():
+            return {"data": "sensitive"}
+        
+        @anp.interface("/info/secure_method.json")
+        def secure_method(param: str) -> Dict[str, str]:
+            return {"result": param}
+        
+        client = TestClient(app)
+        
+        # Test 1: Excluded paths work without auth
+        print("   Testing excluded paths without auth...")
+        
+        # /ad.json
+        response = client.get("/ad.json")
+        assert response.status_code == 200
+        print("   ✓ /ad.json accessible without auth")
+        
+        # /info/* (OpenRPC docs)
+        response = client.get("/info/secure_method.json")
+        assert response.status_code == 200
+        assert "openrpc" in response.json()
+        print("   ✓ /info/secure_method.json (OpenRPC) accessible without auth")
+        
+        # Test 2: Protected endpoints require auth
+        print("   Testing protected endpoints require auth...")
+        
+        # /rpc without auth
+        response = client.post("/rpc", json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "secure_method",
+            "params": {"param": "test"}
+        })
+        assert response.status_code == 401
+        error_data = response.json()
+        assert error_data["error"] == "Unauthorized"
+        assert "Missing authorization header" in error_data["message"]
+        print("   ✓ /rpc returns 401 without auth")
+        
+        # Custom endpoint without auth
+        response = client.get("/custom-api")
+        assert response.status_code == 401
+        print("   ✓ /custom-api returns 401 without auth")
+        
+        # Test 3: Invalid Authorization header
+        print("   Testing invalid Authorization header...")
+        response = client.post(
+            "/rpc",
+            json={"jsonrpc": "2.0", "id": 2, "method": "secure_method", "params": {"param": "test"}},
+            headers={"Authorization": "Bearer invalid-token"}
+        )
+        assert response.status_code in [401, 403, 500]
+        error_data = response.json()
+        assert "error" in error_data
+        print(f"   ✓ Invalid auth header returns {response.status_code}")
+        
+        # Test 4: Malformed Authorization header
+        print("   Testing malformed Authorization header...")
+        response = client.post(
+            "/rpc",
+            json={"jsonrpc": "2.0", "id": 3, "method": "secure_method", "params": {"param": "test"}},
+            headers={"Authorization": "NotEvenClose"}
+        )
+        assert response.status_code in [401, 403, 500]
+        print(f"   ✓ Malformed auth header returns {response.status_code}")
+        
+        print("✓ Auth middleware enforcement test passed")
 
 
 def run_all_tests():
@@ -484,6 +572,7 @@ def run_all_tests():
     tester.test_jsonrpc_async_operation()
     tester.test_interface_proxy_access()
     tester.test_auth_excluded_paths()
+    tester.test_auth_middleware_enforcement()
 
     print("\n🎉 所有测试通过！FastANP 插件化重构实现正确。")
 

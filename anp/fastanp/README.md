@@ -238,7 +238,7 @@ def echo(message: str, ctx: Context) -> dict:
 
 **Session 方法**：
 - `session.id` - Session ID
-- `session.get(key, default)` - 获取会话数据
+- `session.get(key, default)` - 获取会话数据，
 - `session.set(key, value)` - 设置会话数据
 - `session.clear()` - 清空会话数据
 

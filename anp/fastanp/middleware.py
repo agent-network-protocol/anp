@@ -8,6 +8,7 @@ import logging
 from typing import Callable, Optional
 
 from fastapi import Header, HTTPException
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -25,7 +26,8 @@ AUTH_EXCLUDED_PATHS = [
     "/ad.json",
     "/docs",
     "/openapi.json",
-    "/favicon.ico"
+    "/favicon.ico",
+    "/info/",  # OpenRPC document paths
 ]
 
 
@@ -70,15 +72,66 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         # Skip authentication for excluded paths
         for excluded_path in AUTH_EXCLUDED_PATHS:
-            if request.url.path == excluded_path or request.url.path.endswith(excluded_path):
+            if request.url.path == excluded_path or request.url.path.startswith(excluded_path):
                 logger.debug(f"Skipping auth for excluded path: {request.url.path}")
+                # Set state to None for excluded paths
+                request.state.auth_result = None
+                request.state.did = None
                 response = await call_next(request)
                 return response
 
-        # For now, middleware is passive - actual auth is done via dependencies
-        # This can be extended to add request-level auth checking if needed
-        response = await call_next(request)
-        return response
+        # Parse and verify authorization header
+        authorization = request.headers.get("Authorization")
+        
+        if not authorization:
+            # No authorization header - return 401
+            logger.warning(f"Missing authorization header for path: {request.url.path}")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Unauthorized",
+                    "message": "Missing authorization header"
+                },
+                headers={"WWW-Authenticate": "DIDWba"}
+            )
+        
+        try:
+            # Verify and extract auth result
+            result = await self.verifier.verify_auth_header(authorization, self.domain)
+            
+            # Store auth result in request.state for downstream handlers
+            request.state.auth_result = result
+            request.state.did = result.get('did')
+            
+            logger.info(f"Authentication successful for DID: {request.state.did}")
+            
+            # Authentication successful, continue to handler
+            response = await call_next(request)
+            return response
+            
+        except DidWbaVerifierError as e:
+            # Authentication failed - return error
+            logger.warning(f"Authentication failed: {str(e)}")
+            return JSONResponse(
+                status_code=e.status_code,
+                content={
+                    "error": "Unauthorized",
+                    "message": str(e)
+                },
+                headers={"WWW-Authenticate": "DIDWba"}
+            )
+            
+        except Exception as e:
+            # Unexpected error - return 500
+            logger.error(f"Unexpected authentication error: {str(e)}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Internal Server Error",
+                    "message": "Authentication service error"
+                },
+                headers={"WWW-Authenticate": "DIDWba"}
+            )
     
     async def verify_auth_header(
         self,

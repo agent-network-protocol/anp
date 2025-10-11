@@ -135,17 +135,11 @@ class FastANP:
             self.app.add_middleware(self.auth_middleware)
             logger.info(f"Registered auth middleware for domain: {self.domain}")
         
-        # Create auth dependency for JSON-RPC endpoint
-        auth_dependency = None
-        if require_auth and self.auth_middleware:
-            # Get the verify function from middleware
-            auth_dependency = self.auth_middleware.verify_auth_header
-        
         # Automatically register JSON-RPC endpoint
+        # No need to pass auth_dependency as middleware handles auth in request.state
         self.interface_manager.register_jsonrpc_endpoint(
             app=self.app,
-            rpc_path=jsonrpc_server_url,
-            auth_dependency=auth_dependency
+            rpc_path=jsonrpc_server_url
         )
         
         # Interfaces dictionary (function -> InterfaceProxy)
