@@ -43,7 +43,8 @@ with open(jwt_public_key_path, 'r') as f:
 auth_config = DidWbaVerifierConfig(
     jwt_private_key=jwt_private_key,
     jwt_public_key=jwt_public_key,
-    jwt_algorithm="RS256"
+    jwt_algorithm="RS256",
+    allowed_domains=["localhost", "0.0.0.0", "127.0.0.1"]
 )
 
 # Initialize FastANP plugin

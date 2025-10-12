@@ -19,6 +19,52 @@ sys.path.insert(0, str(project_root))
 from anp.authentication import DIDWbaAuthHeader
 from anp.authentication import did_wba_verifier as verifier_module
 
+# ANSI 颜色代码
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+CYAN = '\033[96m'
+BOLD = '\033[1m'
+RESET = '\033[0m'
+
+
+class TestReporter:
+    """测试结果报告器，负责编号、输出和统计汇总。"""
+
+    def __init__(self):
+        self._counter = 0
+        self._results = []
+
+    def success(self, message: str):
+        """记录并输出成功结果。"""
+        self._counter += 1
+        record = {"index": self._counter, "status": "PASS", "message": message}
+        self._results.append(record)
+        print(f"{GREEN}{BOLD}[{record['index']:03d}] PASS{RESET} {message}")
+
+    def failure(self, message: str):
+        """记录并输出失败结果。"""
+        self._counter += 1
+        record = {"index": self._counter, "status": "FAIL", "message": message}
+        self._results.append(record)
+        print(f"{RED}{BOLD}[{record['index']:03d}] FAIL{RESET} {message}")
+
+    def summary(self):
+        """打印测试结果汇总。"""
+        total = len(self._results)
+        success_count = sum(1 for r in self._results if r["status"] == "PASS")
+        failure_records = [r for r in self._results if r["status"] == "FAIL"]
+        failure_count = len(failure_records)
+
+        print(f"\n{CYAN}{BOLD}=== 测试汇总 ==={RESET}")
+        print(f"{YELLOW}  总计: {total}, 成功: {success_count}, 失败: {failure_count}{RESET}")
+        if failure_records:
+            print(f"{RED}{BOLD}  失败详情:{RESET}")
+            for record in failure_records:
+                print(f"    [{record['index']:03d}] {record['message']}")
+        else:
+            print(f"{GREEN}  所有测试均通过。{RESET}")
+
 
 class HotelBookingClient:
     """酒店预订代理测试客户端"""
@@ -34,6 +80,7 @@ class HotelBookingClient:
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.use_auth = use_auth
+        self.reporter = TestReporter()
 
         # 加载 DID 文档和密钥
         self.did_document_path = project_root / "docs" / "did_public" / "public-did-doc.json"
@@ -66,6 +113,14 @@ class HotelBookingClient:
             # Restore original resolver
             verifier_module.resolve_did_wba_document = self.original_resolver
         self.session.close()
+
+    def _pass(self, message: str):
+        """记录成功结果。"""
+        self.reporter.success(message)
+
+    def _fail(self, message: str):
+        """记录失败结果。"""
+        self.reporter.failure(message)
     
     def _get_auth_headers(self) -> dict:
         """获取认证 headers"""
@@ -108,19 +163,23 @@ class HotelBookingClient:
 
         # 测试简单 ad.json
         response = self._make_request("GET", "/ad.json")
-        print(f"  简单 ad.json: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            self._pass(f"简单 ad.json: {response.status_code}")
             print(f"  名称: {data.get('name')}")
             print(f"  DID: {data.get('did')}")
             print(f"  接口数量: {len(data.get('interfaces', []))}")
+        else:
+            self._fail(f"简单 ad.json: {response.status_code}")
 
         # 测试带 agent_id 的 ad.json
         response = self._make_request("GET", "/test-agent/ad.json")
-        print(f"  带 agent_id 的 ad.json: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            self._pass(f"带 agent_id 的 ad.json: {response.status_code}")
             print(f"  信息项数量: {len(data.get('Infomations', []))}")
+        else:
+            self._fail(f"带 agent_id 的 ad.json: {response.status_code}")
 
     def test_information_endpoints(self):
         """测试 Information 端点"""
@@ -128,21 +187,25 @@ class HotelBookingClient:
 
         # 测试产品信息
         response = self._make_request("GET", "/products/luxury-rooms.json")
-        print(f"  产品信息: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
             products = data.get('products', [])
+            self._pass(f"产品信息: {response.status_code}")
             print(f"  产品数量: {len(products)}")
             for product in products:
                 print(f"    - {product.get('name')}: ${product.get('price')}")
+        else:
+            self._fail(f"产品信息: {response.status_code}")
 
         # 测试酒店信息
         response = self._make_request("GET", "/info/hotel-basic-info.json")
-        print(f"  酒店信息: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            self._pass(f"酒店信息: {response.status_code}")
             print(f"  酒店名称: {data.get('name')}")
             print(f"  设施数量: {len(data.get('facilities', []))}")
+        else:
+            self._fail(f"酒店信息: {response.status_code}")
 
     def test_openrpc_endpoints(self):
         """测试 OpenRPC 文档端点"""
@@ -150,18 +213,22 @@ class HotelBookingClient:
 
         # 测试 search_rooms OpenRPC 文档
         response = self._make_request("GET", "/info/search_rooms.json")
-        print(f"  search_rooms OpenRPC: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            self._pass(f"search_rooms OpenRPC: {response.status_code}")
             print(f"  OpenRPC 版本: {data.get('openrpc')}")
             print(f"  方法名称: {data.get('info', {}).get('title')}")
+        else:
+            self._fail(f"search_rooms OpenRPC: {response.status_code}")
 
         # 测试 get_rooms OpenRPC 文档
         response = self._make_request("GET", "/info/get_rooms.json")
-        print(f"  get_rooms OpenRPC: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            self._pass(f"get_rooms OpenRPC: {response.status_code}")
             print(f"  方法描述: {data.get('info', {}).get('description')}")
+        else:
+            self._fail(f"get_rooms OpenRPC: {response.status_code}")
 
     def test_jsonrpc_endpoint(self):
         """测试 JSON-RPC 端点"""
@@ -183,17 +250,19 @@ class HotelBookingClient:
         }
 
         response = self._make_request("POST", "/rpc", json=payload)
-        print(f"  search_rooms RPC: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
             if 'result' in data:
                 result = data['result']
+                self._pass(f"search_rooms RPC: {response.status_code}")
                 print(f"  搜索成功: {result.get('success')}")
                 print(f"  房间数量: {result.get('total')}")
                 for room in result.get('rooms', []):
                     print(f"    - 房间 {room.get('id')}: ${room.get('price')}")
             elif 'error' in data:
-                print(f"  RPC 错误: {data['error']}")
+                self._fail(f"search_rooms RPC 错误: {data['error']}")
+        else:
+            self._fail(f"search_rooms RPC: {response.status_code}")
 
         # 测试 get_rooms 方法（带 Context 注入）
         payload = {
@@ -206,17 +275,19 @@ class HotelBookingClient:
         }
 
         response = self._make_request("POST", "/rpc", json=payload)
-        print(f"  get_rooms RPC: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
             if 'result' in data:
                 result = data['result']
+                self._pass(f"get_rooms RPC: {response.status_code}")
                 print(f"  会话 ID: {result.get('session_id', 'N/A')}")
                 print(f"  DID: {result.get('did', 'N/A')}")
                 print(f"  访问次数: {result.get('visit_count', 0)}")
                 print(f"  房间数量: {len(result.get('rooms', []))}")
             elif 'error' in data:
-                print(f"  RPC 错误: {data['error']}")
+                self._fail(f"get_rooms RPC 错误: {data['error']}")
+        else:
+            self._fail(f"get_rooms RPC: {response.status_code}")
 
     def test_error_cases(self):
         """测试错误情况"""
@@ -231,13 +302,16 @@ class HotelBookingClient:
         }
 
         response = self._make_request("POST", "/rpc", json=payload, with_auth=self.use_auth)
-        print(f"  不存在的方法: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
             if 'error' in data:
-                print(f"  预期错误: {data['error'].get('message')}")
+                self._pass(f"不存在的方法返回预期错误: {data['error'].get('message')}")
+            else:
+                self._fail("不存在的方法应该返回错误")
         elif response.status_code == 401:
-            print("  认证失败（符合预期）")
+            self._pass("认证失败（符合预期）")
+        else:
+            self._fail(f"不存在的方法: 意外状态码 {response.status_code}")
 
         # 测试无效的 JSON-RPC 请求
         payload = {
@@ -250,11 +324,14 @@ class HotelBookingClient:
         }
 
         response = self._make_request("POST", "/rpc", json=payload, with_auth=self.use_auth)
-        print(f"  无效参数: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
             if 'error' in data:
-                print(f"  参数错误: {data['error'].get('message')}")
+                self._pass(f"无效参数返回预期错误: {data['error'].get('message')}")
+            else:
+                self._fail("无效参数应该返回错误")
+        else:
+            self._fail(f"无效参数: 意外状态码 {response.status_code}")
     
     def test_authentication(self):
         """测试认证功能"""
@@ -266,16 +343,16 @@ class HotelBookingClient:
         
         # Test 1: Without auth should fail
         print("   测试无认证访问...")
-        response = self._make_request("POST", "/rpc", json={
+        response = self._make_request("POST", "/rpc", with_auth=False, json={
             "jsonrpc": "2.0",
             "id": 1,
             "method": "search_rooms",
             "params": {"query": {"check_in_date": "2025-01-01", "check_out_date": "2025-01-05", "guest_count": 2, "room_type": "deluxe"}}
         })
         if response.status_code == 401:
-            print("   ✓ 无认证访问被拒绝（401）")
+            self._pass("无认证访问被拒绝（401）")
         else:
-            print(f"   ⚠ 预期 401，实际得到 {response.status_code}")
+            self._fail(f"预期 401，实际得到 {response.status_code}")
         
         # Test 2: With DID WBA auth should succeed
         print("   测试 DID WBA 认证访问...")
@@ -292,9 +369,11 @@ class HotelBookingClient:
             data = response.json()
             if 'result' in data:
                 result = data['result']
-                print(f"   ✓ 认证成功，返回 {result.get('total', 0)} 个房间")
+                self._pass(f"认证成功，返回 {result.get('total', 0)} 个房间")
+            else:
+                self._fail("认证成功但响应格式错误")
         else:
-            print(f"   ⚠ 认证失败: {response.status_code}")
+            self._fail(f"认证失败: {response.status_code}")
             print(f"   响应: {response.text}")
         
         # Test 3: Test session persistence with auth
@@ -332,11 +411,15 @@ class HotelBookingClient:
                 session_id2 = result2.get('session_id', '')
                 
                 if session_id1 == session_id2 and visit_count2 == visit_count1 + 1:
-                    print(f"   ✓ 会话持久化成功: visit_count={visit_count2}, 相同 session")
+                    self._pass(f"会话持久化成功: visit_count={visit_count2}, 相同 session")
                 else:
-                    print(f"   ⚠ 会话可能未共享: visit_count={visit_count2}")
+                    self._fail(f"会话可能未共享: visit_count={visit_count2}")
+            else:
+                self._fail(f"第二次调用失败: {response2.status_code}")
+        else:
+            self._fail(f"第一次调用失败: {response1.status_code}")
         
-        print("   ✓ 认证功能测试完成")
+        self._pass("认证功能测试完成")
 
     def run_all_tests(self):
         """运行所有测试"""
@@ -354,12 +437,15 @@ class HotelBookingClient:
             self.test_jsonrpc_endpoint()
             self.test_error_cases()
 
-            print("\n🎉 所有测试完成！")
+            print(f"\n{GREEN}🎉 所有测试完成！{RESET}")
 
         except Exception as e:
-            print(f"\n❌ 测试过程中出现错误: {e}")
+            self._fail(f"测试过程中出现未处理异常: {e}")
+            print(f"\n{RED}❌ 测试过程中出现错误: {e}{RESET}")
             import traceback
             traceback.print_exc()
+        finally:
+            self.reporter.summary()
 
 
 def main():
