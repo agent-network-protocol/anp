@@ -176,6 +176,9 @@ anp.interfaces[my_func].openrpc_doc    # 原始 OpenRPC 文档
 ```
 
 **link_summary 示例**：
+
+使用独立的jsonrpc文件：
+
 ```python
 {
     "type": "StructuredInterface",
@@ -186,6 +189,9 @@ anp.interfaces[my_func].openrpc_doc    # 原始 OpenRPC 文档
 ```
 
 **content 示例**：
+
+在文档内部放置jsonrpc接口。
+
 ```python
 {
     "type": "StructuredInterface",
