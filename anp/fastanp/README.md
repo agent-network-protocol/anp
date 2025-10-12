@@ -30,21 +30,19 @@ pip install -e ".[api]"
 ```python
 from fastapi import FastAPI
 from anp.fastanp import FastANP, Context
+from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 
 # 初始化 FastAPI
 app = FastAPI()
 
-# 初始化 FastANP 插件
+# 初始化 FastANP 插件（不启用认证）
 anp = FastANP(
     app=app,
     name="Simple Agent",
     description="A simple ANP agent",
     base_url="https://example.com",
     did="did:wba:example.com:agent:simple",
-    did_document_path="./did.json",
-    private_key_path="./private_key.pem",
-    public_key_path="./public_key.pem",
-    require_auth=False  # 关闭认证用于演示
+    enable_auth_middleware=False  # 关闭认证用于演示
 )
 
 # 定义 ad.json 路由（用户完全控制）
@@ -237,10 +235,12 @@ def echo(message: str, ctx: Context) -> dict:
 - `ctx.auth_result` - 认证结果字典
 
 **Session 方法**：
-- `session.id` - Session ID
-- `session.get(key, default)` - 获取会话数据，
+- `session.id` - Session ID（基于 DID 生成）
+- `session.get(key, default)` - 获取会话数据
 - `session.set(key, value)` - 设置会话数据
 - `session.clear()` - 清空会话数据
+
+**注意**：Session 的唯一标识基于 DID，而不是 DID + Access Token，这意味着同一个 DID 的多个请求会共享同一个 Session
 
 ### 6. Request 自动注入
 
@@ -268,14 +268,13 @@ def info(req: Request) -> dict:
 | `name` | str | ✓ | 智能体名称 |
 | `description` | str | ✓ | 智能体描述 |
 | `base_url` | str | ✓ | 基础 URL（如 `https://example.com`） |
-| `did` | str | - | DID 标识符（可从 did_document 提取） |
-| `did_document_path` | str | - | DID 文档路径 |
-| `private_key_path` | str | - | JWT 私钥路径（PEM 格式） |
-| `public_key_path` | str | - | JWT 公钥路径（PEM 格式） |
+| `did` | str | ✓ | DID 标识符 |
 | `owner` | dict | - | 所有者信息 |
 | `jsonrpc_server_url` | str | - | JSON-RPC 端点路径（默认 `/rpc`） |
-| `require_auth` | bool | - | 是否需要认证（默认 False） |
+| `jsonrpc_server_name` | str | - | JSON-RPC 服务器名称 |
+| `jsonrpc_server_description` | str | - | JSON-RPC 服务器描述 |
 | `enable_auth_middleware` | bool | - | 是否启用认证中间件（默认 True） |
+| `auth_config` | DidWbaVerifierConfig | - | 认证配置对象（启用认证时必需） |
 | `api_version` | str | - | API 版本（默认 "1.0.0"） |
 
 ### 方法说明
@@ -387,17 +386,41 @@ async def async_search(query: str) -> dict:
 ### 4. 添加认证中间件
 
 ```python
+from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
+
+# 读取 JWT 密钥
+with open("jwt_private_key.pem", 'r') as f:
+    jwt_private_key = f.read()
+with open("jwt_public_key.pem", 'r') as f:
+    jwt_public_key = f.read()
+
+# 创建认证配置
+auth_config = DidWbaVerifierConfig(
+    jwt_private_key=jwt_private_key,
+    jwt_public_key=jwt_public_key,
+    jwt_algorithm="RS256",
+    allowed_domains=["example.com", "localhost"]  # 可选：域名白名单
+)
+
+# 初始化 FastANP（自动启用认证中间件）
 anp = FastANP(
     app=app,
     ...,
-    require_auth=True,
-    enable_auth_middleware=True
+    enable_auth_middleware=True,
+    auth_config=auth_config
 )
-
-# 可选：自定义中间件参数
-if anp.auth_middleware:
-    app.add_middleware(anp.auth_middleware, minimum_size=500)
 ```
+
+**认证排除路径**：
+
+中间件自动排除以下路径（支持通配符）：
+- `/favicon.ico`
+- `/health`
+- `/docs`
+- `*/ad.json` - 所有以 `/ad.json` 结尾的路径
+- `/info/*` - 所有 OpenRPC 文档路径
+
+其他所有路径都需要 DID WBA 认证
 
 ## 从旧版本迁移
 
@@ -446,16 +469,21 @@ FastANP 自动生成以下端点：
 ### 1. JSON-RPC 统一端点
 - **URL**: `POST /rpc`（可配置）
 - **描述**: JSON-RPC 2.0 统一入口
-- **认证**: 根据 `require_auth` 参数决定
+- **认证**: 根据 `enable_auth_middleware` 参数决定
 
 ### 2. OpenRPC 文档端点
 - **URL**: `GET {path}`（每个接口一个）
 - **描述**: 返回该接口的 OpenRPC 文档
-- **认证**: 公开访问
+- **认证**: 自动排除（公开访问，匹配 `/info/*`）
 
-### 3. 用户定义端点
-- **ad.json**: 用户完全控制
-- **Information 路由**: 用户完全控制
+### 3. Agent Description 端点
+- **URL**: 用户自定义（如 `/ad.json` 或 `/{agent_id}/ad.json`）
+- **描述**: 智能体描述文档
+- **认证**: 自动排除（公开访问，匹配 `*/ad.json`）
+
+### 4. 用户定义端点
+- **Information 路由**: 用户完全控制（如 `/products/*.json`）
+- **认证**: 默认需要认证（除非路径匹配排除模式）
 
 ## 函数名唯一性
 

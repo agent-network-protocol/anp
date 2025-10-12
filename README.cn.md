@@ -34,9 +34,10 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 基于FastAPI构建ANP智能体的插件化框架：
 - **插件架构**：FastAPI作为主框架，FastANP作为辅助插件
 - **自动OpenRPC**：从Python函数自动生成OpenRPC文档
-- **上下文注入**：自动会话和认证上下文注入
-- **灵活路由**：完全控制所有路由包括ad.json
-- **会话管理**：基于DID + Access Token的内置会话管理
+- **Context 注入**：自动会话和 Request 对象注入
+- **DID WBA 认证**：内置认证中间件，支持通配符路径排除
+- **灵活路由**：完全控制所有路由包括 ad.json
+- **会话管理**：基于 DID 的内置会话管理
 
 完整文档请参考 [FastANP README](anp/fastanp/README.md)
 

@@ -34,9 +34,10 @@ Discovery and interaction tools for the agent network:
 Plugin-based framework for building ANP agents with FastAPI:
 - **Plugin Architecture**: FastAPI as main framework, FastANP as helper plugin
 - **Automatic OpenRPC**: Generate OpenRPC documents from Python functions
-- **Context Injection**: Automatic session and authentication context injection
+- **Context Injection**: Automatic session and Request object injection
+- **DID WBA Authentication**: Built-in authentication middleware with wildcard path exemption
 - **Flexible Routing**: Full control over all routes including ad.json
-- **Session Management**: Built-in session management based on DID + Access Token
+- **Session Management**: Built-in session management based on DID
 
 For complete documentation, see [FastANP README](anp/fastanp/README.md)
 
