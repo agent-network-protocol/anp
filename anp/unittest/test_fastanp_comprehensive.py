@@ -13,8 +13,8 @@ FastANP 插件化重构综合测试用例
 """
 
 import asyncio
+import copy
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -24,8 +24,8 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 # 添加项目根目录到 Python 路径
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, project_root)
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from anp.authentication import DIDWbaAuthHeader
 from anp.authentication import did_wba_verifier as verifier_module
@@ -45,14 +45,22 @@ TEST_BASE_URL = "http://localhost:8000"
 TEST_AGENT_ID = "test-agent"
 
 
-# 测试用的 DID 和密钥路径（使用示例中的文件）
-TEST_DID_DOCUMENT_PATH =  project_root / "docs" / "did_public" / "public-did-doc.json"
-TEST_PRIVATE_KEY_PATH = project_root / "docs" / "jwt_rs256" / "private_key.pem"
-TEST_PUBLIC_KEY_PATH = project_root / "docs" / "jwt_rs256" / "public_key.pem"
+# Shared docs resources
+DOCS_DIR = project_root / "docs"
+TEST_DID_DOCUMENT_PATH = DOCS_DIR / "did_public" / "public-did-doc.json"
+TEST_DID_PRIVATE_KEY_PATH = DOCS_DIR / "did_public" / "public-private-key.pem"
+TEST_JWT_PRIVATE_KEY_PATH = DOCS_DIR / "jwt_rs256" / "RS256-private.pem"
+TEST_JWT_PUBLIC_KEY_PATH = DOCS_DIR / "jwt_rs256" / "RS256-public.pem"
 
-# 从 DID 文档中读取 DID
-with open(TEST_DID_DOCUMENT_PATH) as f:
-    TEST_DID = json.load(f)["id"]
+with open(TEST_DID_DOCUMENT_PATH, "r", encoding="utf-8") as did_file:
+    DID_DOCUMENT = json.load(did_file)
+    TEST_DID = DID_DOCUMENT["id"]
+
+with open(TEST_JWT_PRIVATE_KEY_PATH, "r", encoding="utf-8") as private_key_file:
+    TEST_JWT_PRIVATE_KEY = private_key_file.read()
+
+with open(TEST_JWT_PUBLIC_KEY_PATH, "r", encoding="utf-8") as public_key_file:
+    TEST_JWT_PUBLIC_KEY = public_key_file.read()
 
 
 class TestFastANPComprehensive:
@@ -479,16 +487,10 @@ class TestFastANPComprehensive:
         # 创建启用了认证中间件的应用
         app = FastAPI()
 
-        # 读取 JWT 密钥
-        with open(TEST_PUBLIC_KEY_PATH, 'r') as f:
-            jwt_public_key = f.read()
-        with open(TEST_PRIVATE_KEY_PATH, 'r') as f:
-            jwt_private_key = f.read()
-
         # 创建认证配置
         auth_config = DidWbaVerifierConfig(
-            jwt_private_key=jwt_private_key,
-            jwt_public_key=jwt_public_key,
+            jwt_private_key=TEST_JWT_PRIVATE_KEY,
+            jwt_public_key=TEST_JWT_PUBLIC_KEY,
             jwt_algorithm="RS256"
         )
 
@@ -579,21 +581,8 @@ class TestFastANPComprehensive:
         """测试真实的 DID WBA 认证流程"""
         print("\n🔐 测试真实 DID WBA 认证...")
 
-        # Load DID document and keys
-        did_document_path = Path(project_root) / "docs" / "did_public" / "public-did-doc.json"
-        did_private_key_path = Path(project_root) / "docs" / "did_public" / "public-private-key.pem"
-        jwt_private_key_path = Path(project_root) / "docs" / "jwt_rs256" / "RS256-private.pem"
-        jwt_public_key_path = Path(project_root) / "docs" / "jwt_rs256" / "RS256-public.pem"
-
-        # Read DID document
-        with open(did_document_path, 'r') as f:
-            did_document = json.load(f)
-
-        # Read JWT keys
-        with open(jwt_private_key_path, 'r') as f:
-            jwt_private_key = f.read()
-        with open(jwt_public_key_path, 'r') as f:
-            jwt_public_key = f.read()
+        # Use shared DID document and JWT keys shipped in docs
+        did_document = copy.deepcopy(DID_DOCUMENT)
 
         # Setup local DID resolver
         async def local_resolver(did: str):
@@ -608,8 +597,8 @@ class TestFastANPComprehensive:
         try:
             # Create auth config
             auth_config = DidWbaVerifierConfig(
-                jwt_private_key=jwt_private_key,
-                jwt_public_key=jwt_public_key,
+                jwt_private_key=TEST_JWT_PRIVATE_KEY,
+                jwt_public_key=TEST_JWT_PUBLIC_KEY,
                 jwt_algorithm="RS256"
             )
 
@@ -645,11 +634,11 @@ class TestFastANPComprehensive:
             
             # Create authenticator
             authenticator = DIDWbaAuthHeader(
-                did_document_path=str(did_document_path),
-                private_key_path=str(did_private_key_path)
+                did_document_path=str(TEST_DID_DOCUMENT_PATH),
+                private_key_path=str(TEST_DID_PRIVATE_KEY_PATH)
             )
             
-            client = TestClient(app)
+            client = TestClient(app, base_url=TEST_BASE_URL)
             
             # Test without auth - should fail
             print("   测试无认证访问...")

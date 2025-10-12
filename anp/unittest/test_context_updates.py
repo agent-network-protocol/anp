@@ -10,10 +10,10 @@ Tests:
 5. Real DID WBA authentication
 """
 
+import copy
+import json
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
-
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -26,6 +26,23 @@ from anp.authentication import did_wba_verifier as verifier_module
 from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 from anp.fastanp import Context, FastANP
 
+# Shared paths for DID and JWT assets
+DOCS_DIR = project_root / "docs"
+DID_DOCUMENT_PATH = DOCS_DIR / "did_public" / "public-did-doc.json"
+DID_PRIVATE_KEY_PATH = DOCS_DIR / "did_public" / "public-private-key.pem"
+JWT_PRIVATE_KEY_PATH = DOCS_DIR / "jwt_rs256" / "RS256-private.pem"
+JWT_PUBLIC_KEY_PATH = DOCS_DIR / "jwt_rs256" / "RS256-public.pem"
+
+with open(DID_DOCUMENT_PATH, "r", encoding="utf-8") as did_file:
+    DID_DOCUMENT = json.load(did_file)
+    TEST_DID = DID_DOCUMENT["id"]
+
+with open(JWT_PRIVATE_KEY_PATH, "r", encoding="utf-8") as private_key_file:
+    JWT_PRIVATE_KEY = private_key_file.read()
+
+with open(JWT_PUBLIC_KEY_PATH, "r", encoding="utf-8") as public_key_file:
+    JWT_PUBLIC_KEY = public_key_file.read()
+
 
 def test_context_injection():
     """Test Context injection and DID-based sessions."""
@@ -37,7 +54,7 @@ def test_context_injection():
         name="Test Agent",
         description="Test",
         base_url="https://test.example.com",
-        did="did:wba:test.example.com:agent:test",
+        did=TEST_DID,
         enable_auth_middleware=False
     )
     
@@ -91,7 +108,7 @@ def test_request_injection():
         name="Test Agent",
         description="Test",
         base_url="https://test.example.com",
-        did="did:wba:test.example.com:agent:test",
+        did=TEST_DID,
         enable_auth_middleware=False
     )
 
@@ -129,7 +146,7 @@ def test_combined_injection():
         name="Test Agent",
         description="Test",
         base_url="https://test.example.com",
-        did="did:wba:test.example.com:agent:test",
+        did=TEST_DID,
         enable_auth_middleware=False
     )
     
@@ -165,19 +182,10 @@ def test_middleware_state():
     """Test that middleware sets request.state correctly."""
     print("\n4. Testing middleware request.state...")
 
-    # Read JWT keys
-    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "private_key.pem"
-    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "public_key.pem"
-
-    with open(jwt_private_key_path, 'r') as f:
-        jwt_private_key = f.read()
-    with open(jwt_public_key_path, 'r') as f:
-        jwt_public_key = f.read()
-
     # Create auth config
     auth_config = DidWbaVerifierConfig(
-        jwt_private_key=jwt_private_key,
-        jwt_public_key=jwt_public_key,
+        jwt_private_key=JWT_PRIVATE_KEY,
+        jwt_public_key=JWT_PUBLIC_KEY,
         jwt_algorithm="RS256"
     )
 
@@ -187,7 +195,7 @@ def test_middleware_state():
         name="Test Agent",
         description="Test",
         base_url="https://test.example.com",
-        did="did:wba:test.example.com:agent:test",
+        did=TEST_DID,
         enable_auth_middleware=True,  # Enable middleware
         auth_config=auth_config
     )
@@ -234,19 +242,10 @@ def test_auth_failures():
     """Test authentication failure cases."""
     print("\n5. Testing authentication failures...")
 
-    # Read JWT keys
-    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "private_key.pem"
-    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "public_key.pem"
-
-    with open(jwt_private_key_path, 'r') as f:
-        jwt_private_key = f.read()
-    with open(jwt_public_key_path, 'r') as f:
-        jwt_public_key = f.read()
-
     # Create auth config
     auth_config = DidWbaVerifierConfig(
-        jwt_private_key=jwt_private_key,
-        jwt_public_key=jwt_public_key,
+        jwt_private_key=JWT_PRIVATE_KEY,
+        jwt_public_key=JWT_PUBLIC_KEY,
         jwt_algorithm="RS256"
     )
 
@@ -256,7 +255,7 @@ def test_auth_failures():
         name="Test Agent",
         description="Test",
         base_url="https://test.example.com",
-        did="did:wba:test.example.com:agent:test",
+        did=TEST_DID,
         enable_auth_middleware=True,  # Enable strict auth middleware
         auth_config=auth_config
     )
@@ -330,22 +329,8 @@ def test_real_did_wba_auth():
 
     app = FastAPI()
 
-    # Load DID document and keys
-    did_document_path = project_root / "docs" / "did_public" / "public-did-doc.json"
-    did_private_key_path = project_root / "docs" / "did_public" / "public-private-key.pem"
-    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "RS256-private.pem"
-    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "RS256-public.pem"
-
-    # Read DID document to get DID
-    import json
-    with open(did_document_path, 'r') as f:
-        did_document = json.load(f)
-
-    # Read JWT keys
-    with open(jwt_private_key_path, 'r') as f:
-        jwt_private_key = f.read()
-    with open(jwt_public_key_path, 'r') as f:
-        jwt_public_key = f.read()
+    # Use shared DID document and JWT keys from docs directory
+    did_document = copy.deepcopy(DID_DOCUMENT)
 
     # Setup local DID resolver
     async def local_resolver(did: str):
@@ -360,8 +345,8 @@ def test_real_did_wba_auth():
     try:
         # Create auth config
         auth_config = DidWbaVerifierConfig(
-            jwt_private_key=jwt_private_key,
-            jwt_public_key=jwt_public_key,
+            jwt_private_key=JWT_PRIVATE_KEY,
+            jwt_public_key=JWT_PUBLIC_KEY,
             jwt_algorithm="RS256"
         )
 
@@ -392,17 +377,15 @@ def test_real_did_wba_auth():
         
         # Create authenticator
         authenticator = DIDWbaAuthHeader(
-            did_document_path=str(did_document_path),
-            private_key_path=str(did_private_key_path)
+            did_document_path=str(DID_DOCUMENT_PATH),
+            private_key_path=str(DID_PRIVATE_KEY_PATH)
         )
         
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://test.example.com")
         
         # Test 1: Generate DID WBA auth header
         print("   Testing DID WBA authentication...")
         server_url = "https://test.example.com/resource"
-        domain = urlparse(server_url).hostname or "test.example.com"
-        
         auth_headers = authenticator.get_auth_header(server_url, force_new=True)
         authorization = auth_headers["Authorization"]
         
@@ -497,4 +480,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
