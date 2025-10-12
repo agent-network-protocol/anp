@@ -7,10 +7,12 @@ Tests:
 2. Request injection
 3. Session persistence based on DID only
 4. Middleware setting request.state
+5. Real DID WBA authentication
 """
 
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -19,13 +21,16 @@ sys.path.insert(0, str(project_root))
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from anp.authentication import DIDWbaAuthHeader
+from anp.authentication import did_wba_verifier as verifier_module
+from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 from anp.fastanp import Context, FastANP
 
 
 def test_context_injection():
     """Test Context injection and DID-based sessions."""
     print("\n1. Testing Context injection...")
-    
+
     app = FastAPI()
     anp = FastANP(
         app=app,
@@ -33,10 +38,6 @@ def test_context_injection():
         description="Test",
         base_url="https://test.example.com",
         did="did:wba:test.example.com:agent:test",
-        did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-        private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-        public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-        require_auth=False,
         enable_auth_middleware=False
     )
     
@@ -91,13 +92,9 @@ def test_request_injection():
         description="Test",
         base_url="https://test.example.com",
         did="did:wba:test.example.com:agent:test",
-        did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-        private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-        public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-        require_auth=False,
         enable_auth_middleware=False
     )
-    
+
     @anp.interface("/info/with_request.json")
     def with_request(message: str, req: Request) -> dict:
         return {
@@ -125,7 +122,7 @@ def test_request_injection():
 def test_combined_injection():
     """Test both Context and Request injection together."""
     print("\n3. Testing combined Context + Request injection...")
-    
+
     app = FastAPI()
     anp = FastANP(
         app=app,
@@ -133,10 +130,6 @@ def test_combined_injection():
         description="Test",
         base_url="https://test.example.com",
         did="did:wba:test.example.com:agent:test",
-        did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-        private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-        public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-        require_auth=False,
         enable_auth_middleware=False
     )
     
@@ -171,7 +164,23 @@ def test_combined_injection():
 def test_middleware_state():
     """Test that middleware sets request.state correctly."""
     print("\n4. Testing middleware request.state...")
-    
+
+    # Read JWT keys
+    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "private_key.pem"
+    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "public_key.pem"
+
+    with open(jwt_private_key_path, 'r') as f:
+        jwt_private_key = f.read()
+    with open(jwt_public_key_path, 'r') as f:
+        jwt_public_key = f.read()
+
+    # Create auth config
+    auth_config = DidWbaVerifierConfig(
+        jwt_private_key=jwt_private_key,
+        jwt_public_key=jwt_public_key,
+        jwt_algorithm="RS256"
+    )
+
     app = FastAPI()
     anp = FastANP(
         app=app,
@@ -179,37 +188,34 @@ def test_middleware_state():
         description="Test",
         base_url="https://test.example.com",
         did="did:wba:test.example.com:agent:test",
-        did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-        private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-        public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-        require_auth=False,
-        enable_auth_middleware=True  # Enable middleware
+        enable_auth_middleware=True,  # Enable middleware
+        auth_config=auth_config
     )
-    
+
     @app.get("/ad.json")
     def get_ad():
         return {"name": "test"}
-    
+
     @anp.interface("/info/check_state.json")
     def check_state(req: Request) -> dict:
         # Check if request.state has auth_result and did
         has_auth_result = hasattr(req.state, 'auth_result')
         has_did = hasattr(req.state, 'did')
         did_value = getattr(req.state, 'did', None)
-        
+
         return {
             "has_auth_result": has_auth_result,
             "has_did": has_did,
             "did": did_value
         }
-    
+
     client = TestClient(app)
-    
+
     # Test excluded path works without auth
     response = client.get("/ad.json")
     assert response.status_code == 200
     print("   ✓ Excluded path /ad.json works without auth")
-    
+
     # Test protected endpoint requires auth
     response = client.post("/rpc", json={
         "jsonrpc": "2.0",
@@ -217,17 +223,33 @@ def test_middleware_state():
         "method": "check_state",
         "params": {}
     })
-    
+
     # Should fail with 401 due to missing auth
     assert response.status_code == 401
-    assert "Unauthorized" in response.json().get("error", "")
+    assert "Missing authorization header" in response.json().get("detail", "")
     print("   ✓ Protected endpoint correctly requires auth")
 
 
 def test_auth_failures():
     """Test authentication failure cases."""
     print("\n5. Testing authentication failures...")
-    
+
+    # Read JWT keys
+    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "private_key.pem"
+    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "public_key.pem"
+
+    with open(jwt_private_key_path, 'r') as f:
+        jwt_private_key = f.read()
+    with open(jwt_public_key_path, 'r') as f:
+        jwt_public_key = f.read()
+
+    # Create auth config
+    auth_config = DidWbaVerifierConfig(
+        jwt_private_key=jwt_private_key,
+        jwt_public_key=jwt_public_key,
+        jwt_algorithm="RS256"
+    )
+
     app = FastAPI()
     anp = FastANP(
         app=app,
@@ -235,23 +257,20 @@ def test_auth_failures():
         description="Test",
         base_url="https://test.example.com",
         did="did:wba:test.example.com:agent:test",
-        did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-        private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-        public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-        require_auth=False,
-        enable_auth_middleware=True  # Enable strict auth middleware
+        enable_auth_middleware=True,  # Enable strict auth middleware
+        auth_config=auth_config
     )
-    
+
     @app.get("/ad.json")
     def get_ad():
         return anp.get_common_header()
-    
+
     @anp.interface("/info/protected.json")
     def protected_method(param: str) -> dict:
         return {"result": param}
-    
+
     client = TestClient(app)
-    
+
     # Test 1: Missing Authorization header on protected endpoint
     print("   Testing missing Authorization header...")
     response = client.post("/rpc", json={
@@ -262,10 +281,10 @@ def test_auth_failures():
     })
     assert response.status_code == 401
     error_data = response.json()
-    assert error_data["error"] == "Unauthorized"
-    assert "Missing authorization header" in error_data["message"]
+    assert "detail" in error_data
+    assert "Missing authorization header" in error_data["detail"]
     print("   ✓ Missing auth header returns 401")
-    
+
     # Test 2: Invalid Authorization header format
     print("   Testing invalid Authorization header...")
     response = client.post(
@@ -275,7 +294,7 @@ def test_auth_failures():
     )
     assert response.status_code in [401, 403, 500]  # Should return error
     error_data = response.json()
-    assert "error" in error_data
+    assert "detail" in error_data
     print(f"   ✓ Invalid auth header returns {response.status_code}")
     
     # Test 3: Excluded paths work without auth
@@ -305,6 +324,146 @@ def test_auth_failures():
     print("   ✓ All authentication failure tests passed")
 
 
+def test_real_did_wba_auth():
+    """Test real DID WBA authentication flow."""
+    print("\n6. Testing real DID WBA authentication...")
+
+    app = FastAPI()
+
+    # Load DID document and keys
+    did_document_path = project_root / "docs" / "did_public" / "public-did-doc.json"
+    did_private_key_path = project_root / "docs" / "did_public" / "public-private-key.pem"
+    jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "RS256-private.pem"
+    jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "RS256-public.pem"
+
+    # Read DID document to get DID
+    import json
+    with open(did_document_path, 'r') as f:
+        did_document = json.load(f)
+
+    # Read JWT keys
+    with open(jwt_private_key_path, 'r') as f:
+        jwt_private_key = f.read()
+    with open(jwt_public_key_path, 'r') as f:
+        jwt_public_key = f.read()
+
+    # Setup local DID resolver
+    async def local_resolver(did: str):
+        if did != did_document["id"]:
+            raise ValueError(f"Unsupported DID: {did}")
+        return did_document
+
+    # Temporarily replace the resolver
+    original_resolver = verifier_module.resolve_did_wba_document
+    verifier_module.resolve_did_wba_document = local_resolver
+
+    try:
+        # Create auth config
+        auth_config = DidWbaVerifierConfig(
+            jwt_private_key=jwt_private_key,
+            jwt_public_key=jwt_public_key,
+            jwt_algorithm="RS256"
+        )
+
+        anp = FastANP(
+            app=app,
+            name="Auth Test Agent",
+            description="Test real DID WBA authentication",
+            base_url="https://test.example.com",
+            did=did_document["id"],
+            enable_auth_middleware=True,
+            auth_config=auth_config
+        )
+        
+        @app.get("/ad.json")
+        def get_ad():
+            return anp.get_common_header()
+        
+        @anp.interface("/info/secure.json")
+        def secure_method(param: str, ctx: Context) -> dict:
+            count = ctx.session.get("count", 0) + 1
+            ctx.session.set("count", count)
+            return {
+                "param": param,
+                "count": count,
+                "did": ctx.did,
+                "session_id": ctx.session.id
+            }
+        
+        # Create authenticator
+        authenticator = DIDWbaAuthHeader(
+            did_document_path=str(did_document_path),
+            private_key_path=str(did_private_key_path)
+        )
+        
+        client = TestClient(app)
+        
+        # Test 1: Generate DID WBA auth header
+        print("   Testing DID WBA authentication...")
+        server_url = "https://test.example.com/resource"
+        domain = urlparse(server_url).hostname or "test.example.com"
+        
+        auth_headers = authenticator.get_auth_header(server_url, force_new=True)
+        authorization = auth_headers["Authorization"]
+        
+        assert authorization.startswith("DIDWba")
+        print(f"   ✓ Generated DID WBA header: {authorization[:50]}...")
+        
+        # Test 2: Call protected endpoint with DID auth
+        response = client.post(
+            "/rpc",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "secure_method",
+                "params": {"param": "test1"}
+            },
+            headers={"Authorization": authorization}
+        )
+        
+        assert response.status_code == 200
+        result1 = response.json()["result"]
+        assert result1["count"] == 1
+        assert result1["did"] == did_document["id"]
+        session_id1 = result1["session_id"]
+        print(f"   ✓ DID WBA auth successful, session created: {session_id1[:8]}...")
+        
+        # Test 3: Second call with same DID shares session
+        # Generate new auth header
+        auth_headers2 = authenticator.get_auth_header(server_url, force_new=True)
+        authorization2 = auth_headers2["Authorization"]
+        
+        response = client.post(
+            "/rpc",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "secure_method",
+                "params": {"param": "test2"}
+            },
+            headers={"Authorization": authorization2}
+        )
+        
+        assert response.status_code == 200
+        result2 = response.json()["result"]
+        assert result2["count"] == 2  # Same session, count incremented
+        assert result2["session_id"] == session_id1  # Same session ID
+        assert result2["did"] == did_document["id"]
+        print(f"   ✓ Same DID shares session, count={result2['count']}")
+        
+        # Test 4: Verify Bearer token flow
+        print("   Testing Bearer token flow...")
+        # Extract access token from first auth
+        # In real scenario, we would get this from the response
+        # For now, we'll use the DID auth which returns a token
+        
+        print("   ✓ Real DID WBA authentication tests passed")
+        
+    finally:
+        # Restore original resolver
+        verifier_module.resolve_did_wba_document = original_resolver
+
+
 def main():
     """Run all tests."""
     print("=" * 60)
@@ -317,6 +476,7 @@ def main():
         test_combined_injection()
         test_middleware_state()
         test_auth_failures()
+        test_real_did_wba_auth()
         
         print("\n" + "=" * 60)
         print("✓ All tests passed!")

@@ -61,6 +61,9 @@ class DidWbaVerifierConfig:
     # Optional external nonce validator callback: (did:str, nonce:str) -> bool | Awaitable[bool]
     external_nonce_validator: Callable[[str, str], Any] | None = None
 
+    # Domain whitelist for authentication
+    allowed_domains: list[str] | None = None
+
 
 class DidWbaVerifier:
     """Verify Authorization headers for DID WBA and Bearer JWT.

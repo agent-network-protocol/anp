@@ -20,6 +20,7 @@ sys.path.insert(0, str(project_root))
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 from anp.fastanp import Context, FastANP
 
 # Initialize FastAPI app
@@ -29,33 +30,41 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Load JWT keys for authentication
+jwt_private_key_path = project_root / "docs" / "jwt_rs256" / "private_key.pem"
+jwt_public_key_path = project_root / "docs" / "jwt_rs256" / "public_key.pem"
+
+with open(jwt_private_key_path, 'r') as f:
+    jwt_private_key = f.read()
+with open(jwt_public_key_path, 'r') as f:
+    jwt_public_key = f.read()
+
+# Create auth config
+auth_config = DidWbaVerifierConfig(
+    jwt_private_key=jwt_private_key,
+    jwt_public_key=jwt_public_key,
+    jwt_algorithm="RS256"
+)
+
 # Initialize FastANP plugin
 anp = FastANP(
     app=app,
     name="Hotel Booking Assistant",
     description="Intelligent hotel booking agent with room search and reservation capabilities",
-    base_url="https://hotel.example.com",
+    base_url="http://localhost:8000/",
     did="did:wba:hotel.example.com:service:booking",
-    did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-    private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-    public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
     owner={
         "type": "Organization",
         "name": "Hotel Group International",
-        "url": "https://hotel.example.com",
+        "url": "http://localhost:8000/",
         "email": "info@hotel.example.com"
     },
     jsonrpc_server_url="/rpc",
     jsonrpc_server_name="Hotel Booking API",
     jsonrpc_server_description="Hotel Booking JSON-RPC API",
-    external_nonce_validator=None,
-    require_auth=False,  # Disable auth for demo
-    enable_auth_middleware=True,
+    enable_auth_middleware=True,  # Enable auth for demo
+    auth_config=auth_config
 )
-
-# Optional: Add authentication middleware
-if anp.auth_middleware:
-    app.add_middleware(anp.auth_middleware)
 
 
 # Define data models

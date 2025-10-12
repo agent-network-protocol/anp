@@ -79,14 +79,13 @@ class ADGenerator:
             ad_data["owner"] = self.owner.model_dump(exclude_none=True)
         
         # Add security definitions if authentication is required
-        if require_auth:
-            ad_data["securityDefinitions"] = {
-                "didwba_sc": {
-                    "scheme": "didwba",
-                    "in": "header",
-                    "name": "Authorization"
-                }
+        ad_data["securityDefinitions"] = {
+            "didwba_sc": {
+                "scheme": "didwba",
+                "in": "header",
+                "name": "Authorization"
             }
-            ad_data["security"] = "didwba_sc"
+        }
+        ad_data["security"] = "didwba_sc"
         
         return ad_data

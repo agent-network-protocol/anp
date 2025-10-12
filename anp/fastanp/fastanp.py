@@ -12,10 +12,11 @@ from urllib.parse import urlparse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
+
 from .ad_generator import ADGenerator
 from .interface_manager import InterfaceManager, InterfaceProxy
 from .middleware import create_auth_middleware
-from .utils import load_did_document, load_private_key
 
 logger = logging.getLogger(__name__)
 
@@ -34,39 +35,31 @@ class FastANP:
         name: str,
         description: str,
         base_url: str,
-        did: Optional[str] = None,
-        did_document_path: Optional[str] = None,
-        private_key_path: Optional[str] = None,
-        public_key_path: Optional[str] = None,
+        did: str,
         owner: Optional[Dict[str, str]] = None,
         jsonrpc_server_url: str = "/rpc",
         jsonrpc_server_name: Optional[str] = None,
         jsonrpc_server_description: Optional[str] = None,
-        external_nonce_validator: Optional[Callable] = None,
-        require_auth: bool = False,
         enable_auth_middleware: bool = True,
+        auth_config: Optional[DidWbaVerifierConfig] = None,
         api_version: str = "1.0.0",
         **kwargs
     ):
         """
         Initialize FastANP plugin.
-        
+
         Args:
             app: FastAPI application instance
             name: Agent name
             description: Agent description
             base_url: Base URL for this agent (e.g., "https://example.com")
-            did: DID identifier (extracted from did_document if not provided)
-            did_document_path: Path to DID document JSON file
-            private_key_path: Path to JWT private key PEM file
-            public_key_path: Path to JWT public key PEM file
+            did: DID identifier (required)
             owner: Owner information dictionary
             jsonrpc_server_url: JSON-RPC endpoint path (default: "/rpc")
             jsonrpc_server_name: JSON-RPC server name (defaults to agent name)
             jsonrpc_server_description: JSON-RPC server description
-            external_nonce_validator: External nonce validation function
-            require_auth: Whether to require DID WBA authentication
             enable_auth_middleware: Whether to enable auth middleware
+            auth_config: Optional DidWbaVerifierConfig for authentication configuration
             api_version: API version
             **kwargs: Additional arguments
         """
@@ -75,37 +68,15 @@ class FastANP:
         self.description = description
         self.base_url = base_url.rstrip('/')
         self.owner = owner
-        self.require_auth = require_auth
         self.jsonrpc_server_url = jsonrpc_server_url
         self.api_version = api_version
-        
+        self.did = did
+        self.require_auth = enable_auth_middleware  # For backward compatibility
+
         # Extract domain from base_url for DID verification
         parsed_url = urlparse(self.base_url)
         self.domain = parsed_url.netloc or parsed_url.path
-        
-        # Load DID document if provided
-        self.did_document = None
-        if did_document_path:
-            self.did_document = load_did_document(did_document_path)
-            # Extract DID from document if not provided
-            if did is None and self.did_document:
-                did = self.did_document.get('id')
-        
-        if did is None:
-            raise ValueError("DID must be provided either directly or via did_document_path")
-        
-        self.did = did
-        
-        # Load keys for JWT authentication
-        jwt_private_key = None
-        jwt_public_key = None
-        
-        if private_key_path:
-            jwt_private_key = load_private_key(private_key_path).decode('utf-8')
-        
-        if public_key_path:
-            jwt_public_key = load_private_key(public_key_path).decode('utf-8')
-        
+
         # Initialize AD generator
         self.ad_generator = ADGenerator(
             name=name,
@@ -114,25 +85,27 @@ class FastANP:
             base_url=self.base_url,
             owner=owner
         )
-        
+
         # Initialize Interface manager
         self.interface_manager = InterfaceManager(
             api_title=jsonrpc_server_name or name,
             api_version=api_version,
             api_description=jsonrpc_server_description or description
         )
-        
+
         # Initialize authentication middleware
         self.auth_middleware = None
         if enable_auth_middleware:
-            self.auth_middleware = create_auth_middleware(
-                domain=self.domain,
-                jwt_private_key=jwt_private_key,
-                jwt_public_key=jwt_public_key,
-                external_nonce_validator=external_nonce_validator
-            )
+            # If auth_config is not provided, create it from jwt key paths
+            if auth_config is None:
+                raise ValueError(
+                    "auth_config is required when enable_auth_middleware=True. "
+                    "Please provide a DidWbaVerifierConfig instance with JWT keys."
+                )
+
+            self.auth_middleware = create_auth_middleware(config=auth_config)
             # Automatically register auth middleware to FastAPI app
-            self.app.add_middleware(self.auth_middleware)
+            self.app.middleware("http")(self.auth_middleware)
             logger.info(f"Registered auth middleware for domain: {self.domain}")
         
         # Automatically register JSON-RPC endpoint

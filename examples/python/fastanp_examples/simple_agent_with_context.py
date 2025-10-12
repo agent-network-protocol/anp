@@ -30,11 +30,7 @@ anp = FastANP(
     description="Demonstrates Context injection and session management",
     base_url="https://example.com",
     did="did:wba:example.com:agent:simple-context",
-    did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-    private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-    public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-    require_auth=False,  # Disable auth for demo
-    enable_auth_middleware=False,
+    enable_auth_middleware=False,  # Disable auth for demo
 )
 
 

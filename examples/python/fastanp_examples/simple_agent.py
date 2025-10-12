@@ -30,10 +30,6 @@ anp = FastANP(
     description="A simple ANP agent built with FastANP",
     base_url="https://example.com",
     did="did:wba:example.com:agent:simple",
-    did_document_path=str(project_root / "docs" / "did_public" / "public-did-doc.json"),
-    private_key_path=str(project_root / "docs" / "jwt_rs256" / "private_key.pem"),
-    public_key_path=str(project_root / "docs" / "jwt_rs256" / "public_key.pem"),
-    require_auth=False,  # Disable auth for demo
     enable_auth_middleware=False,  # Disable middleware for simplicity
 )
 

@@ -242,6 +242,22 @@ def echo(message: str, ctx: Context) -> dict:
 - `session.set(key, value)` - 设置会话数据
 - `session.clear()` - 清空会话数据
 
+### 6. Request 自动注入
+
+FastANP 支持自动 Request 注入，提供 Request 对象：
+
+```python
+from fastapi import Request
+
+@anp.interface("/info/info.json")
+def info(req: Request) -> dict:
+    """Get request information."""
+    return {
+        "method": req.method,
+        "path": req.url.path
+    }
+```
+
 ## API 参考
 
 ### FastANP 初始化参数
