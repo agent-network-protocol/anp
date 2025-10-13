@@ -79,7 +79,7 @@ class TestFastANPComprehensive:
             base_url=TEST_BASE_URL,
             did=TEST_DID,
             owner={"name": "Test Owner", "email": "owner@example.com"},
-            jsonrpc_server_url="/rpc",
+            jsonrpc_server_path="/rpc",
             enable_auth_middleware=False,  # 测试时先关闭中间件
             api_version="1.0.0"
         )

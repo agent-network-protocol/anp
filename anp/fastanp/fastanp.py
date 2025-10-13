@@ -37,7 +37,7 @@ class FastANP:
         base_url: str,
         did: str,
         owner: Optional[Dict[str, str]] = None,
-        jsonrpc_server_url: str = "/rpc",
+        jsonrpc_server_path: str = "/rpc",
         jsonrpc_server_name: Optional[str] = None,
         jsonrpc_server_description: Optional[str] = None,
         enable_auth_middleware: bool = True,
@@ -55,7 +55,7 @@ class FastANP:
             base_url: Base URL for this agent (e.g., "https://example.com")
             did: DID identifier (required)
             owner: Owner information dictionary
-            jsonrpc_server_url: JSON-RPC endpoint path (default: "/rpc")
+            jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc")
             jsonrpc_server_name: JSON-RPC server name (defaults to agent name)
             jsonrpc_server_description: JSON-RPC server description
             enable_auth_middleware: Whether to enable auth middleware
@@ -68,7 +68,7 @@ class FastANP:
         self.description = description
         self.base_url = base_url.rstrip('/')
         self.owner = owner
-        self.jsonrpc_server_url = jsonrpc_server_url
+        self.jsonrpc_server_path = jsonrpc_server_path
         self.api_version = api_version
         self.did = did
         self.require_auth = enable_auth_middleware  # For backward compatibility
@@ -112,7 +112,7 @@ class FastANP:
         # No need to pass auth_dependency as middleware handles auth in request.state
         self.interface_manager.register_jsonrpc_endpoint(
             app=self.app,
-            rpc_path=jsonrpc_server_url
+            rpc_path=jsonrpc_server_path
         )
         
         # Interfaces dictionary (function -> InterfaceProxy)
@@ -134,7 +134,7 @@ class FastANP:
                 self._interfaces_dict[func] = self.interface_manager.create_interface_proxy(
                     func=func,
                     base_url=self.base_url,
-                    rpc_endpoint=self.jsonrpc_server_url
+                    rpc_endpoint=self.jsonrpc_server_path
                 )
         
         return self._interfaces_dict

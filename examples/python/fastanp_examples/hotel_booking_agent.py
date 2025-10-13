@@ -60,7 +60,7 @@ anp = FastANP(
         "url": "http://localhost:8000/",
         "email": "info@hotel.example.com"
     },
-    jsonrpc_server_url="/rpc",
+    jsonrpc_server_path="/rpc",
     jsonrpc_server_name="Hotel Booking API",
     jsonrpc_server_description="Hotel Booking JSON-RPC API",
     enable_auth_middleware=True,  # Enable auth for demo
