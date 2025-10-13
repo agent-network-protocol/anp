@@ -29,6 +29,7 @@ Discovery and interaction tools for the agent network:
 - **Agent Discovery**: Automatically discover and parse agent description documents
 - **Interface Parsing**: Parse JSON-RPC interfaces and convert them to callable tools
 - **Protocol Interaction**: Support communication with agents that comply with ANP protocol
+- **Direct JSON-RPC**: Execute JSON-RPC requests directly without interface discovery
 
 ### FastANP (Fast Development Framework)
 Plugin-based framework for building ANP agents with FastAPI:

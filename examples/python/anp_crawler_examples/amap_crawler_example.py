@@ -35,7 +35,7 @@ class AmapCrawlerExample:
         self.private_key_path = str(project_root / "docs" / "did_public" / "public-private-key.pem")
 
         # AMAP代理描述URL
-        self.agent_description_url = "https://agent-connect.ai/agents/travel/mcp/agents/amap/ad.json"
+        self.agent_description_url = "https://agent-connect.ai/mcp/agents/amap/ad.json"
 
         # 检查必需的文件是否存在
         self._check_required_files()
@@ -177,6 +177,53 @@ class AmapCrawlerExample:
             print(f"错误: {str(e)}")
             return None
 
+    async def demonstrate_json_rpc_call(self):
+        """演示直接JSON-RPC调用 - 使用AMAP骑行路径规划接口"""
+        print("\n" + "="*60)
+        print("演示直接JSON-RPC调用 - 骑行路径规划")
+        print("="*60)
+
+        # AMAP MCP Services API - 骑行路径规划接口
+        # OpenRPC 方法: maps_direction_bicycling
+        endpoint = "https://agent-connect.ai/mcp/agents/tools/amap"
+        method = "maps_direction_bicycling"
+        params = {
+            "origin": "116.481028,39.989643",      # 天安门：经度116.481028, 纬度39.989643
+            "destination": "116.434446,39.90816"   # 北京西站：经度116.434446, 纬度39.90816
+        }
+        request_id = "bicycling-route-001"
+
+        print(f"端点: {endpoint}")
+        print(f"方法: {method}")
+        print("参数:")
+        print(f"  出发点 (origin): {params['origin']} [天安门]")
+        print(f"  目的地 (destination): {params['destination']} [北京西站]")
+        print(f"请求ID: {request_id}")
+        print("\n说明: 骑行路径规划用于规划骑行通勤方案，规划时会考虑天桥、单行线、封路等情况")
+
+        try:
+            result = await self.crawler.execute_json_rpc(endpoint, method, params, request_id)
+
+            print("\nJSON-RPC调用结果:")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+
+            # 如果返回结果包含路径信息，提取关键数据
+            if result and isinstance(result, dict):
+                if 'route' in result:
+                    print("\n路径规划摘要:")
+                    route = result['route']
+                    if 'paths' in route and route['paths']:
+                        path = route['paths'][0]
+                        print(f"  距离: {path.get('distance', 'N/A')} 米")
+                        print(f"  预计时间: {path.get('duration', 'N/A')} 秒")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"JSON-RPC调用失败: {str(e)}")
+            print(f"错误: {str(e)}")
+            return None
+
     async def run_example(self):
         """运行完整示例"""
         try:
@@ -208,7 +255,15 @@ class AmapCrawlerExample:
 
                 await self.demonstrate_tool_call(first_tool, sample_arguments)
 
-            # 5. 显示会话统计
+            # 5. 演示直接JSON-RPC调用
+            print("\n" + "="*60)
+            print("注意: 直接JSON-RPC调用需要有效的JSON-RPC端点")
+            print("当前示例使用占位符端点，请替换为实际的服务端点")
+            print("="*60)
+
+            await self.demonstrate_json_rpc_call()
+
+            # 6. 显示会话统计
             print("\n" + "="*60)
             print("会话统计:")
             print("="*60)

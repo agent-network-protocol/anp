@@ -5,6 +5,7 @@ This module provides the main interface for interacting with ANP (Agent Network 
 It manages crawling sessions, caches results, and coordinates different components.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
@@ -344,6 +345,117 @@ class ANPCrawler:
             }
 
         return await anp_interface.execute(arguments)
+
+    async def execute_json_rpc(self, endpoint: str, method: str, params: Dict[str, Any], request_id: str = None) -> Dict[str, Any]:
+        """
+        Execute JSON-RPC request directly, without relying on _anp_interfaces.
+
+        Args:
+            endpoint: JSON-RPC server endpoint URL
+            method: Method name to call
+            params: Method parameter dictionary
+            request_id: Request ID (optional, auto-generated)
+
+        Returns:
+            Dictionary containing execution result
+        """
+        logger.info(f"Executing JSON-RPC: {method} at {endpoint}")
+
+        # 如果没有提供 request_id，自动生成一个
+        if request_id is None:
+            import uuid
+            request_id = str(uuid.uuid4())
+
+        # Process arguments to handle string JSON values
+        processed_params = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                # Try to parse as JSON if it looks like JSON
+                if (value.startswith('{') and value.endswith('}')) or \
+                   (value.startswith('[') and value.endswith(']')):
+                    try:
+                        parsed_value = json.loads(value)
+                        processed_params[key] = parsed_value
+                        logger.info(f"Parsed JSON parameter {key}: {value} -> {parsed_value}")
+                    except json.JSONDecodeError:
+                        processed_params[key] = value
+                        logger.warning(f"Failed to parse JSON parameter {key}: {value}")
+                else:
+                    processed_params[key] = value
+            else:
+                processed_params[key] = value
+
+        # 构建 JSON-RPC 请求
+        json_rpc_request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": processed_params,
+            "id": request_id
+        }
+
+        try:
+            # 使用 ANPClient 发送请求
+            response_data = await self._client.fetch_url(
+                endpoint,
+                method="POST",
+                body=json_rpc_request,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if not response_data.get("success", False):
+                return {
+                    "success": False,
+                    "error": response_data.get("error", "Unknown error"),
+                    "endpoint": endpoint,
+                    "method": method,
+                    "request_id": request_id
+                }
+
+            # 解析 JSON-RPC 响应
+            response_text = response_data.get("text", "")
+            try:
+                response_json = json.loads(response_text)
+
+                # 检查 JSON-RPC 错误
+                if "error" in response_json:
+                    return {
+                        "success": False,
+                        "error": response_json["error"],
+                        "endpoint": endpoint,
+                        "method": method,
+                        "request_id": request_id,
+                        "response": response_json
+                    }
+
+                # 成功响应
+                return {
+                    "success": True,
+                    "result": response_json.get("result"),
+                    "endpoint": endpoint,
+                    "method": method,
+                    "request_id": request_id,
+                    "response": response_json
+                }
+
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "error": f"Invalid JSON response: {str(e)}",
+                    "endpoint": endpoint,
+                    "method": method,
+                    "request_id": request_id,
+                    "raw_response": response_text
+                }
+
+        except Exception as e:
+            logger.error(f"Error executing JSON-RPC request to {endpoint}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "endpoint": endpoint,
+                "method": method,
+                "request_id": request_id
+            }
 
     def get_tool_interface_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """
