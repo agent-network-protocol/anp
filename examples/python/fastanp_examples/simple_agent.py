@@ -28,7 +28,8 @@ anp = FastANP(
     app=app,
     name="Simple Agent",
     description="A simple ANP agent built with FastANP",
-    base_url="https://example.com",
+    agent_domain="https://example.com",
+    agent_description_path="/ad.json",
     did="did:wba:example.com:agent:simple",
     enable_auth_middleware=False,  # Disable middleware for simplicity
 )

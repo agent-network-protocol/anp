@@ -28,7 +28,8 @@ anp = FastANP(
     app=app,
     name="Simple Agent with Context",
     description="Demonstrates Context injection and session management",
-    base_url="https://example.com",
+    agent_domain="https://example.com",
+    agent_description_path="/ad.json",
     did="did:wba:example.com:agent:simple-context",
     enable_auth_middleware=False,  # Disable auth for demo
 )

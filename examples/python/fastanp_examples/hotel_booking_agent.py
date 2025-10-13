@@ -52,7 +52,8 @@ anp = FastANP(
     app=app,
     name="Hotel Booking Assistant",
     description="Intelligent hotel booking agent with room search and reservation capabilities",
-    base_url="http://localhost:8000/",
+    agent_domain="http://localhost:8000",
+    agent_description_path="/ad.json",
     did="did:wba:hotel.example.com:service:booking",
     owner={
         "type": "Organization",

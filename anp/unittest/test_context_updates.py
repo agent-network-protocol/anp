@@ -53,7 +53,8 @@ def test_context_injection():
         app=app,
         name="Test Agent",
         description="Test",
-        base_url="https://test.example.com",
+        agent_domain="https://test.example.com",
+        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -101,13 +102,14 @@ def test_context_injection():
 def test_request_injection():
     """Test Request parameter injection."""
     print("\n2. Testing Request injection...")
-    
+
     app = FastAPI()
     anp = FastANP(
         app=app,
         name="Test Agent",
         description="Test",
-        base_url="https://test.example.com",
+        agent_domain="https://test.example.com",
+        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -145,7 +147,8 @@ def test_combined_injection():
         app=app,
         name="Test Agent",
         description="Test",
-        base_url="https://test.example.com",
+        agent_domain="https://test.example.com",
+        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -194,7 +197,8 @@ def test_middleware_state():
         app=app,
         name="Test Agent",
         description="Test",
-        base_url="https://test.example.com",
+        agent_domain="https://test.example.com",
+        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=True,  # Enable middleware
         auth_config=auth_config
@@ -254,7 +258,8 @@ def test_auth_failures():
         app=app,
         name="Test Agent",
         description="Test",
-        base_url="https://test.example.com",
+        agent_domain="https://test.example.com",
+        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=True,  # Enable strict auth middleware
         auth_config=auth_config
@@ -354,7 +359,8 @@ def test_real_did_wba_auth():
             app=app,
             name="Auth Test Agent",
             description="Test real DID WBA authentication",
-            base_url="https://test.example.com",
+            agent_domain="https://test.example.com",
+            agent_description_path="/ad.json",
             did=did_document["id"],
             enable_auth_middleware=True,
             auth_config=auth_config

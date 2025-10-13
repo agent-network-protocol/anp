@@ -7,7 +7,6 @@ FastAPI is the main framework, FastANP provides helper tools and automation.
 
 import logging
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -17,6 +16,7 @@ from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 from .ad_generator import ADGenerator
 from .interface_manager import InterfaceManager, InterfaceProxy
 from .middleware import create_auth_middleware
+from .utils import normalize_agent_domain
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,9 @@ class FastANP:
         app: FastAPI,
         name: str,
         description: str,
-        base_url: str,
         did: str,
+        agent_domain: str,
+        agent_description_path: str = "/ad.json",
         owner: Optional[Dict[str, str]] = None,
         jsonrpc_server_path: str = "/rpc",
         jsonrpc_server_name: Optional[str] = None,
@@ -52,10 +53,11 @@ class FastANP:
             app: FastAPI application instance
             name: Agent name
             description: Agent description
-            base_url: Base URL for this agent (e.g., "https://example.com")
+            agent_domain: Agent domain (e.g., "https://example.com")
+            agent_description_path: Agent description path (包含ad.json, default: "/ad.json")
             did: DID identifier (required)
             owner: Owner information dictionary
-            jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc"). Full path constructed from base_url.
+            jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc"). Full path constructed from agent_domain.
             jsonrpc_server_name: JSON-RPC server name (defaults to agent name)
             jsonrpc_server_description: JSON-RPC server description
             enable_auth_middleware: Whether to enable auth middleware
@@ -66,23 +68,28 @@ class FastANP:
         self.app = app
         self.name = name
         self.description = description
-        self.base_url = base_url.rstrip('/')
+
+        # 规范化 agent_domain，处理各种输入格式
+        # 例如: "a.com" -> "https://a.com", "localhost:8000" -> "http://localhost:8000"
+        self.agent_domain, self.domain = normalize_agent_domain(agent_domain)
+
+        self.agent_description_path = agent_description_path
         self.owner = owner
         self.jsonrpc_server_path = jsonrpc_server_path
         self.api_version = api_version
         self.did = did
         self.require_auth = enable_auth_middleware  # For backward compatibility
 
-        # Extract domain from base_url for DID verification
-        parsed_url = urlparse(self.base_url)
-        self.domain = parsed_url.netloc or parsed_url.path
+        # Construct base_url from agent_domain (for backward compatibility in some places)
+        self.base_url = self.agent_domain
 
         # Initialize AD generator
         self.ad_generator = ADGenerator(
             name=name,
             description=description,
             did=did,
-            base_url=self.base_url,
+            agent_domain=self.agent_domain,
+            agent_description_path=self.agent_description_path,
             owner=owner
         )
 

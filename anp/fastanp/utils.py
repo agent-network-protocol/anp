@@ -10,8 +10,61 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple, Type, get_args, get_origin
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
+
+
+def normalize_agent_domain(agent_domain: str) -> Tuple[str, str]:
+    """
+    规范化 agent_domain，处理各种输入格式。
+
+    支持的输入格式：
+    - www.a.com -> https://www.a.com (自动添加https)
+    - a.com -> https://a.com (自动添加https)
+    - http://0.0.0.0:80 -> http://0.0.0.0:80 (保持http)
+    - https://a.com -> https://a.com (保持不变)
+    - localhost:8000 -> http://localhost:8000 (本地默认http)
+    - 127.0.0.1:8000 -> http://127.0.0.1:8000 (本地默认http)
+
+    Args:
+        agent_domain: 用户输入的域名或URL
+
+    Returns:
+        Tuple[完整URL, 纯域名]: 例如 ("https://example.com", "example.com")
+    """
+    if not agent_domain:
+        raise ValueError("agent_domain cannot be empty")
+
+    agent_domain = agent_domain.strip().rstrip('/')
+
+    # 如果没有协议，尝试解析并添加协议
+    if not agent_domain.startswith(('http://', 'https://')):
+        # 检查是否是本地地址
+        is_local = any([
+            agent_domain.startswith('localhost'),
+            agent_domain.startswith('127.0.0.1'),
+            agent_domain.startswith('0.0.0.0'),
+            agent_domain.startswith('[::1]'),  # IPv6 localhost
+        ])
+
+        # 本地地址默认使用 http，其他使用 https
+        protocol = 'http' if is_local else 'https'
+        agent_domain = f"{protocol}://{agent_domain}"
+
+    # 解析 URL
+    parsed = urlparse(agent_domain)
+
+    # 提取纯域名（包括端口）
+    if parsed.port:
+        domain = f"{parsed.hostname}:{parsed.port}"
+    else:
+        domain = parsed.hostname or parsed.netloc
+
+    # 构建完整的基础URL
+    full_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    return full_url, domain
 
 
 def normalize_url(base_url: str, path: str) -> str:

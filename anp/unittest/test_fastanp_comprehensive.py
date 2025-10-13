@@ -76,7 +76,8 @@ class TestFastANPComprehensive:
             app=self.app,
             name="Test Agent",
             description="A test agent for FastANP comprehensive testing",
-            base_url=TEST_BASE_URL,
+            agent_domain=TEST_BASE_URL,
+            agent_description_path="/ad.json",
             did=TEST_DID,
             owner={"name": "Test Owner", "email": "owner@example.com"},
             jsonrpc_server_path="/rpc",
@@ -498,7 +499,8 @@ class TestFastANPComprehensive:
             app=app,
             name="Auth Test Agent",
             description="Test auth middleware",
-            base_url=TEST_BASE_URL,
+            agent_domain=TEST_BASE_URL,
+            agent_description_path="/ad.json",
             did=TEST_DID,
             enable_auth_middleware=True,  # Enable strict auth
             auth_config=auth_config
@@ -608,7 +610,8 @@ class TestFastANPComprehensive:
                 app=app,
                 name="Secure Agent",
                 description="Agent with real DID WBA authentication",
-                base_url=TEST_BASE_URL,
+                agent_domain=TEST_BASE_URL,
+                agent_description_path="/ad.json",
                 did=did_document["id"],
                 enable_auth_middleware=True,
                 auth_config=auth_config
