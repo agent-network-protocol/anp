@@ -55,7 +55,7 @@ class FastANP:
             base_url: Base URL for this agent (e.g., "https://example.com")
             did: DID identifier (required)
             owner: Owner information dictionary
-            jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc")
+            jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc"). Full path constructed from base_url.
             jsonrpc_server_name: JSON-RPC server name (defaults to agent name)
             jsonrpc_server_description: JSON-RPC server description
             enable_auth_middleware: Whether to enable auth middleware
