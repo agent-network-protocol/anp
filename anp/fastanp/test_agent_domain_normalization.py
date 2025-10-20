@@ -97,7 +97,6 @@ def test_fastanp_integration():
                 name="Test Agent",
                 description="Test",
                 agent_domain=agent_domain_input,
-                agent_description_path="/ad.json",
                 did="did:wba:test.com:agent:test",
                 enable_auth_middleware=False
             )
@@ -108,7 +107,7 @@ def test_fastanp_integration():
             print(f"  → base_url: {anp.base_url}")
 
             # 测试 ad.json URL 生成
-            ad = anp.get_common_header()
+            ad = anp.get_common_header(agent_description_path="/ad.json")
             print(f"  → ad.json URL: {ad['url']}")
             print()
 

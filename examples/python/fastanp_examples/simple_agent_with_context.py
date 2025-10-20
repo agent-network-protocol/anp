@@ -29,7 +29,6 @@ anp = FastANP(
     name="Simple Agent with Context",
     description="Demonstrates Context injection and session management",
     agent_domain="https://example.com",
-    agent_description_path="/ad.json",
     did="did:wba:example.com:agent:simple-context",
     enable_auth_middleware=False,  # Disable auth for demo
 )
@@ -39,7 +38,7 @@ anp = FastANP(
 @app.get("/ad.json", tags=["agent"])
 def get_agent_description():
     """Get Agent Description."""
-    ad = anp.get_common_header()
+    ad = anp.get_common_header(agent_description_path="/ad.json")
     ad["interfaces"] = [
         anp.interfaces[counter].link_summary,
     ]

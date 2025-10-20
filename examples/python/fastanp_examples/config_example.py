@@ -50,7 +50,6 @@ anp = FastANP(
     name="Config Example Agent",
     description="Demonstrates custom authentication configuration",
     agent_domain="https://example.com",
-    agent_description_path="/ad.json",
     did="did:wba:example.com:agent:config-example",
     auth_config=auth_config,  # Pass the config directly (includes allowed_domains)
     enable_auth_middleware=True,
@@ -61,7 +60,7 @@ anp = FastANP(
 @app.get("/ad.json", tags=["agent"])
 def get_agent_description():
     """Get Agent Description."""
-    ad = anp.get_common_header()
+    ad = anp.get_common_header(agent_description_path="/ad.json")
     ad["interfaces"] = [
         anp.interfaces[hello].link_summary,
     ]

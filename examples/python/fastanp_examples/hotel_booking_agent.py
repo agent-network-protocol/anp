@@ -53,7 +53,6 @@ anp = FastANP(
     name="Hotel Booking Assistant",
     description="Intelligent hotel booking agent with room search and reservation capabilities",
     agent_domain="http://localhost:8000",
-    agent_description_path="/ad.json",
     did="did:wba:hotel.example.com:service:booking",
     owner={
         "type": "Organization",
@@ -96,7 +95,7 @@ def get_agent_description(agent_id: str):
         agent_id: Agent identifier
     """
     # 1. Get common header from FastANP
-    ad = anp.get_common_header()
+    ad = anp.get_common_header(agent_description_path=f"/{agent_id}/ad.json")
     
     # 2. Add Information items (user-defined)
     ad["Infomations"] = [
@@ -126,7 +125,7 @@ def get_agent_description(agent_id: str):
 @app.get("/ad.json", tags=["agent"])
 def get_simple_agent_description():
     """Get Agent Description (simple version)."""
-    ad = anp.get_common_header()
+    ad = anp.get_common_header(agent_description_path="/ad.json")
     
     # Add all interfaces as links
     ad["interfaces"] = [

@@ -29,7 +29,6 @@ anp = FastANP(
     name="Simple Agent",
     description="A simple ANP agent built with FastANP",
     agent_domain="https://example.com",
-    agent_description_path="/ad.json",
     did="did:wba:example.com:agent:simple",
     enable_auth_middleware=False,  # Disable middleware for simplicity
 )
@@ -40,7 +39,7 @@ anp = FastANP(
 def get_agent_description():
     """Get Agent Description."""
     # Get common header
-    ad = anp.get_common_header()
+    ad = anp.get_common_header(agent_description_path="/ad.json")
     
     # Add interfaces
     ad["interfaces"] = [

@@ -54,7 +54,6 @@ def test_context_injection():
         name="Test Agent",
         description="Test",
         agent_domain="https://test.example.com",
-        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -109,7 +108,6 @@ def test_request_injection():
         name="Test Agent",
         description="Test",
         agent_domain="https://test.example.com",
-        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -148,7 +146,6 @@ def test_combined_injection():
         name="Test Agent",
         description="Test",
         agent_domain="https://test.example.com",
-        agent_description_path="/ad.json",
         did=TEST_DID,
         enable_auth_middleware=False
     )
@@ -267,7 +264,7 @@ def test_auth_failures():
 
     @app.get("/ad.json")
     def get_ad():
-        return anp.get_common_header()
+        return anp.get_common_header(agent_description_path="/ad.json")
 
     @anp.interface("/info/protected.json")
     def protected_method(param: str) -> dict:

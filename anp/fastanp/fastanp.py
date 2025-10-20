@@ -36,7 +36,6 @@ class FastANP:
         description: str,
         did: str,
         agent_domain: str,
-        agent_description_path: str = "/ad.json",
         owner: Optional[Dict[str, str]] = None,
         jsonrpc_server_path: str = "/rpc",
         jsonrpc_server_name: Optional[str] = None,
@@ -54,7 +53,6 @@ class FastANP:
             name: Agent name
             description: Agent description
             agent_domain: Agent domain (e.g., "https://example.com")
-            agent_description_path: Agent description path (包含ad.json, default: "/ad.json")
             did: DID identifier (required)
             owner: Owner information dictionary
             jsonrpc_server_path: JSON-RPC endpoint path (default: "/rpc"). Full path constructed from agent_domain.
@@ -73,7 +71,6 @@ class FastANP:
         # 例如: "a.com" -> "https://a.com", "localhost:8000" -> "http://localhost:8000"
         self.agent_domain, self.domain = normalize_agent_domain(agent_domain)
 
-        self.agent_description_path = agent_description_path
         self.owner = owner
         self.jsonrpc_server_path = jsonrpc_server_path
         self.api_version = api_version
@@ -89,7 +86,6 @@ class FastANP:
             description=description,
             did=did,
             agent_domain=self.agent_domain,
-            agent_description_path=self.agent_description_path,
             owner=owner
         )
 
@@ -146,19 +142,25 @@ class FastANP:
         
         return self._interfaces_dict
     
-    def get_common_header(self, ad_url: Optional[str] = None) -> Dict[str, Any]:
+    def get_common_header(
+        self,
+        agent_description_path: str = "/ad.json",
+        ad_url: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get common header fields for Agent Description.
-        
+
         Users can extend this with their own Infomations and interfaces.
-        
+
         Args:
+            agent_description_path: Agent description path (包含ad.json, default: "/ad.json")
             ad_url: URL of the ad.json endpoint (optional)
-            
+
         Returns:
             Agent Description common header dictionary
         """
         return self.ad_generator.generate_common_header(
+            agent_description_path=agent_description_path,
             ad_url=ad_url,
             require_auth=self.require_auth
         )
