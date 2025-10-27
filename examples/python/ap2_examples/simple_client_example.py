@@ -12,16 +12,17 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from datetime import datetime, timezone
+
 from anp.ap2 import (
     AP2Client,
     CartMandateVerifier,
+    MoneyAmount,
+    PaymentDetailsTotal,
     PaymentMandateBuilder,
     PaymentMandateContents,
-    PaymentDetailsTotal,
     PaymentResponse,
-    MoneyAmount,
 )
-from datetime import datetime, timezone
 
 
 def load_text(path: Path) -> str:
@@ -98,7 +99,7 @@ async def main():
             remark="尽快发货",
         )
 
-        print(f"✓ 收到 CartMandate")
+        print("✓ 收到 CartMandate")
         print(f"  - Cart ID: {cart_mandate.contents.id}")
         print(f"  - Timestamp: {cart_mandate.timestamp}")
 
@@ -119,7 +120,7 @@ async def main():
         )
 
         cart_hash = cart_payload["cart_hash"]
-        print(f"✓ CartMandate 验证成功")
+        print("✓ CartMandate 验证成功")
         print(f"  - Issuer: {cart_payload['iss']}")
         print(f"  - Cart hash: {cart_hash[:32]}...")
 
@@ -167,7 +168,7 @@ async def main():
             extensions=["anp.ap2.qr.v1"],
         )
 
-        print(f"✓ PaymentMandate 创建成功")
+        print("✓ PaymentMandate 创建成功")
         print(f"  - Payment ID: {pmt_contents.payment_mandate_id}")
 
         # 发送 PaymentMandate
@@ -180,11 +181,11 @@ async def main():
             payment_mandate=payment_mandate,
         )
 
-        print(f"✓ PaymentMandate 发送成功")
+        print("✓ PaymentMandate 发送成功")
         print(f"  - Response: {response}")
 
     except Exception as e:
-        print(f"✗ 请求失败（这是正常的，因为没有真实的商户服务器）")
+        print("✗ 请求失败（这是正常的，因为没有真实的商户服务器）")
         print(f"  错误: {e}")
         print("\n注意: 这个示例演示了如何使用 AP2Client，")
         print("      实际使用时需要连接到真实的商户服务器。")
