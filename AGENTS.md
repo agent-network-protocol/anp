@@ -1,41 +1,19 @@
 # Repository Guidelines
 
-AgentConnect enables protocol-compliant communication between agents. Use this guide to stay aligned with our architecture, tooling, and review expectations.
-
 ## Project Structure & Module Organization
-- `anp/authentication/` manages identity flows and credential validation.
-- `anp/e2e_encryption/` secures payloads; `anp/meta_protocol/` orchestrates negotiation logic.
-- Shared helpers reside in `anp/utils/`; interoperability tooling lives in `anp/anp_crawler/`.
-- Tests mirror source paths under `anp/unittest/<package>/test_<topic>.py`.
-- Documentation belongs in `docs/`, runnable scenarios in `examples/`, release artifacts in `dist/`, and JVM clients under `java/`.
+Core protocol logic lives under `anp/meta_protocol/`, with identity in `anp/authentication/`, encryption in `anp/e2e_encryption/`, shared helpers within `anp/utils/`, and interoperability tooling in `anp/anp_crawler/`. Tests shadow the package layout inside `anp/unittest/<module>/test_<topic>.py`, while docs stay in `docs/`, runnable walkthroughs in `examples/`, JVM clients in `java/`, and release bundles in `dist/`. Keep new assets alongside their feature modules to simplify discovery.
 
 ## Build, Test, and Development Commands
-- `uv sync` installs dependencies pinned in `pyproject.toml`.
-- `uv run pytest` executes the full suite; add `-k "pattern"` to target specific paths.
-- `uv build --wheel` produces distributable wheels in `dist/`.
-- `uv run python examples/ping_pong.py` validates a round-trip negotiation flow.
-- `uv run python -m anp.meta_protocol.cli --help` lists CLI options for manual probes.
+Run `uv sync` to install pinned dependencies, then `uv run pytest` (or `uv run pytest -k "handshake"`) for targeted suites. Package releases with `uv build --wheel`. Validate negotiation flows using `uv run python examples/ping_pong.py`, and inspect the CLI via `uv run python -m anp.meta_protocol.cli --help`. Keep a clean virtual environment by preferring `uv run <script>` over activating shells manually.
 
 ## Coding Style & Naming Conventions
-- Adhere to Google Python Style: four-space indentation, type hints, and module docstrings.
-- Use `snake_case` for modules and functions, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants.
-- Keep public APIs documented with Google-style docstrings; log and comment text must remain in English.
-- Prefer dependency injection and explicit configuration over globals or hidden state.
-- Group new utilities under the closest existing package to preserve discoverability.
+Follow Google Python Style: four-space indentation, type hints, and Google-style docstrings on public APIs. Use `snake_case` for modules/functions, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants. Comments and logs must be in English. Group utilities in the closest existing package and avoid hidden globals; prefer dependency injection or explicit configuration objects.
 
 ## Testing Guidelines
-- Place tests under `anp/unittest`, naming files `test_<area>.py` and functions `test_<behavior>`.
-- Leverage `pytest` fixtures for shared setup; mark async coroutines with `pytest.mark.asyncio`.
-- Run `uv run pytest --cov=anp` before review and cover new control paths and edge cases.
-- Add scenario checks in `examples/` when introducing protocol changes that affect interoperability.
+All new logic must arrive with pytest coverage under the mirrored `anp/unittest` path, naming files `test_<area>.py` and functions `test_<behavior>`. Mark async tests with `@pytest.mark.asyncio`. Before review, run `uv run pytest --cov=anp` and ensure new branches are exercised. Add scenario checks in `examples/` whenever protocol behavior changes or interoperability could regress.
 
 ## Commit & Pull Request Guidelines
-- Author commits as concise imperatives (e.g., `Add credential signer`), referencing issues like `#19` when relevant.
-- Scope each PR to a coherent change set and describe behavior, risks, and validation steps.
-- Attach logs or screenshots for user-facing adjustments and note any protocol compatibility impacts.
-- Confirm CI success prior to requesting review; include reproduction steps for bug fixes.
+Author imperative commit subjects (e.g., `Add credential signer`) and reference issues like `#42` when relevant. Pull requests should summarize behavior changes, risks, validation commands, and any compatibility impacts. Attach logs or screenshots for user-visible updates, confirm CI success, and call out follow-up work explicitly to keep reviewers aligned.
 
 ## Security & Configuration Tips
-- Store secrets in `.env` files and load them with `python-dotenv`.
-- Validate partner certificates using helpers in `anp/authentication` and honor the recommended cipher suites in `anp/e2e_encryption`.
-- Review updates in `docs/` before modifying negotiation flows to preserve interoperability with external agents.
+Load secrets from `.env` via `python-dotenv`, never hardcode credentials, and validate partner certificates with helpers in `anp/authentication`. Honor the recommended cipher suites from `anp/e2e_encryption`, and review `docs/` for interoperability constraints before modifying negotiation flows. Keep configuration explicit and committed sample files redacted.

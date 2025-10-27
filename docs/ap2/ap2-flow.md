@@ -156,7 +156,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 
 **关键点**：
 - `contents` 包含购物车内容、支付请求和二维码信息
-- `merchant_authorization` 是对 `cart_hash` 的 JWS 签名（RS256）
+- `merchant_authorization` 是对 `cart_hash` 的 JWS 签名（RS256 或 ES256K）
 - `cart_hash = b64url(sha256(JCS(contents)))`
 
 
@@ -176,7 +176,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 ### 数据类型
 
 * **类型**：base64url 编码的紧凑 JWS 字符串（`header.payload.signature`）
-* **算法**：`RS256`
+* **算法**：`RS256` 或 `ES256K`
 * **字段**：`CartMandate.merchant_authorization`
 
 ---
@@ -187,6 +187,16 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 {
   "alg": "RS256",
   "kid": "MA-key-001",
+  "typ": "JWT"
+}
+```
+
+或：
+
+```json
+{
+  "alg": "ES256K",
+  "kid": "MA-es256k-key-001",
   "typ": "JWT"
 }
 ```
@@ -227,7 +237,7 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
 1. 计算 `cart_hash`。
 2. 构造 JWT Payload（含 `iss/sub/aud/iat/exp/jti/cart_hash/cnf/sd_hash/extensions`）。
-3. 构造 Header（`alg=RS256`, `kid=<商户公钥标识>`）。
+3. 构造 Header（`alg=RS256` 或 `alg=ES256K`, `kid=<商户公钥标识>`）。
 4. 用商户私钥对 payload 进行签名，生成紧凑 JWS。
 5. 将生成的 JWS 作为 `merchant_authorization` 写入 `CartMandate` 对象。
 
@@ -240,7 +250,7 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
    * 提取 Header → `kid`。
    * 通过 DID 文档或注册表获取 MA 的公钥。
-   * 验证 JWS 签名（RS256）。
+   * 验证 JWS 签名（RS256 或 ES256K，与 Header 匹配）。
 3. 校验声明：
 
    * `iss/aud/iat/exp/jti` 均符合规范；
@@ -299,7 +309,7 @@ def sign_merchant_authorization(contents: dict, ma_private_pem: str, kid: str,
 
 | 校验项    | 要求                                        |
 | ------ | ----------------------------------------- |
-| 签名算法   | RS256                                     |
+| 签名算法   | RS256 或 ES256K（需与 Header.alg 一致） |
 | 时间窗    | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟             |
 | 重放防护   | `jti` 全局唯一                                |
 | 签发者与受众 | `iss=MA`，`aud=TA`（或 MPP）                  |
@@ -551,6 +561,5 @@ payment_mandate的定义参考上面。
 1. **TA 请求** → MA：`create_cart_mandate`（不在三个核心消息中，但触发购物车创建）
 2. **MA 返回（在http响应中）** → TA：`CartMandate`（购物车授权 + 二维码）
 3. **TA 返回** → MA：`PaymentMandate`（支付授权）
-
 
 
