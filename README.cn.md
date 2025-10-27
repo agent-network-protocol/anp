@@ -50,6 +50,8 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 - **哈希完整性**：购物车和支付数据完整性验证
 - **DID WBA 集成**：与基于 DID 的身份认证无缝集成
 
+**规范文档**：[AP2 协议规范](docs/ap2/ap2-flow.md)
+
 ## 使用方式
 
 ### 方式一：通过pip安装
@@ -178,6 +180,8 @@ uv run python examples/python/ap2_examples/ap2_complete_flow.py
 5. 购物者创建并签名 PaymentMandate
 6. 购物者发送 PaymentMandate 给商户
 7. 商户验证 PaymentMandate 并确认支付
+
+详细的协议规范请参阅 [AP2 协议文档](docs/ap2/ap2-flow.md)
 
 ## 工具推荐
 

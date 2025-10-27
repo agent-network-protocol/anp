@@ -50,6 +50,8 @@ Secure payment authorization protocol for agent transactions:
 - **Hash Integrity**: Cart and payment data integrity verification
 - **DID WBA Integration**: Seamless integration with DID-based authentication
 
+**Specification Document**: [AP2 Protocol Specification](docs/ap2/ap2-flow.md)
+
 ## Usage
 
 ### Option 1: Install via pip
@@ -179,6 +181,8 @@ uv run python examples/python/ap2_examples/ap2_complete_flow.py
 5. Shopper creates and signs PaymentMandate
 6. Shopper sends PaymentMandate to merchant
 7. Merchant verifies PaymentMandate and confirms payment
+
+For detailed protocol specification, see [AP2 Protocol Documentation](docs/ap2/ap2-flow.md)
 
 ## Tool Recommendations
 
