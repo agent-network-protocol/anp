@@ -46,7 +46,7 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 
 ### 方式一：通过pip安装
 ```bash
-pip install agent-connect
+pip install anp
 ```
 
 ### 方式二：源码安装（推荐开发者使用）
