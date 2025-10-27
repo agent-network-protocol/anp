@@ -6,40 +6,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Environment Setup:**
 ```bash
-uv venv .venv
-uv pip install --python .venv/bin/python --editable .
+uv sync                                    # Sync environment from pyproject.toml
+uv sync --extra api                        # Install with FastAPI/OpenAI dependencies
+uv sync --extra dev                        # Install with dev/testing dependencies
+uv sync --extra api,dev                    # Install all optional dependencies
 ```
 
 **Testing:**
 ```bash
 uv run pytest                              # Run full test suite
 uv run pytest -k <pattern>                 # Run specific tests
-uv run pytest --cov=anp          # Run tests with coverage
+uv run pytest --cov=anp                    # Run tests with coverage
+uv run pytest anp/unittest/                # Run core unit tests only
+uv run pytest anp/anp_crawler/test/        # Run ANP crawler tests only
+uv run pytest anp/fastanp/                 # Run FastANP tests only
 ```
 
 **Build and Distribution:**
 ```bash
 uv build --wheel                           # Build wheel for distribution
-uv sync                                    # Sync environment from pyproject.toml
 ```
 
 **Running Examples:**
 ```bash
 # DID WBA authentication examples (offline)
 uv run python examples/python/did_wba_examples/create_did_document.py
-uv run python examples/python/did_wba_examples/validate_did_document.py
 uv run python examples/python/did_wba_examples/authenticate_and_verify.py
 
 # Meta-protocol negotiation (requires Azure OpenAI config in .env)
-python examples/python/negotiation_mode/negotiation_bob.py    # Start Bob first
-python examples/python/negotiation_mode/negotiation_alice.py  # Then Alice
+uv run python examples/python/negotiation_mode/negotiation_bob.py    # Start Bob first
+uv run python examples/python/negotiation_mode/negotiation_alice.py  # Then Alice
 
-# FastANP examples
-uv run python examples/python/fastanp_examples/basic_example.py
-uv run python examples/python/fastanp_examples/fastapi_example.py
+# FastANP examples (requires --extra api)
+uv run python examples/python/fastanp_examples/simple_agent.py
+uv run python examples/python/fastanp_examples/hotel_booking_agent.py
+uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
+
+# ANP Crawler examples
+uv run python examples/python/anp_crawler_examples/simple_amap_example.py
+uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 
 # DID document generation tool
-python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
+uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
 ```
 
 ## Architecture Overview
@@ -106,65 +114,91 @@ AgentConnect implements the Agent Network Protocol (ANP) through a three-layer a
 - Extract and convert protocol interfaces for interoperability
 
 **FastANP Framework:**
-- Decorator-based interface registration (`@app.interface`)
-- Automatic OpenRPC document generation
-- Dynamic information management
-- Built-in authentication middleware
-- FastAPI integration for web deployment
+- **Plugin Architecture**: FastAPI is the main framework, FastANP is a helper plugin (not a standalone framework)
+- **Decorator-based registration**: Use `@anp.interface(path)` to register functions as JSON-RPC methods
+- **Automatic OpenRPC generation**: Python functions + type hints → OpenRPC documents
+- **Interface access**: `anp.interfaces[function].link_summary` (URL reference) or `.content` (embedded)
+- **Context injection**: `ctx: Context` parameter provides session management, DID, and request access
+- **Session management**: Based on DID (not DID + token), shared across requests from same agent
+- **User-controlled routing**: User explicitly defines all routes including `/ad.json`
+- **Built-in authentication middleware**: DID WBA verification with wildcard path exemptions (`*/ad.json`, `/info/*`)
 
 ## Configuration
 
 **Environment Variables (`.env`):**
-```
-AZURE_OPENAI_API_KEY=<key>          # Required for meta-protocol negotiation
-AZURE_OPENAI_ENDPOINT=<endpoint>
-AZURE_OPENAI_DEPLOYMENT=<model>
-AZURE_OPENAI_MODEL_NAME=<name>
+
+Copy `.env.example` to `.env` and configure the following (required only for meta-protocol negotiation):
+
+```bash
+AZURE_OPENAI_API_KEY=<your-key>
+AZURE_OPENAI_ENDPOINT=<your-endpoint>
+AZURE_OPENAI_API_VERSION=2024-02-01
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_MODEL_NAME=gpt-4o
 ```
 
 **Optional Dependencies:**
-- `api`: FastAPI integration for FastANP framework
+- `api`: FastAPI + OpenAI integration (required for FastANP framework and meta-protocol negotiation)
 - `dev`: Development tools (pytest, pytest-asyncio)
-
-**Install optional dependencies:**
-```bash
-# For FastAPI integration
-uv sync --extra api
-
-# For development
-uv sync --extra dev
-
-# For both
-uv sync --extra api,dev
-```
 
 **Security Note:** Never commit secrets to the repository. Use `.env` files loaded via `python-dotenv`.
 
 ## Testing Guidelines
 
 Tests are distributed across multiple locations:
-- `anp/unittest/`: Core unit tests for ANP components
+- `anp/unittest/`: Core unit tests for ANP components (context, comprehensive FastANP tests)
 - `anp/anp_crawler/test/`: Tests for ANP crawler functionality
-- `anp/fastanp/`: Tests for FastANP framework (integrated in module)
-- Root level: Integration tests like `test_fastanp_basic.py`
+- `anp/fastanp/`: Tests for FastANP framework (domain normalization tests)
 
-Test files use `test_<area>.py` naming and functions use `test_<behavior>`. Focus on authentication handshakes, encryption boundaries, protocol negotiation flows, and error conditions.
+**Test Naming Convention:**
+- Test files: `test_<feature>.py`
+- Test functions: `test_<behavior>()`
 
-**Running specific test categories:**
-```bash
-# Core unit tests
-uv run pytest anp/unittest/
+**Focus Areas for Testing:**
+- DID WBA authentication handshakes and signature verification
+- End-to-end encryption boundaries (forward compatibility)
+- Protocol negotiation flows with LLM code generation
+- FastANP decorator behavior and OpenRPC generation
+- Context injection and session management
+- Error conditions and edge cases
 
-# ANP crawler tests
-uv run pytest anp/anp_crawler/test/
-
-# FastANP tests
-uv run pytest anp/fastanp/
-
-# Integration tests
-uv run pytest test_fastanp_basic.py
-```
+**Note:** Some tests may require `.env` configuration for LLM-based features (meta-protocol negotiation).
 
 ## Code Style
 
-Follow Google Python Style with four-space indentation, type hints, and Google-style docstrings. Use `snake_case` for functions/modules, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants. Prefer dependency injection and isolate network side effects for testability.
+Follow Google Python Style Guide:
+- **Indentation**: 4 spaces
+- **Type hints**: Required for function signatures
+- **Docstrings**: Google-style format with Args/Returns/Raises sections
+- **Naming conventions**:
+  - `snake_case` for functions and modules
+  - `UpperCamelCase` for classes
+  - `UPPER_SNAKE_CASE` for constants
+- **Testability**: Prefer dependency injection and isolate network side effects
+
+## Key Development Notes
+
+**FastANP Development:**
+- Function names registered with `@anp.interface()` must be globally unique (FastANP tracks by function reference)
+- Always use `uv run` prefix when running examples to ensure correct environment
+- The `/rpc` endpoint is automatically registered for JSON-RPC 2.0 requests
+- OpenRPC documents are automatically served at the paths specified in `@anp.interface(path)`
+- Context parameter (`ctx: Context`) is automatically injected and excluded from OpenRPC schemas
+- Request parameter (`req: Request`) is automatically injected similarly
+
+**DID WBA Authentication:**
+- DID documents are created with `create_did_wba_document(hostname, path_segments)`
+- Authentication uses RS256 JWT tokens
+- Verifier requires both private and public keys for token generation and verification
+- Example keys are available in `docs/did_public/` for testing purposes only
+
+**ANP Crawler Usage:**
+- ANPCrawler requires DID document and private key paths for authenticated requests
+- Discovered interfaces are automatically converted to callable tools
+- Use `list_available_tools()` to see discovered methods
+- Use `execute_tool_call(tool_name, arguments)` to invoke remote methods
+
+**Project-Specific Paths:**
+- Test DID documents: `docs/did_public/public-did-doc.json`
+- Test private keys: `docs/did_public/public-private-key.pem`
+- Examples are structured by feature: `examples/python/{did_wba_examples,fastanp_examples,anp_crawler_examples,negotiation_mode}`
