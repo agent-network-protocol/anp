@@ -42,6 +42,14 @@ Plugin-based framework for building ANP agents with FastAPI:
 
 For complete documentation, see [FastANP README](anp/fastanp/README.md)
 
+### AP2 (Agent Payment Protocol v2)
+Secure payment authorization protocol for agent transactions:
+- **CartMandate**: Shopping cart authorization with merchant signature
+- **PaymentMandate**: Payment authorization with user signature
+- **ES256K Signing**: Support for ECDSA secp256k1 signatures
+- **Hash Integrity**: Cart and payment data integrity verification
+- **DID WBA Integration**: Seamless integration with DID-based authentication
+
 ## Usage
 
 ### Option 1: Install via pip
@@ -142,6 +150,35 @@ curl -X POST http://localhost:8000/rpc \
 ```
 
 **Detailed Documentation**: [FastANP Examples](examples/python/fastanp_examples/README.md)
+
+### AP2 Payment Protocol Example
+Location: `examples/python/ap2_examples/`
+
+#### Main Examples
+- **Complete Flow** (`ap2_complete_flow.py`)
+  Full demonstration of AP2 payment protocol including merchant and shopper agents
+
+#### Features
+- **Merchant Agent**: Handles cart creation and payment verification
+- **Shopper Agent**: Creates shopping cart and authorizes payment
+- **Mandate Verification**: Both CartMandate and PaymentMandate verification
+- **Local IP Communication**: Two agents communicate over local network
+- **ES256K Signatures**: Uses ECDSA secp256k1 for all mandate signatures
+
+#### Running Example
+```bash
+# Run complete AP2 flow
+uv run python examples/python/ap2_examples/ap2_complete_flow.py
+```
+
+#### Flow Overview
+1. Merchant agent starts on local IP
+2. Shopper sends `create_cart_mandate` request
+3. Merchant verifies DID WBA auth, creates and signs CartMandate
+4. Shopper verifies CartMandate signature
+5. Shopper creates and signs PaymentMandate
+6. Shopper sends PaymentMandate to merchant
+7. Merchant verifies PaymentMandate and confirms payment
 
 ## Tool Recommendations
 

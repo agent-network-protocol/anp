@@ -42,6 +42,14 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 
 完整文档请参考 [FastANP README](anp/fastanp/README.md)
 
+### AP2（智能体支付协议 v2）
+安全的智能体交易支付授权协议：
+- **CartMandate（购物车授权）**：带商户签名的购物车授权
+- **PaymentMandate（支付授权）**：带用户签名的支付授权
+- **ES256K 签名**：支持 ECDSA secp256k1 签名
+- **哈希完整性**：购物车和支付数据完整性验证
+- **DID WBA 集成**：与基于 DID 的身份认证无缝集成
+
 ## 使用方式
 
 ### 方式一：通过pip安装
@@ -141,6 +149,35 @@ curl -X POST http://localhost:8000/rpc \
 ```
 
 **详细文档**：[FastANP示例说明](examples/python/fastanp_examples/README.md)
+
+### AP2 支付协议示例
+位置：`examples/python/ap2_examples/`
+
+#### 主要示例
+- **完整流程** (`ap2_complete_flow.py`)
+  完整演示 AP2 支付协议，包括商户和购物者智能体
+
+#### 功能特性
+- **商户智能体**：处理购物车创建和支付验证
+- **购物者智能体**：创建购物车并授权支付
+- **Mandate 验证**：CartMandate 和 PaymentMandate 双重验证
+- **本地 IP 通信**：两个智能体在本地网络上通信
+- **ES256K 签名**：所有 mandate 使用 ECDSA secp256k1 签名
+
+#### 运行示例
+```bash
+# 运行完整的 AP2 流程
+uv run python examples/python/ap2_examples/ap2_complete_flow.py
+```
+
+#### 流程概览
+1. 商户智能体在本地 IP 上启动
+2. 购物者发送 `create_cart_mandate` 请求
+3. 商户验证 DID WBA 认证，创建并签名 CartMandate
+4. 购物者验证 CartMandate 签名
+5. 购物者创建并签名 PaymentMandate
+6. 购物者发送 PaymentMandate 给商户
+7. 商户验证 PaymentMandate 并确认支付
 
 ## 工具推荐
 
