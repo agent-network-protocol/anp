@@ -283,12 +283,6 @@ Current version: 0.1.0
 - [ ] Plugin system
 - [ ] Performance optimizations
 
-## Community
-
-- **GitHub**: [AgentNetworkProtocol](https://github.com/chgaowei/AgentNetworkProtocol)
-- **Issues**: [Report bugs or request features](https://github.com/chgaowei/AgentNetworkProtocol/issues)
-- **Discussions**: [Join the conversation](https://github.com/chgaowei/AgentNetworkProtocol/discussions)
-
 ## Acknowledgments
 
 Built with:
