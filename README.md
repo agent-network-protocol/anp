@@ -56,7 +56,7 @@ Secure payment authorization protocol for agent transactions:
 
 ### Option 1: Install via pip
 ```bash
-pip install agent-connect
+pip install anp
 ```
 
 ### Option 2: Source Installation (Recommended for Developers)
