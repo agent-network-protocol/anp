@@ -7,7 +7,7 @@
  * - Signing data
  */
 
-import { ANPClient } from '@anp/typescript-sdk';
+import { ANPClient } from '../../dist/index.js';
 
 async function main() {
   console.log('=== Simple Agent Example ===\n');

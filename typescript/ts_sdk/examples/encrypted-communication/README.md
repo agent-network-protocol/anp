@@ -1,60 +1,163 @@
 # Encrypted Communication Example
 
-This example demonstrates end-to-end encryption between two agents.
+This example demonstrates end-to-end encryption between two agents using ECDHE key exchange and AES-256-GCM encryption.
 
 ## What This Example Shows
 
-- ECDHE (Elliptic Curve Diffie-Hellman Ephemeral) key exchange
-- Symmetric encryption with AES-256-GCM
-- Key derivation from shared secrets
-- Authenticated encryption
-- Bidirectional secure communication
-- Key rotation
+- Creating DID identities with X25519 keyAgreement keys
+- Extracting keyAgreement keys from DID documents
+- Performing ECDHE (Elliptic Curve Diffie-Hellman Ephemeral) key exchange
+- Verifying both parties compute the same shared secret
+- Deriving AES-256-GCM encryption keys using HKDF
+- **Actually encrypting messages** with real plaintext
+- **Actually decrypting messages** and verifying content
+- Bidirectional encrypted communication (Alice ↔ Bob)
+- Demonstrating tampering detection with authentication tags
 
 ## Running the Example
+
+From the `ts_sdk` directory:
+
+```bash
+npm run build
+npx tsx examples/encrypted-communication/index.ts
+```
+
+Or from this directory:
 
 ```bash
 npm install
 npm start
 ```
 
-## Encryption Flow
+## Expected Output
 
-### 1. Identity Creation
-- Both agents create DID identities
-- Identities include keyAgreement keys for encryption
+```
+=== Encrypted Communication Example ===
 
-### 2. Public Key Exchange
-- Agents resolve each other's DID documents
-- Extract keyAgreement public keys
-- Public keys can be shared openly
+Step 1: Creating agent identities...
+✓ Alice: did:wba:localhost:9000:alice
+✓ Bob: did:wba:localhost:9001:bob
 
-### 3. ECDHE Key Exchange
-- Each agent generates ephemeral key pair
-- Agents compute shared secret using:
-  - Own private key
-  - Other agent's public key
-- Both arrive at same shared secret
+Step 2: Extracting keyAgreement keys...
+✓ Alice keyAgreement: did:wba:localhost:9000:alice#key-agreement
+✓ Bob keyAgreement: did:wba:localhost:9001:bob#key-agreement
 
-### 4. Key Derivation
-- Derive symmetric encryption key from shared secret
+Step 3: Performing ECDHE key exchange...
+✓ Shared secret established: MATCH
+  Shared secret length: 32 bytes
+
+Step 4: Deriving encryption keys with HKDF...
+✓ Encryption key derived (AES-256-GCM)
+  Salt length: 32 bytes
+
+Step 5: Alice encrypts message to Bob...
+✓ Message encrypted
+  Original message: Hello Bob! This is a secret message from Alice.
+  Plaintext length: 47 bytes
+  Ciphertext length: 47 bytes
+  IV length: 12 bytes
+  Auth tag length: 16 bytes
+
+Step 6: Bob decrypts message from Alice...
+✓ Message decrypted
+  Decrypted message: Hello Bob! This is a secret message from Alice.
+  Messages match: true
+
+Step 7: Bob sends encrypted reply to Alice...
+✓ Reply encrypted
+  Reply message: Hi Alice! I received your message securely.
+
+Step 8: Alice decrypts Bob's reply...
+✓ Reply decrypted
+  Decrypted reply: Hi Alice! I received your message securely.
+  Messages match: true
+
+Step 9: Demonstrating tampering detection...
+✓ Tampering detected and rejected
+  Error: Decryption failed: Authentication tag verification failed. Data may have been tampered with.
+
+=== Example Complete ===
+
+Security Properties Demonstrated:
+✓ Confidentiality: Messages encrypted with AES-256-GCM
+✓ Authenticity: Authentication tags verify message integrity
+✓ Forward Secrecy: Ephemeral key exchange protects past sessions
+✓ Integrity: Tampering is detected and rejected
+✓ Bidirectional: Both parties can encrypt and decrypt
+```
+
+## Example Flow
+
+### 1. Create Identities with Key Agreement Keys
+```typescript
+const aliceIdentity = await client.did.create({
+  domain: 'alice.example.com',
+  path: 'agent1',
+});
+
+const bobIdentity = await client.did.create({
+  domain: 'bob.example.com',
+  path: 'agent1',
+});
+```
+- Both identities include X25519 keyAgreement keys
+- Keys are used for ECDHE key exchange
+
+### 2. Resolve DID Documents
+```typescript
+const aliceDoc = await client.did.resolve(aliceIdentity.did);
+const bobDoc = await client.did.resolve(bobIdentity.did);
+```
+- Each agent resolves the other's DID document
+- Extracts keyAgreement public keys
+- Public keys can be shared openly (not secret)
+
+### 3. Perform ECDHE Key Exchange
+```typescript
+const sharedSecretAlice = await performKeyExchange(
+  alicePrivateKey,
+  bobPublicKey
+);
+
+const sharedSecretBob = await performKeyExchange(
+  bobPrivateKey,
+  alicePublicKey
+);
+```
+- Both agents compute the same shared secret
+- Uses Elliptic Curve Diffie-Hellman
+- Shared secret is never transmitted
+
+### 4. Derive Encryption Keys
+```typescript
+const encryptionKey = await deriveKey(sharedSecret, salt);
+```
 - Use HKDF (HMAC-based Key Derivation Function)
-- Include salt and context information
+- Derives AES-256 key from shared secret
+- Includes salt for additional security
 
-### 5. Encryption
-- Encrypt messages with AES-256-GCM
-- Generate unique IV for each message
-- Produce authentication tag
+### 5. Encrypt Messages
+```typescript
+const encrypted = await encrypt(encryptionKey, plaintext);
+// Returns: { ciphertext, iv, tag }
+```
+- Encrypts with AES-256-GCM
+- Generates random IV (Initialization Vector)
+- Produces authentication tag for integrity
 
-### 6. Decryption
-- Decrypt ciphertext with shared key
-- Verify authentication tag
-- Reject if tag doesn't match
+### 6. Decrypt Messages
+```typescript
+const decrypted = await decrypt(encryptionKey, encrypted);
+```
+- Decrypts ciphertext with shared key
+- Verifies authentication tag
+- Throws error if tag is invalid (tampering detected)
 
-### 7. Key Rotation
-- Periodically generate new ephemeral keys
-- Perform new key exchange
-- Securely destroy old keys
+### 7. Bidirectional Communication
+- Alice encrypts message → Bob decrypts
+- Bob encrypts response → Alice decrypts
+- Both use the same shared secret
 
 ## Cryptographic Algorithms
 
@@ -124,29 +227,47 @@ Any tampering with the ciphertext is detected when verifying the authentication 
 
 ## Implementation Details
 
-### Message Format
-```
-[IV (12 bytes)][Ciphertext (variable)][Auth Tag (16 bytes)]
-```
-
-### Key Derivation
-```
-encryption_key = HKDF(
-  shared_secret,
-  salt,
-  info="ANP-encryption-key",
-  length=32
-)
+### Encrypted Message Format
+```typescript
+interface EncryptedData {
+  ciphertext: Uint8Array;  // Encrypted message
+  iv: Uint8Array;          // Initialization Vector (12 bytes)
+  tag: Uint8Array;         // Authentication Tag (16 bytes)
+}
 ```
 
-### Encryption
+### Key Derivation (HKDF)
+```typescript
+const encryptionKey = await crypto.subtle.deriveKey(
+  {
+    name: 'HKDF',
+    hash: 'SHA-256',
+    salt: salt,
+    info: new TextEncoder().encode('ANP-encryption-key'),
+  },
+  sharedSecret,
+  { name: 'AES-GCM', length: 256 },
+  false,
+  ['encrypt', 'decrypt']
+);
 ```
-ciphertext, tag = AES-256-GCM.encrypt(
-  key=encryption_key,
-  plaintext=message,
-  iv=random_iv,
-  additional_data=metadata
-)
+
+### AES-256-GCM Encryption
+```typescript
+const ciphertext = await crypto.subtle.encrypt(
+  {
+    name: 'AES-GCM',
+    iv: randomIV,
+    tagLength: 128,  // 16 bytes
+  },
+  encryptionKey,
+  plaintext
+);
+```
+
+### Wire Format
+```
+[IV (12 bytes)] + [Ciphertext (variable)] + [Auth Tag (16 bytes)]
 ```
 
 ## Common Issues

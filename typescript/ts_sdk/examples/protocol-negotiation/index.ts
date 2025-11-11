@@ -7,7 +7,7 @@
  * - Reaching protocol agreement
  */
 
-import { ANPClient } from '@anp/typescript-sdk';
+import { ANPClient } from '../../dist/index.js';
 
 async function main() {
   console.log('=== Protocol Negotiation Example ===\n');

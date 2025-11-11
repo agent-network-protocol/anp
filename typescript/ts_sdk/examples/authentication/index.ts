@@ -7,7 +7,7 @@
  * - Mutual authentication flow
  */
 
-import { ANPClient } from '@anp/typescript-sdk';
+import { ANPClient } from '../../dist/index.js';
 
 async function main() {
   console.log('=== Authentication Example ===\n');

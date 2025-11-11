@@ -1,66 +1,110 @@
 # Protocol Negotiation Example
 
-This example demonstrates meta-protocol negotiation between two agents.
+This example demonstrates meta-protocol negotiation between two agents using XState v5 state machines.
 
 ## What This Example Shows
 
-- Creating negotiation state machines
+- Creating XState v5 negotiation state machines
 - Proposing candidate protocols
-- Handling negotiation rounds
+- Handling negotiation rounds with state transitions
 - Reaching protocol agreement
-- Code generation phase
-- Test case negotiation
-- Communication with agreed protocol
+- State machine event handling
+- Protocol selection logic
+- Complete negotiation lifecycle
 
 ## Running the Example
+
+From the `ts_sdk` directory:
+
+```bash
+npm run build
+npx tsx examples/protocol-negotiation/index.ts
+```
+
+Or from this directory:
 
 ```bash
 npm install
 npm start
 ```
 
-## Negotiation Flow
+## Expected Output
+
+```
+=== Protocol Negotiation Example ===
+
+Creating agent identities...
+✓ Agent A: did:wba:localhost:9000:agent-a
+✓ Agent B: did:wba:localhost:9001:agent-b
+
+Creating negotiation state machines...
+✓ State machines created
+
+Starting negotiation...
+
+Agent A proposes: JSON-RPC 2.0, gRPC, GraphQL
+
+Agent B receives and finds common protocol: GraphQL
+
+Both agents accept GraphQL
+
+Generating protocol implementation...
+✓ Code generation complete
+
+=== Example Complete ===
+
+Negotiation Result:
+- Agreed Protocol: GraphQL
+- Both agents ready to communicate
+- State machines ensure predictable flow
+```
+
+## Example Flow
+
+This example demonstrates a simplified negotiation:
 
 ### 1. Initialization
-- Both agents create DID identities
-- Each agent creates a negotiation state machine
-- Machines start in idle state
+- Agent A creates DID: `did:wba:agentA.example.com:agent1`
+- Agent B creates DID: `did:wba:agentB.example.com:agent1`
+- Both create XState v5 state machines
+- Machines start in **idle** state
 
-### 2. Proposal
-- Agent A proposes candidate protocols
-- Machine transitions to negotiating state
-- Proposal sent to Agent B
+### 2. Agent A Initiates
+- Proposes: `"JSON-RPC, gRPC, GraphQL"`
+- Machine transitions to **negotiating** state
+- Sends protocolNegotiation message to Agent B
 
-### 3. Negotiation Rounds
-- Agent B evaluates proposals
-- Finds common protocols
-- May counter-propose or accept
-- Multiple rounds until agreement
+### 3. Agent B Responds
+- Receives proposal
+- Evaluates candidate protocols
+- Finds common protocol: `"GraphQL"`
+- Sends acceptance message
+- Machine transitions to **negotiating** state
 
-### 4. Code Generation
+### 4. Agreement Reached
+- Agent A receives acceptance
+- Both machines transition to **codeGeneration** state
+- Protocol agreed: `"GraphQL"`
+
+### 5. Code Generation
 - Both agents generate protocol implementation
-- Machines transition to codeGeneration state
-- Code verified and loaded
+- Machines emit `code_ready` event
+- Transition to **testCases** state
 
-### 5. Test Cases
-- Agents agree on test cases
-- Test cases define expected behavior
-- Both agents must pass tests
+### 6. Test Cases (Optional)
+- Agents can negotiate test cases
+- Or skip directly to **ready** state
+- Example skips tests for simplicity
 
-### 6. Testing
-- Execute agreed test cases
-- Verify protocol implementation
-- Handle failures with error negotiation
-
-### 7. Ready
-- All tests passed
-- Machines transition to ready state
+### 7. Ready State
+- Both machines in **ready** state
 - Ready for production communication
+- Can emit `start_communication` to begin
 
 ### 8. Communication
-- Agents communicate using agreed protocol
-- State machine monitors for errors
-- Can trigger error negotiation if needed
+- Machines transition to **communicating** state
+- Agents exchange messages using GraphQL
+- State machine monitors for protocol errors
 
 ## State Machine States
 
@@ -75,16 +119,35 @@ npm start
 - **rejected**: Negotiation failed
 - **failed**: Unrecoverable error
 
-## Configuration Options
+## State Machine Configuration
 
 ```typescript
-{
-  localIdentity: DIDIdentity,      // Your agent's identity
-  remoteDID: string,               // Remote agent's DID
-  candidateProtocols: string,      // Comma-separated protocols
-  maxNegotiationRounds: number,    // Max rounds before timeout
-  onStateChange: (state) => void   // State change callback
+interface MetaProtocolConfig {
+  localIdentity: DIDIdentity;      // Your agent's DID identity
+  remoteDID: string;               // Remote agent's DID
+  candidateProtocols: string;      // Comma-separated protocols
+  maxNegotiationRounds: number;    // Max rounds (default: 5)
 }
+```
+
+## Creating a State Machine
+
+```typescript
+const machine = MetaProtocolMachine.create({
+  localIdentity: myIdentity,
+  remoteDID: 'did:wba:other.example.com:agent1',
+  candidateProtocols: 'JSON-RPC, gRPC, GraphQL',
+  maxNegotiationRounds: 5,
+});
+
+// Subscribe to state changes
+machine.subscribe((state) => {
+  console.log('Current state:', state.value);
+  console.log('Context:', state.context);
+});
+
+// Send events
+machine.send({ type: 'initiate', remoteDID: '...', candidateProtocols: '...' });
 ```
 
 ## Best Practices
