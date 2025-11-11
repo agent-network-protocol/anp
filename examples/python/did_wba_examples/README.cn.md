@@ -22,7 +22,7 @@
 
 ```bash
 # 方式一：通过pip安装
-pip install agent-connect
+pip install anp
 
 # 方式二：源码安装（推荐开发者）
 git clone https://github.com/agent-network-protocol/AgentConnect.git
