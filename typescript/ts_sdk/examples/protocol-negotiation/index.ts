@@ -1,11 +1,10 @@
 /**
  * Protocol Negotiation Example
  * 
- * This example demonstrates meta-protocol negotiation:
+ * Demonstrates meta-protocol negotiation using XState:
  * - Creating negotiation state machines
- * - Proposing protocols
- * - Handling negotiation rounds
- * - Reaching agreement
+ * - Simulating protocol negotiation flow
+ * - Reaching protocol agreement
  */
 
 import { ANPClient } from '@anp/typescript-sdk';
@@ -13,53 +12,35 @@ import { ANPClient } from '@anp/typescript-sdk';
 async function main() {
   console.log('=== Protocol Negotiation Example ===\n');
 
-  // Create two clients for two agents
-  const agentA = new ANPClient({ debug: false });
-  const agentB = new ANPClient({ debug: false });
+  const agentA = new ANPClient();
+  const agentB = new ANPClient();
 
-  // Step 1: Create identities
-  console.log('Step 1: Creating agent identities...');
+  // Create identities
+  console.log('Creating agent identities...');
   const identityA = await agentA.did.create({
-    domain: 'agent-a.example.com',
-    path: 'agent',
+    domain: 'localhost:9000',
+    path: 'agent-a',
   });
-  console.log('Agent A DID:', identityA.did);
-
   const identityB = await agentB.did.create({
-    domain: 'agent-b.example.com',
-    path: 'agent',
+    domain: 'localhost:9001',
+    path: 'agent-b',
   });
-  console.log('Agent B DID:', identityB.did);
-  console.log('');
+  console.log('✓ Agent A:', identityA.did);
+  console.log('✓ Agent B:', identityB.did);
+  console.log();
 
-  // Step 2: Agent A initiates negotiation
-  console.log('Step 2: Agent A initiating protocol negotiation...');
-  console.log('');
-
-  let currentState = 'idle';
-  let negotiationRound = 0;
-
+  // Create negotiation machines
+  console.log('Creating negotiation state machines...');
+  
   const machineA = agentA.protocol.createNegotiationMachine({
     localIdentity: identityA,
     remoteDID: identityB.did,
     candidateProtocols: 'JSON-RPC 2.0, gRPC, GraphQL',
     maxNegotiationRounds: 5,
     onStateChange: (state) => {
-      currentState = String(state.value);
       console.log(`[Agent A] State: ${state.value}`);
-      if (state.context.sequenceId !== undefined) {
-        console.log(`[Agent A] Round: ${state.context.sequenceId}`);
-      }
     },
   });
-
-  // Start machine A
-  machineA.start();
-  console.log('');
-
-  // Step 3: Agent B creates its machine
-  console.log('Step 3: Agent B creating negotiation machine...');
-  console.log('');
 
   const machineB = agentB.protocol.createNegotiationMachine({
     localIdentity: identityB,
@@ -68,33 +49,28 @@ async function main() {
     maxNegotiationRounds: 5,
     onStateChange: (state) => {
       console.log(`[Agent B] State: ${state.value}`);
-      if (state.context.sequenceId !== undefined) {
-        console.log(`[Agent B] Round: ${state.context.sequenceId}`);
-      }
     },
   });
 
+  console.log('✓ State machines created');
+  console.log();
+
+  // Start machines
+  console.log('Starting negotiation...');
+  machineA.start();
   machineB.start();
-  console.log('');
+  console.log();
 
-  // Step 4: Simulate negotiation rounds
-  console.log('Step 4: Negotiation rounds...');
-  console.log('');
-
-  // Round 1: Agent A proposes
-  console.log('--- Round 1 ---');
-  console.log('[Agent A] Proposes: JSON-RPC 2.0, gRPC, GraphQL');
+  // Simulate negotiation
+  console.log('Agent A proposes: JSON-RPC 2.0, gRPC, GraphQL');
   machineA.send({
     type: 'initiate',
     remoteDID: identityB.did,
     candidateProtocols: 'JSON-RPC 2.0, gRPC, GraphQL',
   });
-  console.log('');
+  console.log();
 
-  // Agent B receives and responds
-  console.log('[Agent B] Receives proposal');
-  console.log('[Agent B] Supported: REST, GraphQL, WebSocket');
-  console.log('[Agent B] Common protocol found: GraphQL');
+  console.log('Agent B receives and finds common protocol: GraphQL');
   machineB.send({
     type: 'receive_request',
     message: {
@@ -104,110 +80,37 @@ async function main() {
       status: 'negotiating',
     },
   });
-  console.log('');
+  console.log();
 
-  // Round 2: Agent B counter-proposes
-  console.log('--- Round 2 ---');
-  console.log('[Agent B] Counter-proposes: GraphQL');
-  machineB.send({
-    type: 'negotiate',
-    response: 'GraphQL',
-  });
-  console.log('');
-
-  // Agent A receives and accepts
-  console.log('[Agent A] Receives counter-proposal: GraphQL');
-  console.log('[Agent A] GraphQL is acceptable');
-  machineA.send({
-    type: 'negotiate',
-    response: 'GraphQL',
-  });
+  console.log('Both agents accept GraphQL');
+  machineA.send({ type: 'negotiate', response: 'GraphQL' });
   machineA.send({ type: 'accept' });
-  console.log('[Agent A] Accepts GraphQL');
-  console.log('');
-
-  // Agent B also accepts
-  console.log('[Agent B] Accepts GraphQL');
   machineB.send({ type: 'accept' });
-  console.log('');
+  console.log();
 
-  // Step 5: Code generation phase
-  console.log('Step 5: Code generation phase...');
-  console.log('');
-  console.log('[Both Agents] Generating protocol implementation code...');
-  
   // Simulate code generation
   setTimeout(() => {
-    console.log('[Agent A] Code generation complete');
+    console.log('Generating protocol implementation...');
     machineA.send({ type: 'code_ready' });
-    
-    console.log('[Agent B] Code generation complete');
     machineB.send({ type: 'code_ready' });
-    console.log('');
+    console.log('✓ Code generation complete');
+    console.log();
 
-    // Step 6: Test cases (optional)
-    console.log('Step 6: Test cases phase...');
-    console.log('');
-    console.log('[Agent A] Proposes test cases');
-    console.log('[Agent B] Agrees to test cases');
-    
-    machineA.send({
-      type: 'tests_agreed',
-      testCases: 'query { user { id name } }',
-    });
-    machineB.send({
-      type: 'tests_agreed',
-      testCases: 'query { user { id name } }',
-    });
-    console.log('');
+    // Skip to ready state
+    machineA.send({ type: 'skip_tests' });
+    machineB.send({ type: 'skip_tests' });
+    machineA.send({ type: 'start_communication' });
+    machineB.send({ type: 'start_communication' });
 
-    // Step 7: Testing phase
-    console.log('Step 7: Testing phase...');
-    console.log('');
-    console.log('[Both Agents] Running test cases...');
-    
-    setTimeout(() => {
-      console.log('[Agent A] All tests passed ✓');
-      console.log('[Agent B] All tests passed ✓');
-      
-      machineA.send({ type: 'tests_passed' });
-      machineB.send({ type: 'tests_passed' });
-      console.log('');
+    console.log('=== Example Complete ===');
+    console.log('\nNegotiation Result:');
+    console.log('- Agreed Protocol: GraphQL');
+    console.log('- Both agents ready to communicate');
+    console.log('- State machines ensure predictable flow');
 
-      // Step 8: Ready for communication
-      console.log('Step 8: Ready for communication...');
-      console.log('');
-      console.log('[Both Agents] Entering ready state');
-      console.log('[Both Agents] Can now communicate using GraphQL');
-      
-      machineA.send({ type: 'start_communication' });
-      machineB.send({ type: 'start_communication' });
-      console.log('');
-
-      // Step 9: Communication
-      console.log('Step 9: Communication...');
-      console.log('');
-      console.log('[Agent A] Sends GraphQL query:');
-      console.log('  query { user(id: "123") { name email } }');
-      console.log('');
-      console.log('[Agent B] Processes query and responds:');
-      console.log('  { "data": { "user": { "name": "Alice", "email": "alice@example.com" } } }');
-      console.log('');
-
-      console.log('=== Example Complete ===');
-      console.log('\nKey Takeaways:');
-      console.log('- Agents negotiate protocols dynamically');
-      console.log('- Multiple rounds allow finding common ground');
-      console.log('- Code generation enables protocol implementation');
-      console.log('- Test cases verify correct implementation');
-      console.log('- State machine ensures predictable flow');
-
-      // Stop machines
-      machineA.stop();
-      machineB.stop();
-    }, 1000);
-  }, 1000);
+    machineA.stop();
+    machineB.stop();
+  }, 100);
 }
 
-// Run the example
 main().catch(console.error);

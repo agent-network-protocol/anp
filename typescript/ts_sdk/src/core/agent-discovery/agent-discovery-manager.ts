@@ -105,8 +105,12 @@ export class AgentDiscoveryManager {
     // Remove protocol if present
     const cleanDomain = domain.replace(/^https?:\/\//, '');
 
+    // Use http:// for localhost, https:// for everything else
+    const domainWithoutPort = cleanDomain.split(':')[0];
+    const protocol = domainWithoutPort === 'localhost' || domainWithoutPort === '127.0.0.1' ? 'http://' : 'https://';
+
     // Construct URL
-    return `https://${cleanDomain}/.well-known/agent-descriptions`;
+    return `${protocol}${cleanDomain}/.well-known/agent-descriptions`;
   }
 
   /**
@@ -198,7 +202,12 @@ export class AgentDiscoveryManager {
     try {
       const data = await response.json();
 
-      // Validate that items array exists
+      // Handle both SearchResult format and direct array format for backwards compatibility
+      if (Array.isArray(data)) {
+        return data as AgentDescriptionItem[];
+      }
+
+      // Validate that items array exists in SearchResult format
       if (!Array.isArray(data.items)) {
         throw new NetworkError(
           'Invalid search results: missing or invalid items array'

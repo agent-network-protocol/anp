@@ -1,201 +1,220 @@
 /**
  * Agent Discovery Example
  * 
- * This example demonstrates agent discovery:
- * - Active discovery from domains
- * - Passive discovery via search services
- * - Fetching agent descriptions
+ * Demonstrates complete agent discovery with mock services:
+ * - Creating multiple agents
+ * - Active discovery from a domain
+ * - Passive discovery via search service
  */
 
-import { ANPClient } from '@anp/typescript-sdk';
+import { ANPClient } from '../../dist/index.js';
+// @ts-ignore - Node.js built-in module
+import { createServer } from 'http';
+
+// Mock discovery service
+let registeredAgents: any[] = [];
+
+function startMockServices() {
+  // Discovery server at localhost:9100
+  const discoveryServer = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    if (req.url === '/.well-known/agent-descriptions') {
+      // Return agent descriptions
+      const discoveryDoc = {
+        '@context': { ad: 'https://agent-network-protocol.org/ns/ad#' },
+        '@type': 'CollectionPage',
+        url: 'http://localhost:9100/.well-known/agent-descriptions',
+        items: registeredAgents.map(agent => ({
+          '@type': 'ad:AgentDescription',
+          name: agent.name,
+          '@id': agent.url,
+        })),
+      };
+      res.writeHead(200);
+      res.end(JSON.stringify(discoveryDoc));
+    } else {
+      res.writeHead(404);
+      res.end('Not Found');
+    }
+  });
+
+  // Search service at localhost:9101
+  const searchServer = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    if (req.method === 'POST' && (req.url === '/' || req.url === '/register')) {
+      // Register agent
+      let body = '';
+      req.on('data', chunk => (body += chunk));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          // Extract agent description URL from request
+          const agentUrl = data.agentDescriptionUrl || data.url;
+          if (agentUrl) {
+            registeredAgents.push({
+              name: `Agent from ${agentUrl}`,
+              url: agentUrl,
+            });
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, registered: agentUrl }));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: 'Invalid request' }));
+        }
+      });
+    } else if (req.method === 'POST' && req.url === '/search') {
+      // Search agents
+      let body = '';
+      req.on('data', chunk => (body += chunk));
+      req.on('end', () => {
+        try {
+          const query = JSON.parse(body);
+          // Filter agents based on keywords
+          let results = registeredAgents;
+          if (query.keywords && Array.isArray(query.keywords)) {
+            results = registeredAgents.filter(agent =>
+              query.keywords.some((keyword: string) =>
+                agent.name.toLowerCase().includes(keyword.toLowerCase())
+              )
+            );
+          }
+          // Return results in SearchResult format with items array
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            items: results,
+            total: results.length,
+            hasMore: false,
+          }));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: 'Invalid query' }));
+        }
+      });
+    } else {
+      res.writeHead(404);
+      res.end('Not Found');
+    }
+  });
+
+  discoveryServer.listen(9100);
+  searchServer.listen(9101);
+
+  return { discoveryServer, searchServer };
+}
 
 async function main() {
   console.log('=== Agent Discovery Example ===\n');
 
-  const client = new ANPClient({ debug: false });
+  // Start mock services
+  console.log('Starting mock services...');
+  const { discoveryServer, searchServer } = startMockServices();
+  console.log('✓ Discovery service: http://localhost:9100');
+  console.log('✓ Search service: http://localhost:9101');
+  console.log();
 
-  // Step 1: Create agent identity
-  console.log('Step 1: Creating agent identity...');
-  const identity = await client.did.create({
-    domain: 'my-agent.example.com',
-    path: 'discoverer',
-  });
-  console.log('Created DID:', identity.did);
-  console.log('');
+  const client = new ANPClient();
 
-  // Step 2: Create and publish agent description
-  console.log('Step 2: Creating agent description...');
-  let description = client.agent.createDescription({
-    name: 'Discovery Agent',
-    description: 'An agent that discovers other agents',
-    protocolVersion: '0.1.0',
-    did: identity.did,
-  });
+  // Create multiple agents
+  console.log('Creating agents...');
+  const agents: Array<{ identity: any; description: any }> = [];
 
-  description = client.agent.addInterface(description, {
-    type: 'Interface',
-    protocol: 'HTTP',
-    version: '1.1',
-    url: 'https://my-agent.example.com/api',
-  });
+  for (let i = 1; i <= 3; i++) {
+    const identity = await client.did.create({
+      domain: `localhost:${9000 + i}`,
+      path: `agent-${i}`,
+    });
 
-  const signedDescription = await client.agent.signDescription(
-    description,
-    identity,
-    'discovery-challenge',
-    'my-agent.example.com'
-  );
+    let description = client.agent.createDescription({
+      name: `Agent ${i}`,
+      description: `Test agent number ${i}`,
+      protocolVersion: '0.1.0',
+      did: identity.did,
+    });
 
-  console.log('Agent description created and signed');
-  console.log('');
+    description = client.agent.addInterface(description, {
+      type: 'Interface',
+      protocol: 'HTTP',
+      version: '1.1',
+      url: `http://localhost:${9000 + i}/api`,
+    });
 
-  // Step 3: Active Discovery - Discover agents from a domain
-  console.log('Step 3: Active Discovery...');
-  console.log('Discovering agents from a domain...');
-  console.log('');
-  console.log('Example: Discovering from "example.com"');
-  console.log('This would fetch: https://example.com/.well-known/agent-descriptions');
-  console.log('');
-  
-  // In a real scenario with a live domain:
-  // try {
-  //   const agents = await client.discovery.discoverAgents('example.com', identity);
-  //   console.log(`Found ${agents.length} agents:`);
-  //   agents.forEach(agent => {
-  //     console.log(`  - ${agent.name}: ${agent['@id']}`);
-  //   });
-  // } catch (error) {
-  //   console.error('Discovery failed:', error.message);
-  // }
+    const signedDescription = await client.agent.signDescription(
+      description,
+      identity,
+      `challenge-${i}`,
+      `localhost:${9000 + i}`
+    );
 
-  console.log('Active discovery process:');
-  console.log('1. Fetch /.well-known/agent-descriptions from domain');
-  console.log('2. Parse CollectionPage document');
-  console.log('3. Extract agent description items');
-  console.log('4. Follow pagination links if present');
-  console.log('5. Return all discovered agents');
-  console.log('');
+    agents.push({ identity, description: signedDescription });
+    
+    // Register with mock service
+    registeredAgents.push({
+      name: signedDescription.name,
+      url: `http://localhost:${9000 + i}/description.json`,
+      description: signedDescription.description,
+    });
 
-  // Step 4: Passive Discovery - Register with search service
-  console.log('Step 4: Passive Discovery - Registration...');
-  console.log('Registering with a search service...');
-  console.log('');
-  
-  const agentDescriptionUrl = 'https://my-agent.example.com/description.json';
-  const searchServiceUrl = 'https://search.anp-network.com';
-  
-  console.log('Agent Description URL:', agentDescriptionUrl);
-  console.log('Search Service URL:', searchServiceUrl);
-  console.log('');
-  
-  // In a real scenario:
-  // try {
-  //   await client.discovery.registerWithSearchService(
-  //     searchServiceUrl,
-  //     agentDescriptionUrl,
-  //     identity
-  //   );
-  //   console.log('✓ Successfully registered with search service');
-  // } catch (error) {
-  //   console.error('Registration failed:', error.message);
-  // }
+    console.log(`✓ Created ${signedDescription.name}: ${identity.did}`);
+  }
+  console.log();
 
-  console.log('Registration process:');
-  console.log('1. Prepare registration request with agent description URL');
-  console.log('2. Sign request with agent DID');
-  console.log('3. Send POST request to search service');
-  console.log('4. Search service validates and indexes the agent');
-  console.log('');
+  // Wait a bit for servers to be ready
+  await new Promise(resolve => setTimeout(resolve, 100));
 
-  // Step 5: Search for agents
-  console.log('Step 5: Searching for agents...');
-  console.log('');
-  
-  const searchQuery = {
-    keywords: 'translation',
-    capabilities: ['text', 'language'],
-  };
-  
-  console.log('Search query:', searchQuery);
-  console.log('');
-  
-  // In a real scenario:
-  // try {
-  //   const results = await client.discovery.searchAgents(
-  //     searchServiceUrl,
-  //     searchQuery,
-  //     identity
-  //   );
-  //   console.log(`Found ${results.length} matching agents:`);
-  //   results.forEach(agent => {
-  //     console.log(`  - ${agent.name}: ${agent['@id']}`);
-  //   });
-  // } catch (error) {
-  //   console.error('Search failed:', error.message);
-  // }
-
-  console.log('Search process:');
-  console.log('1. Construct search query with filters');
-  console.log('2. Send query to search service');
-  console.log('3. Receive matching agent descriptions');
-  console.log('4. Optionally fetch full descriptions');
-  console.log('');
-
-  // Step 6: Fetch agent description
-  console.log('Step 6: Fetching agent description...');
-  console.log('');
-  
-  const exampleAgentUrl = 'https://other-agent.example.com/description.json';
-  console.log('Fetching from:', exampleAgentUrl);
-  console.log('');
-  
-  // In a real scenario:
-  // try {
-  //   const fetchedDescription = await client.agent.fetchDescription(exampleAgentUrl);
-  //   console.log('Fetched agent:', fetchedDescription.name);
-  //   console.log('Description:', fetchedDescription.description);
-  //   console.log('Interfaces:', fetchedDescription.interfaces?.length || 0);
-  // } catch (error) {
-  //   console.error('Fetch failed:', error.message);
-  // }
-
-  console.log('Fetch process:');
-  console.log('1. HTTP GET request to agent description URL');
-  console.log('2. Parse JSON-LD document');
-  console.log('3. Validate structure and required fields');
-  console.log('4. Optionally verify signature');
-  console.log('5. Return parsed agent description');
-  console.log('');
-
-  // Step 7: Discovery best practices
-  console.log('Step 7: Discovery Best Practices...');
-  console.log('');
+  // Active Discovery
   console.log('Active Discovery:');
-  console.log('  ✓ Use for discovering agents in known domains');
-  console.log('  ✓ Implement caching to reduce network requests');
-  console.log('  ✓ Handle pagination for large agent lists');
-  console.log('  ✓ Verify agent descriptions after fetching');
-  console.log('');
-  console.log('Passive Discovery:');
-  console.log('  ✓ Register with multiple search services');
-  console.log('  ✓ Keep agent description up to date');
-  console.log('  ✓ Use specific keywords and capabilities');
-  console.log('  ✓ Implement search result ranking');
-  console.log('');
-  console.log('Security:');
-  console.log('  ✓ Verify DID signatures on agent descriptions');
-  console.log('  ✓ Validate agent capabilities before interaction');
-  console.log('  ✓ Use HTTPS for all discovery requests');
-  console.log('  ✓ Implement rate limiting for discovery requests');
-  console.log('');
+  console.log('Discovering agents from localhost:9100...');
+  try {
+    const discovered = await client.discovery.discoverAgents('localhost:9100');
+    console.log(`✓ Found ${discovered.length} agents:`);
+    discovered.forEach((agent, i) => {
+      console.log(`  ${i + 1}. ${agent.name} - ${agent['@id']}`);
+    });
+  } catch (error: any) {
+    console.log('✗ Discovery failed:', error.message);
+  }
+  console.log();
+
+  // Passive Discovery - Register
+  console.log('Passive Discovery - Registration:');
+  try {
+    await client.discovery.registerWithSearchService(
+      'http://localhost:9101',
+      'http://localhost:9004/description.json',
+      agents[0].identity
+    );
+    console.log('✓ Registered with search service');
+  } catch (error: any) {
+    console.log('✗ Registration failed:', error.message);
+  }
+  console.log();
+
+  // Search
+  console.log('Searching for agents:');
+  try {
+    const results = await client.discovery.searchAgents(
+      'http://localhost:9101/search',
+      { keywords: ['Agent'] }
+    );
+    console.log(`✓ Found ${results.length} matching agents:`);
+    results.forEach((agent: any, i: number) => {
+      console.log(`  ${i + 1}. ${agent.name} - ${agent['@id'] || agent.url}`);
+    });
+  } catch (error: any) {
+    console.log('✗ Search failed:', error.message);
+  }
+  console.log();
 
   console.log('=== Example Complete ===');
-  console.log('\nKey Takeaways:');
-  console.log('- Active discovery: fetch from known domains');
-  console.log('- Passive discovery: register with search services');
-  console.log('- Always verify agent descriptions');
-  console.log('- Implement caching for performance');
+
+  // Cleanup
+  discoveryServer.close();
+  searchServer.close();
 }
 
-// Run the example
 main().catch(console.error);
