@@ -1,0 +1,636 @@
+================================================================================
+ANP Library - All Importable SDKs/APIs
+================================================================================
+
+This file contains all classes, functions, and constants
+that can be imported from the anp library.
+
+================================================================================
+
+Module: anp
+--------------------------------------------------------------------------------
+
+Module: anp.anp_crawler
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - ANPClient
+    - ANPCrawler
+    - ANPDocumentParser
+    - ANPInterface
+    - ANPInterfaceConverter
+
+
+Module: anp.anp_crawler.anp_client
+--------------------------------------------------------------------------------
+  Classes:
+    - ANPClient
+
+  Functions:
+    - async def fetch_url(self, url: str, method: str = 'GET', headers: Optional[Dict[str, str]] = None, params: Optional[Dict[str, Any]] = None, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
+    - async def get_content_info(self, url: str) -> Dict[str, Any]
+
+
+Module: anp.anp_crawler.anp_crawler
+--------------------------------------------------------------------------------
+  Classes:
+    - ANPCrawler
+
+  Functions:
+    - def clear_cache(self)
+    - def clear_tool_interfaces(self)
+    - async def execute_json_rpc(self, endpoint: str, method: str, params: Dict[str, Any], request_id: str = None) -> Dict[str, Any]
+    - async def execute_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
+    - async def fetch_audio(self, url: str) -> Tuple[Dict, List]
+    - async def fetch_auto(self, url: str) -> Tuple[Dict, List]
+    - async def fetch_image(self, url: str) -> Tuple[Dict, List]
+    - async def fetch_text(self, url: str) -> Tuple[Dict, List]
+    - async def fetch_video(self, url: str) -> Tuple[Dict, List]
+    - def get_cache_size(self) -> int
+    - def get_tool_interface_info(self, tool_name: str) -> Optional[Dict[str, Any]]
+    - def get_visited_urls(self) -> List[str]
+    - def is_url_visited(self, url: str) -> bool
+    - def list_available_tools(self) -> List[str]
+
+
+Module: anp.anp_crawler.anp_interface
+--------------------------------------------------------------------------------
+  Classes:
+    - ANPInterface
+    - ANPInterfaceConverter
+
+  Functions:
+    - def convert_to_openai_tools(self, interface_data: Dict[str, Any]) -> Optional[Dict[str, Any]]
+    - def create_anp_interface(self, interface_data: Dict[str, Any], anp_client: ANPClient) -> Optional[ANPInterface]
+    - async def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]
+
+
+Module: anp.anp_crawler.anp_parser
+--------------------------------------------------------------------------------
+  Classes:
+    - ANPDocumentParser
+
+  Functions:
+    - def parse_document(self, content: str, content_type: str, source_url: str) -> Dict[str, Any]
+
+
+Module: anp.ap2
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - AP2Client
+    - CartContents
+    - CartMandate
+    - CartMandateBuilder
+    - CartMandateVerifier
+    - DisplayItem
+    - MoneyAmount
+    - PaymentDetails
+    - PaymentDetailsTotal
+    - PaymentMandate
+    - PaymentMandateBuilder
+    - PaymentMandateContents
+    - PaymentMandateVerifier
+    - PaymentMethodData
+    - PaymentRequest
+    - PaymentRequestOptions
+    - PaymentResponse
+    - PaymentTotal
+    - QRCodePaymentData
+    - ShippingAddress
+    - create_cart_mandate
+    - send_payment_mandate
+
+
+Module: anp.ap2.cart_mandate
+--------------------------------------------------------------------------------
+  Classes:
+    - CartMandateBuilder
+    - CartMandateVerifier
+
+  Functions:
+    - def build(self, cart_contents: CartContents, cnf: Optional[Dict] = None, sd_hash: Optional[str] = None, ttl_seconds: int = 900, extensions: Optional[List[str]] = None) -> CartMandate
+    - def verify(self, cart_mandate: CartMandate, expected_aud: Optional[str] = None, verify_time: bool = True) -> Dict
+
+
+Module: anp.ap2.client
+--------------------------------------------------------------------------------
+  Classes:
+    - AP2Client
+
+  Functions:
+    - async def create_cart_mandate(merchant_url: str, merchant_did: str, cart_mandate_id: str, items: List[Dict[str, Any]], shipping_address: Dict[str, str], did_document_path: str, private_key_path: str, client_did: str, remark: Optional[str] = None) -> CartMandate
+    - async def send_payment_mandate(merchant_url: str, merchant_did: str, payment_mandate: PaymentMandate, did_document_path: str, private_key_path: str, client_did: str) -> Dict[str, Any]
+
+
+Module: anp.ap2.models
+--------------------------------------------------------------------------------
+  Classes:
+    - CartContents
+    - CartMandate
+    - DisplayItem
+    - MoneyAmount
+    - PaymentDetails
+    - PaymentDetailsTotal
+    - PaymentMandate
+    - PaymentMandateContents
+    - PaymentMethodData
+    - PaymentRequest
+    - PaymentRequestOptions
+    - PaymentResponse
+    - PaymentTotal
+    - QRCodePaymentData
+    - ShippingAddress
+
+
+Module: anp.ap2.payment_mandate
+--------------------------------------------------------------------------------
+  Classes:
+    - PaymentMandateBuilder
+    - PaymentMandateVerifier
+
+  Functions:
+    - def build(self, payment_mandate_contents: PaymentMandateContents, cart_hash: str, cnf: Optional[Dict] = None, sd_hash: Optional[str] = None, ttl_seconds: int = 15552000, extensions: Optional[List[str]] = None) -> PaymentMandate
+    - def verify(self, payment_mandate: PaymentMandate, expected_cart_hash: str, expected_aud: Optional[str] = None, verify_time: bool = True) -> Dict
+
+
+Module: anp.ap2.utils
+--------------------------------------------------------------------------------
+  Functions:
+    - def b64url_no_pad(data: bytes) -> str
+    - def compute_cart_hash(cart_contents: Dict[str, Any]) -> str
+    - def compute_hash(obj: Dict[str, Any]) -> str
+    - def compute_pmt_hash(payment_mandate_contents: Dict[str, Any]) -> str
+    - def jcs_canonicalize(obj: Dict[str, Any]) -> str
+
+
+Module: anp.authentication
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - DIDWbaAuthHeader
+    - DidWbaVerifier
+    - DidWbaVerifierConfig
+    - DidWbaVerifierError
+    - create_did_wba_document
+    - extract_auth_header_parts
+    - generate_auth_header
+    - resolve_did_wba_document
+    - resolve_did_wba_document_sync
+    - verify_auth_header_signature
+
+
+Module: anp.authentication.did_wba
+--------------------------------------------------------------------------------
+  Functions:
+    - def create_did_wba_document(hostname: str, port: Optional[int] = None, path_segments: Optional[List[str]] = None, agent_description_url: Optional[str] = None) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]
+    - def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str]
+    - def generate_auth_header(did_document: Dict, service_domain: str, sign_callback: Callable[[bytes, str], bytes]) -> str
+    - def generate_auth_json(did_document: Dict, service_domain: str, sign_callback: Callable[[bytes, str], bytes]) -> str
+    - async def resolve_did_wba_document(did: str) -> Dict
+    - def resolve_did_wba_document_sync(did: str) -> Dict
+    - def verify_auth_header_signature(auth_header: str, did_document: Dict, service_domain: str) -> Tuple[bool, str]
+    - def verify_auth_json_signature(auth_json: Union[str, Dict], did_document: Dict, service_domain: str) -> Tuple[bool, str]
+
+
+Module: anp.authentication.did_wba_authenticator
+--------------------------------------------------------------------------------
+  Classes:
+    - DIDWbaAuthHeader
+
+  Functions:
+    - def clear_all_tokens(self) -> None
+    - def clear_token(self, server_url: str) -> None
+    - def get_auth_header(self, server_url: str, force_new: bool = False) -> Dict[str, str]
+    - def update_token(self, server_url: str, headers: Dict[str, str]) -> Optional[str]
+
+
+Module: anp.authentication.did_wba_verifier
+--------------------------------------------------------------------------------
+  Classes:
+    - DidWbaVerifier
+    - DidWbaVerifierConfig
+    - DidWbaVerifierError
+
+  Functions:
+    - async def verify_auth_header(self, authorization: str, domain: str) -> dict[str, Any]
+
+
+Module: anp.authentication.verification_methods
+--------------------------------------------------------------------------------
+  Classes:
+    - EcdsaSecp256k1VerificationKey2019
+    - Ed25519VerificationKey2018
+    - VerificationMethod
+
+  Functions:
+    - def create_verification_method(method_dict: Dict) -> VerificationMethod
+    - def encode_signature(signature_bytes: bytes) -> str
+    - def from_dict(cls, method_dict: Dict) -> 'Ed25519VerificationKey2018'
+    - def A6f, content: bytes, signature: str) -> bool
+
+
+Module: anp.e2e_encryption
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - WssMessageSDK
+
+
+Module: anp.e2e_encryption.message_generation
+--------------------------------------------------------------------------------
+  Functions:
+    - def generate_destination_hello(version: str, session_id: str, source_private_key: ec.EllipticCurvePrivateKey, source_did: str, destination_did: str, random: str, source_public_key_hex: str, key_share: Dict[str, Any], cipher_suite: str) -> Dict[str, Any]
+    - def generate_encrypted_message(version: str, message_id: str, source_did: str, destination_did: str, secret_key_id: str, data: bytes, data_secret: bytes) -> Dict[str, Any]
+    - def generate_finished_message(version: str, session_id: str, source_did: str, destination_did: str, source_hello_random: str, destination_hello_random: str, data_secret: bytes) -> Dict[str, Any]
+    - def generate_register_message(version: str, routers: List[Dict[str, Any]]) -> Dict[str, Any]
+    - def generate_response_message(version: str, original_type: str, message_id: str, code: int, detail: str) -> Dict[str, Any]
+    - def generate_source_hello(version: str, session_id: str, source_private_key: ec.EllipticCurvePrivateKey, source_did: str, destination_did: str, random: str, source_public_key_hex: str, key_share_list: List[Dict[str, Any]], cipher_suite_list: List[str], protocol_hash: Optional[str] = None) -> Dict[str, Any]
+
+
+Module: anp.e2e_encryption.short_term_key_generater
+--------------------------------------------------------------------------------
+  Classes:
+    - ECKeyPair
+    - ShortTermKeyGenerater
+
+  Functions:
+    - def check_message_did_public_key(self, source_hello: Dict[str, Any], source_public_key: ec.EllipticCurvePublicKey)
+    - def check_message_proof(self, source_hello: Dict[str, Any], source_public_key: ec.EllipticCurvePublicKey)
+    - def check_message_valid(self, message: Dict[str, Any])
+    - def extract_public_key(self, did_document: Dict[str, Any], key_id: str) -> ec.EllipticCurvePublicKey
+    - def generate_keys(self)
+    - async def generate_short_term_key_active(self)
+    - async def generate_short_term_key_passive(self)
+    - def get_final_short_term_key(self)
+    - def process_destination_hello(self)
+    - def process_finished(self)
+    - def process_source_hello(self)
+    - def receive_json_message(self, message_json: Dict[str, Any])
+    - async def send_destination_hello(self)
+    - async def send_finished(self)
+    - async def send_source_hello(self)
+    - def set_local_key_from_pem(self, pem_data)
+
+
+Module: anp.e2e_encryption.wss_message_client
+--------------------------------------------------------------------------------
+  Classes:
+    - WssMessageClient
+
+  Functions:
+    - async def close(self)
+    - async def connect(self)
+    - async def receive_data(self) -> dict
+    - async def register_routers(self, routers: list[tuple[str, str]])
+    - async def send_data(self, data: dict)
+    - async def send_heartbeat(self)
+
+
+Module: anp.e2e_encryption.wss_message_sdk
+--------------------------------------------------------------------------------
+  Classes:
+    - WssMessageSDK
+
+  Functions:
+    - async def create(cls, wss_url: str, api_key: str, routers: list[tuple[str, str]], short_term_key_callback: Callable[[tuple[str, str, str]], None])
+    - def ecrypted_message_process(self, json_data: dict)
+    - def insert_did_private_key(self, local_did: str, private_key_pem: str)
+    - def key_combined(self, local_did: str, remote_did: str) -> str
+    - async def negotiate_short_term_keys(self, local_did: str, did_private_key_pem: str, remote_did: str) -> str
+    - async def recv_data(self) -> Tuple[str, str, str]
+    - async def send_data(self, content: Union[str, bytes], source_did: str, destination_did: str)
+    - def set_short_term_keys(self, local_did: str, remote_did: str, secret_info_json: str)
+    - async def source_hello_process(self, json_data: dict)
+
+
+Module: anp.fastanp
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - AgentDescription
+    - Context
+    - FastANP
+    - InformationItem
+    - InterfaceItem
+    - OpenRPCDocument
+    - Owner
+    - Proof
+    - SecurityDefinition
+    - Session
+    - SessionManager
+
+
+Module: anp.fastanp.ad_generator
+--------------------------------------------------------------------------------
+  Classes:
+    - ADGenerator
+
+  Functions:
+    - def generate_common_header(self, agent_description_path: str = '/ad.json', ad_url: Optional[str] = None, require_auth: bool = True) -> Dict[str, Any]
+
+
+Module: anp.fastanp.context
+--------------------------------------------------------------------------------
+  Classes:
+    - Context
+    - Session
+    - SessionManager
+
+  Functions:
+    - def clear(self)
+    - def clear_all(self)
+    - def client_host(self) -> Optional[str]
+    - def get(self, session_id: str) -> Optional[Session]
+    - def get_or_create(self, did: str, anonymous: bool = False) -> Session
+    - def headers(self) -> dict
+    - def remove(self, session_id: str)
+    - def set(self, key: str, value: Any)
+    - def touch(self)
+
+
+Module: anp.fastanp.fastanp
+--------------------------------------------------------------------------------
+  Classes:
+    - FastANP
+
+  Functions:
+    - def decorator(func: Callable) -> Callable
+    - def get_common_header(self, agent_description_path: str = '/ad.json', ad_url: Optional[str] = None) -> Dict[str, Any]
+    - async def get_openrpc_doc()
+    - def interface(self, path: str, description: Optional[str] = None, humanAuthorization: bool = False) -> Callable
+    - def interfaces(self) -> Dict[Callable, InterfaceProxy]
+
+
+Module: anp.fastanp.information
+--------------------------------------------------------------------------------
+  Classes:
+    - InformationItem
+    - InformationManager
+
+  Functions:
+    - def add_dynamic(self, type: str, description: str, path: str, content: Any) -> None
+    - def add_static(self, type: str, description: str, path: str, file_path: str) -> None
+    - def get_content(self) -> Any
+    - def get_information_list(self, base_url: str) -> List[Dict[str, str]]
+    - async def handler()
+    - def make_handler(info_item: InformationItem)
+    - def register_routes(self, app: FastAPI) -> None
+    - def to_dict(self, base_url: str) -> Dict[str, str]
+
+
+Module: anp.fastanp.interface_manager
+--------------------------------------------------------------------------------
+  Classes:
+    - InterfaceManager
+    - InterfaceProxy
+    - RegisteredFunction
+
+  Functions:
+    - def content(self) -> dict
+    - def create_interface_proxy(self, func: Callable, base_url: str, rpc_endpoint: str = '/rpc') -> InterfaceProxy
+    - def generate_openrpc_for_function(self, registered_func: RegisteredFunction, base_url: str, rpc_endpoint: str = '/rpc') -> Dict[str, Any]
+    - def get_function(self, func: Callable) -> Optional[RegisteredFunction]
+    - async def handle_jsonrpc(request: Request)
+    - def link_summary(self) -> dict
+    - def openrpc_doc(self) -> dict
+    - def register_function(self, func: Callable, path: str, description: Optional[str] = None, humanAuthorization: bool = False) -> RegisteredFunction
+    - def register_jsonrpc_endpoint(self, app: FastAPI, rpc_path: str = '/rpc') -> None
+    - def to_openrpc_method(self) -> Dict[str, Any]
+
+
+Module: anp.fastanp.middleware
+--------------------------------------------------------------------------------
+  Functions:
+    - async def auth_middleware(request: Request, call_next: Callable, verifier: DidWbaVerifier, allowed_domains: list[str] | None = None) -> Response
+    - async def authenticate_request(request: Request, verifier: DidWbaVerifier, allowed_domains: list[str] | None = None) -> dict | None
+    - def create_auth_middleware(config: DidWbaVerifierConfig) -> Callable
+    - async def middleware(request: Request, call_next: Callable) -> Response
+    - async def verify_auth_header(request: Request, verifier: DidWbaVerifier, allowed_domains: list[str] | None = None) -> dict
+
+
+Module: anp.fastanp.models
+--------------------------------------------------------------------------------
+  Classes:
+    - AgentDescription
+    - Config
+    - InformationItem
+    - InterfaceItem
+    - OpenRPCDocument
+    - OpenRPCInfo
+    - OpenRPCMethod
+    - OpenRPCParam
+    - OpenRPCResult
+    - OpenRPCSecurityScheme
+    - OpenRPCServer
+    - Owner
+    - Proof
+    - SecurityDefinition
+
+
+Module: anp.fastanp.utils
+--------------------------------------------------------------------------------
+  Functions:
+    - def extract_pydantic_models_from_signature(func: Callable) -> Dict[str, Type[BaseModel]]
+    - def get_function_name_from_callable(func: Callable) -> str
+    - def load_did_document(path: str) -> Dict[str, Any]
+    - def load_private_key(path: str) -> bytes
+    - def normalize_agent_domain(agent_domain: str) -> Tuple[str, str]
+    - def normalize_url(base_url: str, path: str) -> str
+    - def parse_docstring(func: Callable) -> Tuple[str, Dict[str, str]]
+    - def pydantic_to_json_schema(model: Type[BaseModel]) -> Dict[str, Any]
+    - def python_type_to_json_schema(type_hint: Any, type_name: str = None) -> Dict[str, Any]
+
+
+Module: anp.meta_protocol
+--------------------------------------------------------------------------------
+  __all__ exports:
+    - MetaProtocol
+    - ProtocolType
+
+
+Module: anp.meta_protocol.code_generator
+--------------------------------------------------------------------------------
+
+Module: anp.meta_protocol.code_generator.code_generator
+--------------------------------------------------------------------------------
+  Classes:
+    - ProtocolCodeGenerator
+
+  Functions:
+    - async def generate(self) -> tuple[bool, Optional[str]]
+    - async def generate_provider_code(self) -> None
+    - async def generate_requester_code(self) -> None
+
+
+Module: anp.meta_protocol.code_generator.provider_generator
+--------------------------------------------------------------------------------
+  Functions:
+    - async def generate_provider_code(protocol_doc: Dict[str, Any], llm: BaseLLM) -> Tuple[str, str, str]
+
+
+Module: anp.meta_protocol.code_generator.requester_generator
+--------------------------------------------------------------------------------
+  Functions:
+    - async def generate_requester_code(protocol_doc: Dict[str, Any], llm: BaseLLM) -> Tuple[str, str, str]
+
+
+Module: anp.meta_protocol.meta_protocol
+--------------------------------------------------------------------------------
+  Classes:
+    - MetaProtocol
+    - ProtocolType
+
+  Functions:
+    - def handle_meta_data(self, data: bytes) -> None
+    - async def negotiate_protocol(self, requirement: str, input_description: str, output_description: str) -> Tuple[bool, str]
+    - async def notify_code_generation(self) -> None
+    - async def send_data(self, data: bytes) -> None
+    - async def wait_for_code_generation(self) -> bool
+    - async def wait_remote_negotiation(self) -> Tuple[bool, str]
+
+
+Module: anp.meta_protocol.protocol_negotiator
+--------------------------------------------------------------------------------
+  Classes:
+    - NegotiationHistoryEntry
+    - NegotiationResult
+    - NegotiationStatus
+    - NegotiatorRole
+    - ProtocolNegotiator
+
+  Functions:
+    - async def evaluate_protocol_proposal(self, negotiation_status: NegotiationStatus, counterparty_round: int, candidate_protocols: Optional[str] = None, modification_summary: Optional[str] = None) -> Tuple[NegotiationResult, int]
+    - async def generate_initial_protocol(self, requirement: str, input_description: str, output_description: str) -> Tuple[str, NegotiationStatus, int]
+    - async def get_capability_info(self, requirement: str, input_description: str, output_description: str) -> str
+
+
+Module: anp.utils
+--------------------------------------------------------------------------------
+
+Module: anp.utils.crypto_tool
+--------------------------------------------------------------------------------
+  Functions:
+    - def decrypt_aes_gcm_sha256(encrypted_json: Dict[str, str], key: bytes) -> str
+    - def derive_secret(secret: bytes, label: bytes, messages: bytes) -> bytes
+    - def derive_tls13_application_keys(client_handshake_traffic_secret, server_handshake_traffic_secret, hash_algorithm = hashes.SHA256())
+    - def derive_tls13_data_keys(shared_secret: bytes, source_hello_random: bytes, destination_hello_random: bytes, key_length = 16, hash_algorithm = hashes.SHA256())
+    - def encrypt_aes_gcm_sha256(data: bytes, key: bytes) -> Dict[str, str]
+    - def generate_16_char_from_random_num(random_num1: str, random_num2: str)
+    - def generate_bitcoin_address(public_key: ec.EllipticCurvePublicKey) -> str
+    - def generate_ec_key_pair(curve: ec.EllipticCurve = ec.SECP256R1()) -> Tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey, str]
+    - def generate_random_hex(length = 32)
+    - def generate_router_json(private_key: ec.EllipticCurvePrivateKey, did_document: Dict[str, Any]) -> Dict[str, Any]
+    - def generate_secp256r1_private_key() -> ec.EllipticCurvePrivateKey
+    - def generate_secp256r1_public_key(private_key: ec.EllipticCurvePrivateKey) -> ec.EllipticCurvePublicKey
+    - def generate_shared_secret(private_key: ec.EllipticCurvePrivateKey, peer_public_key: ec.EllipticCurvePublicKey) -> bytes
+    - def generate_signature_for_json(private_key: ec.EllipticCurvePrivateKey, did_document: Dict[str, Any]) -> str
+    - def get_hex_from_public_key(public_key: ec.EllipticCurvePublicKey) -> str
+    - def get_key_length_from_cipher_suite(cipher_suite: str) -> int
+    - def get_pem_from_private_key(private_key: ec.EllipticCurvePrivateKey) -> str
+    - def get_public_key_from_hex(public_key_hex: str, curve: ec.EllipticCurve = ec.SECP256R1()) -> ec.EllipticCurvePublicKey
+    - def hkdf_label(length: int, label: bytes, context: bytes) -> bytes
+    - def load_private_key_from_pem(pem_str: str) -> ec.EllipticCurvePrivateKey
+    - def verify_did_with_public_key(did: str, public_key: ec.EllipticCurvePublicKey) -> bool
+    - def verify_signature_for_json(public_key: ec.EllipticCurvePublicKey, did_document: Dict[str, Any], signature: str) -> bool
+
+
+Module: anp.utils.did_generate
+--------------------------------------------------------------------------------
+  Functions:
+    - def create_did_document(did: str, public_key: ec.EllipticCurvePublicKey, service_endpoint: str, router: str) -> Dict[str, Any]
+    - def did_generate(communication_service_endpoint: str, router: str = '', did_server_domain: str = '', did_server_port: str = '') -> Tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey, str, str]
+    - def generate_did(bitcoin_address: str) -> str
+    - def sign_did_document_secp256r1(private_key: ec.EllipticCurvePrivateKey, did_document: Dict[str, Any]) -> Dict[str, Any]
+
+
+Module: anp.utils.did_verify
+--------------------------------------------------------------------------------
+  Functions:
+    - def extract_public_key(did_document: Dict[str, Any], key_id: str) -> ec.EllipticCurvePublicKey
+    - def verify_did_document(did_document: dict) -> Tuple[bool, str]
+
+
+Module: anp.utils.llm
+--------------------------------------------------------------------------------
+
+Module: anp.utils.llm.base_llm
+--------------------------------------------------------------------------------
+  Classes:
+    - AzureLLM
+    - BaseLLM
+
+  Functions:
+    - async def async_generate_response(self, system_prompt: str, user_prompt: str) -> str
+    - async def async_generate_vision_parse_response(self, system_prompt: str, user_prompt: str, image_path: str, response_format) -> BaseModel
+    - async def async_generate_vision_response(self, system_prompt: str, user_prompt: str, image_path: str) -> str
+    - async def async_openai_generate_parse(self, system_prompt: str, user_prompt: str, response_format)
+
+
+Module: anp.utils.llm_output_processer
+--------------------------------------------------------------------------------
+  Functions:
+    - def extract_code_from_llm_output(content: str) -> Optional[str]
+
+
+Module: anp.utils.log_base
+--------------------------------------------------------------------------------
+  Classes:
+    - ColoredFormatter
+
+  Functions:
+    - def format(self, record)
+    - def set_log_color_level(level)
+
+
+================================================================================
+Summary
+================================================================================
+Total modules analyzed: 46
+Total classes: 71
+Total functions: 181
+Total __all__ exports: 51
+
+================================================================================
+Example Import Statements
+================================================================================
+
+from anp.anp_crawler import ANPClient, ANPCrawler, ANPDocumentParser, ANPInterface, ANPInterfaceConverter
+from anp.anp_crawler.anp_client import ANPClient, fetch_url, get_content_info
+from anp.anp_crawler.anp_crawler import ANPCrawler, clear_cache, clear_tool_interfaces, execute_json_rpc, execute_tool_call, ... and 10 more
+from anp.anp_crawler.anp_interface import ANPInterface, ANPInterfaceConverter, convert_to_openai_tools, create_anp_interface, execute
+from anp.anp_crawler.anp_parser import ANPDocumentParser, parse_document
+from anp.ap2 import AP2Client, CartContents, CartMandate, CartMandateBuilder, CartMandateVerifier, ... and 17 more
+from anp.ap2.cart_mandate import CartMandateBuilder, CartMandateVerifier, build, verify
+from anp.ap2.client import AP2Client, create_cart_mandate, send_payment_mandate
+from anp.ap2.models import CartContents, CartMandate, DisplayItem, MoneyAmount, PaymentDetails, ... and 10 more
+from anp.ap2.payment_mandate import PaymentMandateBuilder, PaymentMandateVerifier, build, verify
+from anp.ap2.utils import b64url_no_pad, compute_cart_hash, compute_hash, compute_pmt_hash, jcs_canonicalize
+from anp.authentication import DIDWbaAuthHeader, DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError, create_did_wba_document, ... and 5 more
+from anp.authentication.did_wba import create_did_wba_document, extract_auth_header_parts, generate_auth_header, generate_auth_json, resolve_did_wba_document, ... and 3 more
+from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader, clear_all_tokens, clear_token, get_auth_header, update_token
+from anp.authentication.did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError, verify_auth_header
+from anp.authentication.verification_methods import EcdsaSecp256k1VerificationKey2019, Ed25519VerificationKey2018, VerificationMethod, create_verification_method, encode_signature, ... and 2 more
+from anp.e2e_encryption import WssMessageSDK
+from anp.e2e_encryption.message_generation import generate_destination_hello, generate_encrypted_message, generate_finished_message, generate_register_message, generate_response_message, ... and 1 more
+from anp.e2e_encryption.short_term_key_generater import ECKeyPair, ShortTermKeyGenerater, check_message_did_public_key, check_message_proof, check_message_valid, ... and 13 more
+from anp.e2e_encryption.wss_message_client import WssMessageClient, close, connect, receive_data, register_routers, ... and 2 more
+from anp.e2e_encryption.wss_message_sdk import WssMessageSDK, create, ecrypted_message_process, insert_did_private_key, key_combined, ... and 5 more
+from anp.fastanp import AgentDescription, Context, FastANP, InformationItem, InterfaceItem, ... and 6 more
+from anp.fastanp.ad_generator import ADGenerator, generate_common_header
+from anp.fastanp.context import Context, Session, SessionManager, clear, clear_all, ... and 7 more
+from anp.fastanp.fastanp import FastANP, decorator, get_common_header, get_openrpc_doc, interface, ... and 1 more
+from anp.fastanp.information import InformationItem, InformationManager, add_dynamic, add_static, get_content, ... and 5 more
+from anp.fastanp.interface_manager import InterfaceManager, InterfaceProxy, RegisteredFunction, content, create_interface_proxy, ... and 8 more
+from anp.fastanp.middleware import auth_middleware, authenticate_request, create_auth_middleware, middleware, verify_auth_header
+from anp.fastanp.models import AgentDescription, Config, InformationItem, InterfaceItem, OpenRPCDocument, ... and 9 more
+from anp.fastanp.utils import extract_pydantic_models_from_signature, get_function_name_from_callable, load_did_document, load_private_key, normalize_agent_domain, ... and 4 more
+from anp.meta_protocol import MetaProtocol, ProtocolType
+from anp.meta_protocol.code_generator.code_generator import ProtocolCodeGenerator, generate, generate_provider_code, generate_requester_code
+from anp.meta_protocol.code_generator.provider_generator import generate_provider_code
+from anp.meta_protocol.code_generator.requester_generator import generate_requester_code
+from anp.meta_protocol.meta_protocol import MetaProtocol, ProtocolType, handle_meta_data, negotiate_protocol, notify_code_generation, ... and 3 more
+from anp.meta_protocol.protocol_negotiator import NegotiationHistoryEntry, NegotiationResult, NegotiationStatus, NegotiatorRole, ProtocolNegotiator, ... and 3 more
+from anp.utils.crypto_tool import decrypt_aes_gcm_sha256, derive_secret, derive_tls13_application_keys, derive_tls13_data_keys, encrypt_aes_gcm_sha256, ... and 17 more
+from anp.utils.did_generate import create_did_document, did_generate, generate_did, sign_did_document_secp256r1
+from anp.utils.did_verify import extract_public_key, verify_did_document
+from anp.utils.llm.base_llm import AzureLLM, BaseLLM, async_generate_response, async_generate_vision_parse_response, async_generate_vision_response, ... and 1 more
+from anp.utils.llm_output_processer import extract_code_from_llm_output
+from anp.utils.log_base import ColoredFormatter, format, set_log_color_level
+
+================================================================================

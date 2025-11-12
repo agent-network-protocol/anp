@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""
+Minimal ANP Server Example
+
+This example demonstrates a minimal ANP server with:
+1. A basic one-line calculator function
+2. A JSON endpoint that returns "hello"
+3. A basic OpenAI API call
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from fastapi import FastAPI
+from anp.fastanp import FastANP
+from openai import OpenAI
+from typing import Optional
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Minimal ANP Server",
+    description="A minimal ANP server example",
+    version="1.0.0"
+)
+
+# Paths to DID documents (assuming they exist in docs/did_public)
+did_doc_path = project_root / "docs" / "did_public" / "public-did-doc.json"
+
+# Initialize FastANP plugin (without auth for simplicity)
+anp = FastANP(
+    app=app,
+    name="Minimal ANP Server",
+    description="A minimal ANP server with calculator, hello JSON, and OpenAI API",
+    agent_domain="http://localhost:8000",
+    did="did:wba:didhost.cc:public",
+    enable_auth_middleware=False,  # Disable auth for simplicity
+)
+
+# Initialize OpenAI client (optional, will work if OPENAI_API_KEY is set)
+openai_client = None
+if os.getenv("OPENAI_API_KEY"):
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+# Define ad.json route
+@app.get("/ad.json", tags=["agent"])
+def get_agent_description():
+    """Get Agent Description."""
+    ad = anp.get_common_header(agent_description_path="/ad.json")
+    
+    # Add interfaces
+    ad["interfaces"] = [
+        anp.interfaces[calculate].link_summary,
+        anp.interfaces[call_openai].link_summary,
+    ]
+    
+    # Add Information endpoint
+    ad["Infomations"] = [
+        {
+            "type": "Information",
+            "description": "Hello message",
+            "url": f"{anp.base_url}/info/hello.json"
+        }
+    ]
+    
+    return ad
+
+
+# 1. Basic one-line calculator function
+@anp.interface("/info/calculate.json", description="Basic calculator")
+def calculate(expression: str) -> dict:
+    """
+    Evaluate a simple mathematical expression.
+    
+    Args:
+        expression: A simple mathematical expression (e.g., "2 + 3", "10 * 5")
+        
+    Returns:
+        Dictionary with the result
+    """
+    try:
+        # Simple one-line calculator - evaluate the expression
+        result = eval(expression)
+        return {"result": result, "expression": expression}
+    except Exception as e:
+        return {"error": str(e), "expression": expression}
+
+
+# 2. JSON endpoint that returns "hello"
+@app.get("/info/hello.json", tags=["information"])
+def get_hello():
+    """Return a hello message as JSON."""
+    return {"message": "hello"}
+
+
+# 3. Basic OpenAI API call
+@anp.interface("/info/openai_call.json", description="Call OpenAI API")
+def call_openai(prompt: str, model: Optional[str] = "gpt-3.5-turbo") -> dict:
+    """
+    Make a basic OpenAI API call.
+    
+    Args:
+        prompt: The prompt to send to OpenAI
+        model: The model to use (default: gpt-3.5-turbo)
+        
+    Returns:
+        Dictionary with the OpenAI response
+    """
+    if not openai_client:
+        return {
+            "error": "OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
+        }
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=100
+        )
+        
+        return {
+            "response": response.choices[0].message.content,
+            "model": model,
+            "prompt": prompt
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "prompt": prompt
+        }
+
+
+def main():
+    """Run the minimal ANP server."""
+    import uvicorn
+    
+    print("=" * 60)
+    print("Minimal ANP Server")
+    print("=" * 60)
+    print(f"- Agent Description: http://localhost:8000/ad.json")
+    print(f"- Hello JSON: http://localhost:8000/info/hello.json")
+    print(f"- Calculator OpenRPC: http://localhost:8000/info/calculate.json")
+    print(f"- OpenAI OpenRPC: http://localhost:8000/info/openai_call.json")
+    print(f"- JSON-RPC endpoint: http://localhost:8000/rpc")
+    print("")
+    print("Example JSON-RPC calls:")
+    print('  Calculator: curl -X POST http://localhost:8000/rpc \\')
+    print('    -H "Content-Type: application/json" \\')
+    print('    -d \'{"jsonrpc": "2.0", "id": 1, "method": "calculate", "params": {"expression": "2 + 3"}}\'')
+    print("")
+    print('  OpenAI: curl -X POST http://localhost:8000/rpc \\')
+    print('    -H "Content-Type: application/json" \\')
+    print('    -d \'{"jsonrpc": "2.0", "id": 2, "method": "call_openai", "params": {"prompt": "Say hello"}}\'')
+    print("=" * 60)
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()
+
