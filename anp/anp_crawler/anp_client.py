@@ -5,10 +5,13 @@ This module provides HTTP client functionality with DID authentication support.
 It reuses the authentication capabilities from the existing ANPTool.
 """
 
+import json
 import logging
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 
 import aiohttp
 
@@ -247,4 +250,291 @@ class ANPClient:
                 "content_type": "",
                 "content_length": 0,
                 "status_code": 500
+            }
+
+    async def get_agent_description(self, ad_url: str) -> Dict[str, Any]:
+        """
+        Fetch and parse agent description in one call.
+        
+        This is a high-level convenience method that fetches the agent description
+        and returns it in a structured format.
+        
+        Args:
+            ad_url: URL to the agent description (e.g., "http://localhost:8000/ad.json")
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "data": Dict[str, Any],  # Parsed agent description
+                "error": Optional[str]
+            }
+        """
+        try:
+            response = await self.fetch_url(ad_url)
+            
+            if not response.get("success", False):
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": response.get("error", "Failed to fetch agent description")
+                }
+            
+            # Parse JSON response
+            try:
+                data = json.loads(response.get("text", "{}"))
+                return {
+                    "success": True,
+                    "data": data,
+                    "error": None
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": f"Failed to parse JSON: {str(e)}"
+                }
+        except Exception as e:
+            logger.error(f"Error getting agent description: {str(e)}")
+            return {
+                "success": False,
+                "data": None,
+                "error": str(e)
+            }
+
+    async def call_jsonrpc(
+        self,
+        server_url: str,
+        method: str,
+        params: Dict[str, Any],
+        request_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        High-level JSON-RPC method call.
+        
+        This method handles JSON-RPC request construction and response parsing,
+        making it easy to call remote methods.
+        
+        Args:
+            server_url: URL to the JSON-RPC endpoint (e.g., "http://localhost:8000/rpc")
+            method: Method name to call
+            params: Parameters dictionary to pass to the method
+            request_id: Optional request ID (auto-generated if not provided)
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "result": Any,  # The JSON-RPC result field
+                "error": Optional[Dict],  # JSON-RPC error object if present
+                "request_id": str
+            }
+        """
+        if request_id is None:
+            request_id = str(uuid.uuid4())
+        
+        # Build JSON-RPC request
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        }
+        
+        try:
+            response = await self.fetch_url(
+                url=server_url,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                body=rpc_request
+            )
+            
+            if not response.get("success", False):
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": {"code": -32603, "message": response.get("error", "Internal error")},
+                    "request_id": request_id
+                }
+            
+            # Parse JSON-RPC response
+            try:
+                response_json = json.loads(response.get("text", "{}"))
+                
+                # Check for JSON-RPC error
+                if "error" in response_json:
+                    return {
+                        "success": False,
+                        "result": None,
+                        "error": response_json["error"],
+                        "request_id": response_json.get("id", request_id)
+                    }
+                
+                # Success response
+                return {
+                    "success": True,
+                    "result": response_json.get("result"),
+                    "error": None,
+                    "request_id": response_json.get("id", request_id)
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": {"code": -32700, "message": f"Parse error: {str(e)}"},
+                    "request_id": request_id
+                }
+        except Exception as e:
+            logger.error(f"Error calling JSON-RPC method {method}: {str(e)}")
+            return {
+                "success": False,
+                "result": None,
+                "error": {"code": -32603, "message": f"Internal error: {str(e)}"},
+                "request_id": request_id
+            }
+
+    async def get_information(self, url: str) -> Dict[str, Any]:
+        """
+        Fetch information endpoints and parse JSON.
+        
+        This is a convenience method for fetching information endpoints
+        (like /info/hello.json) that return JSON data.
+        
+        Args:
+            url: URL to the information endpoint
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "data": Any,  # Parsed JSON data
+                "error": Optional[str]
+            }
+        """
+        try:
+            response = await self.fetch_url(url)
+            
+            if not response.get("success", False):
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": response.get("error", "Failed to fetch information")
+                }
+            
+            # Parse JSON response
+            try:
+                data = json.loads(response.get("text", "{}"))
+                return {
+                    "success": True,
+                    "data": data,
+                    "error": None
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": f"Failed to parse JSON: {str(e)}"
+                }
+        except Exception as e:
+            logger.error(f"Error getting information from {url}: {str(e)}")
+            return {
+                "success": False,
+                "data": None,
+                "error": str(e)
+            }
+
+    async def discover_agent(self, ad_url: str) -> Dict[str, Any]:
+        """
+        Complete agent discovery that fetches agent description and all referenced interfaces.
+        
+        This method performs a full discovery of an agent, including:
+        - Fetching the agent description
+        - Extracting interface URLs
+        - Fetching all interface documents
+        - Extracting information endpoints
+        
+        Args:
+            ad_url: URL to the agent description (e.g., "http://localhost:8000/ad.json")
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "agent": Dict[str, Any],  # Agent description
+                "interfaces": List[Dict],  # All discovered interfaces
+                "informations": List[Dict],  # All information endpoints
+                "error": Optional[str]
+            }
+        """
+        try:
+            # Fetch agent description
+            agent_result = await self.get_agent_description(ad_url)
+            
+            if not agent_result["success"]:
+                return {
+                    "success": False,
+                    "agent": None,
+                    "interfaces": [],
+                    "informations": [],
+                    "error": agent_result["error"]
+                }
+            
+            agent_data = agent_result["data"]
+            interfaces = []
+            informations = []
+            
+            # Extract base URL from ad_url
+            base_url = "/".join(ad_url.split("/")[:-1]) if "/" in ad_url else ad_url
+            
+            # Process interfaces
+            for interface_def in agent_data.get("interfaces", []):
+                if interface_def.get("type") == "StructuredInterface":
+                    interface_url = interface_def.get("url")
+                    if interface_url:
+                        # Resolve relative URLs
+                        if not interface_url.startswith("http"):
+                            interface_url = urljoin(base_url + "/", interface_url.lstrip("/"))
+                        
+                        # Fetch interface document
+                        interface_result = await self.get_information(interface_url)
+                        if interface_result["success"]:
+                            interfaces.append({
+                                "url": interface_url,
+                                "description": interface_def.get("description", ""),
+                                "data": interface_result["data"]
+                            })
+            
+            # Process information endpoints
+            for info_def in agent_data.get("Infomations", []):  # Note: typo in spec
+                info_url = info_def.get("url")
+                if info_url:
+                    # Resolve relative URLs
+                    if not info_url.startswith("http"):
+                        info_url = urljoin(base_url + "/", info_url.lstrip("/"))
+                    
+                    # Fetch information
+                    info_result = await self.get_information(info_url)
+                    if info_result["success"]:
+                        informations.append({
+                            "url": info_url,
+                            "type": info_def.get("type", ""),
+                            "description": info_def.get("description", ""),
+                            "data": info_result["data"]
+                        })
+            
+            return {
+                "success": True,
+                "agent": agent_data,
+                "interfaces": interfaces,
+                "informations": informations,
+                "error": None
+            }
+        except Exception as e:
+            logger.error(f"Error discovering agent: {str(e)}")
+            return {
+                "success": False,
+                "agent": None,
+                "interfaces": [],
+                "informations": [],
+                "error": str(e)
             }

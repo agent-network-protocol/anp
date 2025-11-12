@@ -3,12 +3,13 @@
 Minimal ANP Client Example
 
 This example demonstrates a minimal ANP client that interacts with the minimal ANP server.
-It uses the DID documents from docs/did_public folder.
+It uses the new high-level APIs in ANPClient for clean, readable code.
 """
 
 import asyncio
 import json
 import sys
+import traceback
 from pathlib import Path
 
 # Add project root to path
@@ -16,8 +17,61 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from anp.anp_crawler.anp_client import ANPClient
-from anp.anp_crawler.anp_parser import ANPDocumentParser
 
+# ============================================================================
+# Configuration
+# ============================================================================
+
+SERVER_URL = "http://localhost:8000"
+DID_DOC_PATH = project_root / "docs" / "did_public" / "public-did-doc.json"
+PRIVATE_KEY_PATH = project_root / "docs" / "did_public" / "public-private-key.pem"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def print_result(label: str, result: dict, data_key: str = "result"):
+    """Print result or error in a consistent format."""
+    if result["success"]:
+        data = result.get(data_key, {})
+        print(f"   ✓ {label}: {json.dumps(data, indent=2)}")
+    else:
+        error = result.get("error", {})
+        if isinstance(error, dict):
+            error_msg = error.get("message", "Unknown error")
+        else:
+            error_msg = str(error)
+        print(f"   ✗ Error: {error_msg}")
+
+
+def list_items(items: list, item_type: str):
+    """List items in a formatted way."""
+    if not items:
+        return
+    
+    print(f"\n{len(items)} {item_type}(s):")
+    for i, item in enumerate(items, 1):
+        desc = item.get("description", "No description")
+        url = item.get("url", "N/A")
+        print(f"   {i}. {desc} - {url}")
+
+
+def list_discovered_items(items: list, item_type: str):
+    """List discovered items (with fetched data)."""
+    if not items:
+        return
+    
+    print(f"\n{len(items)} {item_type}(s) discovered:")
+    for i, item in enumerate(items, 1):
+        desc = item.get("description", "No description")
+        url = item.get("url", "N/A")
+        print(f"   {i}. {desc}")
+        print(f"      URL: {url}")
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
 
 async def main():
     """Main client function."""
@@ -25,123 +79,71 @@ async def main():
     print("Minimal ANP Client")
     print("=" * 60)
     
-    # Paths to DID documents (assuming they exist in docs/did_public)
-    did_doc_path = project_root / "docs" / "did_public" / "public-did-doc.json"
-    
-    # Check if DID document exists
-    if not did_doc_path.exists():
-        print(f"Error: DID document not found at {did_doc_path}")
+    # Validate DID document exists
+    if not DID_DOC_PATH.exists():
+        print(f"Error: DID document not found at {DID_DOC_PATH}")
         print("Please ensure the DID document exists in docs/did_public/")
         return
     
-    # For this example, we'll use a placeholder private key path
-    # In a real scenario, you would have the actual private key
-    private_key_path = project_root / "docs" / "did_public" / "public-private-key.pem"
+    # Use DID doc as placeholder if private key doesn't exist (auth disabled on server)
+    private_key = PRIVATE_KEY_PATH if PRIVATE_KEY_PATH.exists() else DID_DOC_PATH
+    if not PRIVATE_KEY_PATH.exists():
+        print(f"Warning: Private key not found, using placeholder (server has auth disabled)")
     
-    # If private key doesn't exist, we'll still try to connect (server has auth disabled)
-    if not private_key_path.exists():
-        print(f"Warning: Private key not found at {private_key_path}")
-        print("Using placeholder - server has auth disabled, so this should work")
-        # Create a dummy path for initialization
-        private_key_path = did_doc_path  # Use DID doc as placeholder
-    
-    # Initialize ANP client
+    # Initialize client
     print("\n1. Initializing ANP Client...")
     client = ANPClient(
-        did_document_path=str(did_doc_path),
-        private_key_path=str(private_key_path)
+        did_document_path=str(DID_DOC_PATH),
+        private_key_path=str(private_key)
     )
     print("   ✓ Client initialized")
     
-    # Server URL
-    server_url = "http://localhost:8000"
-    ad_url = f"{server_url}/ad.json"
-    
-    print(f"\n2. Fetching Agent Description from {ad_url}...")
+    # Discover agent (fetches agent description, interfaces, and information endpoints)
+    ad_url = f"{SERVER_URL}/ad.json"
+    print(f"\n2. Discovering agent from {ad_url}...")
     
     try:
-        # Fetch agent description
-        response = await client.fetch_url(ad_url)
+        discovery = await client.discover_agent(ad_url)
         
-        if not response.get("success", False):
-            print(f"   ✗ Failed to fetch agent description: {response.get('error', 'Unknown error')}")
+        if not discovery["success"]:
+            print(f"   ✗ Failed: {discovery['error']}")
             return
         
-        print("   ✓ Agent description fetched")
+        agent_data = discovery["agent"]
+        print("   ✓ Agent discovered")
+        print(f"   - Name: {agent_data.get('name', 'N/A')}")
+        print(f"   - DID: {agent_data.get('did', 'N/A')}")
         
-        # Parse the agent description
-        parser = ANPDocumentParser()
-        content = parser.parse_document(
-            content=response.get("text", ""),
-            content_type=response.get("content_type", "application/json"),
-            source_url=ad_url
+        # List discovered resources (with fetched data)
+        list_discovered_items(discovery["interfaces"], "interface")
+        list_discovered_items(discovery["informations"], "information endpoint")
+        
+        # Call server methods
+        print("\n3. Calling server methods...")
+        
+        # Calculator
+        print("\n   a) Calculator...")
+        calc_result = await client.call_jsonrpc(
+            server_url=f"{SERVER_URL}/rpc",
+            method="calculate",
+            params={"expression": "2 + 3"}
         )
+        print_result("Result", calc_result)
         
-        print("\n3. Parsed Agent Description:")
-        print(json.dumps(content, indent=2, ensure_ascii=False))
+        # Hello JSON
+        print("\n   b) Hello JSON...")
+        hello_result = await client.get_information(f"{SERVER_URL}/info/hello.json")
+        print_result("Hello message", hello_result, "data")
         
-        # Get interfaces
-        interfaces = content.get("interfaces", [])
-        print(f"\n4. Found {len(interfaces)} interface(s)")
-        
-        # List available interfaces
-        for i, interface in enumerate(interfaces, 1):
-            if interface.get("type") == "StructuredInterface":
-                interface_url = interface.get("url", "N/A")
-                print(f"   {i}. {interface.get('description', 'No description')} - {interface_url}")
-        
-        # Now let's call the methods directly using JSON-RPC
-        print("\n6. Calling server methods via JSON-RPC...")
-        
-        # Call calculator
-        print("\n   a) Calling calculate('2 + 3')...")
-        calc_response = await client.fetch_url(
-            url=f"{server_url}/rpc",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            body={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "calculate",
-                "params": {"expression": "2 + 3"}
-            }
+        # OpenAI
+        print("\n   c) OpenAI API...")
+        openai_result = await client.call_jsonrpc(
+            server_url=f"{SERVER_URL}/rpc",
+            method="call_openai",
+            params={"prompt": "Say hello in one sentence"}
         )
-        
-        if calc_response.get("success"):
-            result = json.loads(calc_response.get("text", "{}"))
-            print(f"   ✓ Result: {json.dumps(result, indent=2)}")
-        else:
-            print(f"   ✗ Error: {calc_response.get('error', 'Unknown error')}")
-        
-        # Get hello JSON
-        print("\n   b) Fetching hello.json...")
-        hello_response = await client.fetch_url(f"{server_url}/info/hello.json")
-        
-        if hello_response.get("success"):
-            hello_data = json.loads(hello_response.get("text", "{}"))
-            print(f"   ✓ Hello message: {json.dumps(hello_data, indent=2)}")
-        else:
-            print(f"   ✗ Error: {hello_response.get('error', 'Unknown error')}")
-        
-        # Call OpenAI (if API key is set)
-        print("\n   c) Calling OpenAI API...")
-        openai_response = await client.fetch_url(
-            url=f"{server_url}/rpc",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            body={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "call_openai",
-                "params": {"prompt": "Say hello in one sentence"}
-            }
-        )
-        
-        if openai_response.get("success"):
-            openai_result = json.loads(openai_response.get("text", "{}"))
-            print(f"   ✓ OpenAI response: {json.dumps(openai_result, indent=2)}")
-        else:
-            print(f"   ✗ Error: {openai_response.get('error', 'Unknown error')}")
+        print_result("OpenAI response", openai_result)
+        if not openai_result["success"]:
             print("   (Note: This may fail if OPENAI_API_KEY is not set on the server)")
         
         print("\n" + "=" * 60)
@@ -150,10 +152,8 @@ async def main():
         
     except Exception as e:
         print(f"\n✗ Error: {str(e)}")
-        import traceback
         traceback.print_exc()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
