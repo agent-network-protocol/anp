@@ -15,7 +15,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from anp.anp_crawler.anp_client import ANPClient
+from anp import ANPClient
 
 SERVER_URL = "http://localhost:8000"
 DID_DOC_PATH = project_root / "docs" / "did_public" / "public-did-doc.json"
