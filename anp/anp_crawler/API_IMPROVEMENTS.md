@@ -2,143 +2,107 @@
 
 ## Summary
 
-Added four new high-level APIs to `ANPClient` that hide complexity and make client code much cleaner and easier to read.
+Simplified the ANPClient API to a single unified method `fetch()` that handles fetching and parsing any URL (AD URL, info endpoints, or any JSON URL). This makes the API much simpler and easier to use.
 
-## New APIs
+## Unified API
 
-### 1. `get_agent_description(ad_url: str) -> Dict[str, Any]`
-Fetches and parses agent description in one call.
+### `fetch(url: str) -> Dict[str, Any]`
 
-### 2. `call_jsonrpc(server_url: str, method: str, params: Dict[str, Any], request_id: Optional[str] = None) -> Dict[str, Any]`
-High-level JSON-RPC method call that handles request construction and response parsing.
+**Purpose**: Single unified method to fetch and parse any URL.
 
-### 3. `get_information(url: str) -> Dict[str, Any]`
-Fetches information endpoints and parses JSON.
+This method automatically:
+- Fetches the URL with DID authentication
+- Parses JSON responses
+- Returns a consistent structure
 
-### 4. `discover_agent(ad_url: str) -> Dict[str, Any]`
-Complete agent discovery that fetches agent description and all referenced interfaces.
+**Args**:
+- `url`: URL to fetch (can be AD URL, info endpoint, or any JSON URL)
 
-## Before vs After Comparison
-
-### Before: Manual JSON-RPC Call
-
+**Returns**:
 ```python
-# Manual request construction
-calc_response = await client.fetch_url(
-    url=f"{server_url}/rpc",
-    method="POST",
-    headers={"Content-Type": "application/json"},
-    body={
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "calculate",
-        "params": {"expression": "2 + 3"}
-    }
-)
-
-# Manual response parsing
-if calc_response.get("success"):
-    result = json.loads(calc_response.get("text", "{}"))
-    print(f"Result: {json.dumps(result, indent=2)}")
-else:
-    print(f"Error: {calc_response.get('error', 'Unknown error')}")
+{
+    "success": bool,
+    "data": Dict[str, Any],  # Parsed JSON data
+    "error": Optional[str]
+}
 ```
 
-### After: High-Level API
-
-```python
-# Clean, simple call
-calc_result = await client.call_jsonrpc(
-    server_url=f"{server_url}/rpc",
-    method="calculate",
-    params={"expression": "2 + 3"}
-)
-
-# Simple result handling
-if calc_result["success"]:
-    print(f"Result: {json.dumps(calc_result['result'], indent=2)}")
-else:
-    error = calc_result.get("error", {})
-    print(f"Error: {error.get('message', 'Unknown error')}")
-```
-
-### Before: Manual Agent Description Fetching
+**Usage Examples**:
 
 ```python
 # Fetch agent description
-response = await client.fetch_url(ad_url)
+agent_result = await client.fetch("http://localhost:8000/ad.json")
+if agent_result["success"]:
+    agent_data = agent_result["data"]
+    interfaces = agent_data.get("interfaces", [])
 
-if not response.get("success", False):
-    print(f"Failed: {response.get('error', 'Unknown error')}")
-    return
+# Fetch information endpoint
+hello_result = await client.fetch("http://localhost:8000/info/hello.json")
+if hello_result["success"]:
+    message = hello_result["data"]["message"]
 
-# Parse the agent description
-parser = ANPDocumentParser()
-content = parser.parse_document(
-    content=response.get("text", ""),
-    content_type=response.get("content_type", "application/json"),
-    source_url=ad_url
-)
-
-# Extract data
-interfaces = content.get("interfaces", [])
+# Fetch any JSON URL
+any_result = await client.fetch("http://example.com/data.json")
+if any_result["success"]:
+    data = any_result["data"]
 ```
 
-### After: High-Level API
+## Before vs After Comparison
+
+### Before: Multiple Methods
 
 ```python
-# One simple call
+# Fetch agent description
 agent_result = await client.get_agent_description(ad_url)
-
 if not agent_result["success"]:
     print(f"Failed: {agent_result['error']}")
     return
-
-# Direct access to parsed data
 agent_data = agent_result["data"]
-interfaces = agent_data.get("interfaces", [])
-```
 
-### Before: Manual Information Fetching
-
-```python
-# Fetch information
-hello_response = await client.fetch_url(f"{server_url}/info/hello.json")
-
-if hello_response.get("success"):
-    hello_data = json.loads(hello_response.get("text", "{}"))
-    print(f"Hello: {json.dumps(hello_data, indent=2)}")
-else:
-    print(f"Error: {hello_response.get('error', 'Unknown error')}")
-```
-
-### After: High-Level API
-
-```python
-# Simple call
+# Fetch information endpoint
 hello_result = await client.get_information(f"{server_url}/info/hello.json")
-
 if hello_result["success"]:
-    print(f"Hello: {json.dumps(hello_result['data'], indent=2)}")
-else:
-    print(f"Error: {hello_result['error']}")
+    print(hello_result["data"])
+```
+
+### After: Single Unified Method
+
+```python
+# Fetch agent description
+agent_result = await client.fetch(ad_url)
+if not agent_result["success"]:
+    print(f"Failed: {agent_result['error']}")
+    return
+agent_data = agent_result["data"]
+
+# Fetch information endpoint
+hello_result = await client.fetch(f"{server_url}/info/hello.json")
+if hello_result["success"]:
+    print(hello_result["data"])
 ```
 
 ## Benefits
 
-1. **Less Code**: Reduced from ~50 lines to ~30 lines in the example
-2. **More Readable**: Clear intent, no boilerplate
-3. **Better Error Handling**: Consistent error structure across all methods
-4. **Type Safety**: Clear return structures with documented fields
-5. **Less Error-Prone**: No manual JSON parsing or response checking
+1. **Simpler API**: One method instead of multiple specialized methods
+2. **Consistent Interface**: Same return structure for all URL types
+3. **Less to Learn**: Only need to remember one method
+4. **Flexible**: Works with any JSON URL, not just specific types
+5. **Easy to Use**: No need to choose between different methods
+
+## Additional Methods
+
+### `call_jsonrpc(server_url: str, method: str, params: Dict[str, Any], request_id: Optional[str] = None) -> Dict[str, Any]`
+
+For JSON-RPC method calls, use the dedicated `call_jsonrpc()` method:
+
+```python
+result = await client.call_jsonrpc(
+    server_url="http://localhost:8000/rpc",
+    method="calculate",
+    params={"expression": "2 + 3"}
+)
+```
 
 ## Backward Compatibility
 
-All existing low-level methods (`fetch_url`, `get_content_info`) remain available for advanced use cases. The new high-level methods use these internally, so there's no breaking changes.
-
-## Migration Guide
-
-1. Replace `fetch_url` + manual JSON parsing with `get_agent_description` or `get_information`
-2. Replace manual JSON-RPC construction with `call_jsonrpc`
-3. Use `discover_agent` for complete agent discovery workflows
-
+The low-level `fetch_url()` method remains available for advanced use cases that need more control over the HTTP request (custom headers, methods, etc.).
