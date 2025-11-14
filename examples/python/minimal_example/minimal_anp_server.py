@@ -5,7 +5,7 @@ Minimal ANP Server Example
 This example demonstrates a minimal ANP server with:
 1. A basic one-line calculator function
 2. A JSON endpoint that returns "hello"
-3. A basic OpenAI API call
+3. A basic DeepSeek API call
 """
 
 import sys
@@ -20,6 +20,11 @@ from fastapi import FastAPI
 from anp.fastanp import FastANP
 from openai import OpenAI
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -35,16 +40,19 @@ did_doc_path = project_root / "docs" / "did_public" / "public-did-doc.json"
 anp = FastANP(
     app=app,
     name="Minimal ANP Server",
-    description="A minimal ANP server with calculator, hello JSON, and OpenAI API",
+    description="A minimal ANP server with calculator, hello JSON, and DeepSeek API",
     agent_domain="http://localhost:8000",
     did="did:wba:didhost.cc:public",
     enable_auth_middleware=False,  # Disable auth for simplicity
 )
 
-# Initialize OpenAI client (optional, will work if OPENAI_API_KEY is set)
-openai_client = None
-if os.getenv("OPENAI_API_KEY"):
-    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize DeepSeek client (optional, will work if DEEPSEEK_API_KEY is set)
+deepseek_client = None
+if os.getenv("DEEPSEEK_API_KEY"):
+    deepseek_client = OpenAI(
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com"
+    )
 
 
 # Define ad.json route
@@ -98,31 +106,32 @@ def get_hello():
     return {"message": "hello"}
 
 
-# 3. Basic OpenAI API call
-@anp.interface("/info/openai_call.json", description="Call OpenAI API")
-def call_openai(prompt: str, model: Optional[str] = "gpt-3.5-turbo") -> dict:
+# 3. Basic DeepSeek API call
+@anp.interface("/info/openai_call.json", description="Call DeepSeek API")
+def call_openai(prompt: str, model: Optional[str] = "deepseek-chat") -> dict:
     """
-    Make a basic OpenAI API call.
+    Make a basic DeepSeek API call.
     
     Args:
-        prompt: The prompt to send to OpenAI
-        model: The model to use (default: gpt-3.5-turbo)
+        prompt: The prompt to send to the API
+        model: The model to use (default: deepseek-chat)
         
     Returns:
-        Dictionary with the OpenAI response
+        Dictionary with the API response
     """
-    if not openai_client:
+    if not deepseek_client:
         return {
-            "error": "OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
+            "error": "DeepSeek client not initialized. Please set DEEPSEEK_API_KEY environment variable."
         }
     
     try:
-        response = openai_client.chat.completions.create(
+        response = deepseek_client.chat.completions.create(
             model=model,
             messages=[
+                {"role": "system", "content": "You are a helpful assistant"},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=100
+            stream=False
         )
         
         return {
@@ -147,7 +156,7 @@ def main():
     print(f"- Agent Description: http://localhost:8000/ad.json")
     print(f"- Hello JSON: http://localhost:8000/info/hello.json")
     print(f"- Calculator OpenRPC: http://localhost:8000/info/calculate.json")
-    print(f"- OpenAI OpenRPC: http://localhost:8000/info/openai_call.json")
+    print(f"- DeepSeek OpenRPC: http://localhost:8000/info/openai_call.json")
     print(f"- JSON-RPC endpoint: http://localhost:8000/rpc")
     print("")
     print("Example JSON-RPC calls:")
@@ -155,9 +164,14 @@ def main():
     print('    -H "Content-Type: application/json" \\')
     print('    -d \'{"jsonrpc": "2.0", "id": 1, "method": "calculate", "params": {"expression": "2 + 3"}}\'')
     print("")
-    print('  OpenAI: curl -X POST http://localhost:8000/rpc \\')
+    print('  DeepSeek: curl -X POST http://localhost:8000/rpc \\')
     print('    -H "Content-Type: application/json" \\')
     print('    -d \'{"jsonrpc": "2.0", "id": 2, "method": "call_openai", "params": {"prompt": "Say hello"}}\'')
+    print("")
+    if deepseek_client:
+        print("  ✓ DeepSeek client initialized")
+    else:
+        print("  ⚠ DeepSeek client not initialized (set DEEPSEEK_API_KEY)")
     print("=" * 60)
     
     uvicorn.run(app, host="0.0.0.0", port=8000)

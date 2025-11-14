@@ -82,17 +82,17 @@ async def main():
     else:
         print(f"   ✗ Calculator error: {calc_result.get('error', {})}")
     
-    # OpenAI
-    openai_result = await client.call_jsonrpc(
+    # DeepSeek
+    deepseek_result = await client.call_jsonrpc(
         server_url=f"{SERVER_URL}/rpc",
         method="call_openai",
         params={"prompt": "Say hello in one sentence"}
     )
-    if openai_result["success"]:
-        print(f"   ✓ OpenAI: {json.dumps(openai_result['result'], indent=2)}")
+    if deepseek_result["success"]:
+        print(f"   ✓ DeepSeek: {json.dumps(deepseek_result['result'], indent=2)}")
     else:
-        print(f"   ✗ OpenAI error: {openai_result.get('error', {})}")
-        print("   (Note: This may fail if OPENAI_API_KEY is not set on the server)")
+        print(f"   ✗ DeepSeek error: {deepseek_result.get('error', {})}")
+        print("   (Note: This may fail if DEEPSEEK_API_KEY is not set on the server)")
     
     print("\n" + "=" * 60)
     print("Complete!")
