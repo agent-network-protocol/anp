@@ -5,10 +5,13 @@ This module provides HTTP client functionality with DID authentication support.
 It reuses the authentication capabilities from the existing ANPTool.
 """
 
+import json
 import logging
 import sys
+import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin
 
 import aiohttp
 
@@ -247,4 +250,145 @@ class ANPClient:
                 "content_type": "",
                 "content_length": 0,
                 "status_code": 500
+            }
+
+    async def fetch(self, url: str) -> Dict[str, Any]:
+        """
+        Unified API to fetch and parse any URL (AD URL, info URL, etc.).
+        
+        This is the single high-level method that handles fetching and parsing
+        of any URL. It automatically detects the content type and returns
+        parsed JSON data.
+        
+        Args:
+            url: URL to fetch (can be AD URL, info endpoint, or any JSON URL)
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "data": Dict[str, Any],  # Parsed JSON data
+                "error": Optional[str]
+            }
+        """
+        try:
+            response = await self.fetch_url(url)
+            
+            if not response.get("success", False):
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": response.get("error", "Failed to fetch URL")
+                }
+            
+            # Parse JSON response
+            try:
+                data = json.loads(response.get("text", "{}"))
+                return {
+                    "success": True,
+                    "data": data,
+                    "error": None
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": f"Failed to parse JSON: {str(e)}"
+                }
+        except Exception as e:
+            logger.error(f"Error fetching {url}: {str(e)}")
+            return {
+                "success": False,
+                "data": None,
+                "error": str(e)
+            }
+
+    async def call_jsonrpc(
+        self,
+        server_url: str,
+        method: str,
+        params: Dict[str, Any],
+        request_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        JSON-RPC method call.
+        
+        This method handles JSON-RPC request construction and response parsing.
+        
+        Args:
+            server_url: URL to the JSON-RPC endpoint (e.g., "http://localhost:8000/rpc")
+            method: Method name to call
+            params: Parameters dictionary to pass to the method
+            request_id: Optional request ID (auto-generated if not provided)
+            
+        Returns:
+            Dictionary containing:
+            {
+                "success": bool,
+                "result": Any,  # The JSON-RPC result field
+                "error": Optional[Dict],  # JSON-RPC error object if present
+                "request_id": str
+            }
+        """
+        if request_id is None:
+            request_id = str(uuid.uuid4())
+        
+        # Build JSON-RPC request
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        }
+        
+        try:
+            response = await self.fetch_url(
+                url=server_url,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                body=rpc_request
+            )
+            
+            if not response.get("success", False):
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": {"code": -32603, "message": response.get("error", "Internal error")},
+                    "request_id": request_id
+                }
+            
+            # Parse JSON-RPC response
+            try:
+                response_json = json.loads(response.get("text", "{}"))
+                
+                # Check for JSON-RPC error
+                if "error" in response_json:
+                    return {
+                        "success": False,
+                        "result": None,
+                        "error": response_json["error"],
+                        "request_id": response_json.get("id", request_id)
+                    }
+                
+                # Success response
+                return {
+                    "success": True,
+                    "result": response_json.get("result"),
+                    "error": None,
+                    "request_id": response_json.get("id", request_id)
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": {"code": -32700, "message": f"Parse error: {str(e)}"},
+                    "request_id": request_id
+                }
+        except Exception as e:
+            logger.error(f"Error calling JSON-RPC method {method}: {str(e)}")
+            return {
+                "success": False,
+                "result": None,
+                "error": {"code": -32603, "message": f"Internal error: {str(e)}"},
+                "request_id": request_id
             }
