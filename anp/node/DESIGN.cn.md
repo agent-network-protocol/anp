@@ -220,15 +220,28 @@ class ANPNode:
     
     # 生命周期
     async def start(self) -> None:
-        """启动节点（服务器组件）。"""
+        """
+        以非阻塞模式启动节点服务器。
+        
+        此方法在后台启动服务器并立即返回。
+        当您需要在服务器运行时执行其他操作时使用此方法。
+        
+        示例:
+            async def main():
+                node = ANPNode(...)
+                await node.start()  # 非阻塞启动
+                # 可以在这里做其他事情
+                result = await node.call_interface(...)
+                await node.stop()
+        """
         pass
     
     async def stop(self) -> None:
-        """停止节点（服务器组件）。"""
-        pass
-    
-    async def run(self) -> None:
-        """运行节点（阻塞式）。"""
+        """
+        优雅地停止节点服务器。
+        
+        停止服务器并等待正在进行的请求完成。
+        """
         pass
     
     # 属性
@@ -250,50 +263,128 @@ class ANPNode:
 
 ### 使用示例
 
+#### 简单服务器节点
+
 ```python
 from anp.node import ANPNode
-from anp.fastanp import Context
-from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
+import asyncio
 
 # 初始化节点
 node = ANPNode(
-    name="我的代理",
-    description="一个双模式 ANP 代理",
+    name="简单代理",
+    description="一个简单的 ANP 代理",
     did_document_path="./did.json",
     private_key_path="./private_key.pem",
     agent_domain="https://myagent.com",
-    port=8000,
-    enable_auth_middleware=True,
-    auth_config=auth_config
+    port=8000
 )
 
 # 注册服务器接口
-@node.interface("/info/search.json", description="搜索项目")
-def search(query: str, limit: int = 10, ctx: Context = None) -> dict:
-    """搜索项目。"""
-    # 可以从服务器接口调用其他节点
-    if ctx:
-        other_result = await node.call_interface(
-            target_did="did:wba:other.com:agent:1",
-            method="get_related_data",
-            params={"query": query}
-        )
-    
-    return {"results": [...]}
+@node.interface("/info/hello.json", description="问候")
+def hello(name: str) -> dict:
+    """向某人问好。"""
+    return {"message": f"你好，{name}！"}
 
 # 自定义 ad.json 路由
 @node.app.get("/ad.json")
 def get_agent_description():
     ad = node.get_common_header()
     ad["interfaces"] = [
-        node.interfaces[search].link_summary
+        node.interfaces[hello].link_summary
     ]
     return ad
 
-# 启动节点
+# 启动节点（最简设置）
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(node.run())
+    async def main():
+        await node.start()
+        try:
+            await asyncio.Event().wait()  # 保持运行直到 Ctrl+C
+        except KeyboardInterrupt:
+            print("正在停止节点...")
+            await node.stop()
+    
+    asyncio.run(main())
+```
+
+#### 双模式节点（服务器 + 客户端）
+
+```python
+from anp.node import ANPNode
+from anp.fastanp import Context
+import asyncio
+
+# 初始化节点
+node = ANPNode(
+    name="编排代理",
+    description="一个双模式 ANP 代理",
+    did_document_path="./did.json",
+    private_key_path="./private_key.pem",
+    agent_domain="https://myagent.com",
+    port=8000
+)
+
+# 注册调用其他节点的服务器接口
+@node.interface("/info/aggregate.json", description="聚合多个节点的数据")
+async def aggregate(query: str, ctx: Context = None) -> dict:
+    """聚合多个节点的数据。"""
+    results = []
+    
+    # 调用其他节点（客户端功能）
+    try:
+        result1 = await node.call_interface(
+            target_did="did:wba:node1.com:agent:1",
+            method="get_data",
+            params={"query": query}
+        )
+        results.append(result1)
+        
+        result2 = await node.call_interface(
+            target_did="did:wba:node2.com:agent:1",
+            method="get_data",
+            params={"query": query}
+        )
+        results.append(result2)
+    except Exception as e:
+        return {"error": str(e)}
+    
+    return {"aggregated": results, "count": len(results)}
+
+# 自定义 ad.json 路由
+@node.app.get("/ad.json")
+def get_agent_description():
+    ad = node.get_common_header()
+    ad["interfaces"] = [
+        node.interfaces[aggregate].link_summary
+    ]
+    return ad
+
+# 启动节点并初始化（非阻塞式）
+if __name__ == "__main__":
+    async def main():
+        # 启动服务器（非阻塞）
+        await node.start()
+        print("节点服务器已启动！")
+        
+        # 服务器运行时可以进行初始化
+        try:
+            # 发现其他节点
+            interface = await node.discover_interface(
+                target_did="did:wba:node1.com:agent:1",
+                method="get_data"
+            )
+            print(f"发现的接口: {interface}")
+        except Exception as e:
+            print(f"发现失败: {e}")
+        
+        # 保持服务器运行直到停止
+        try:
+            await asyncio.Event().wait()  # 永久等待
+        except KeyboardInterrupt:
+            print("正在停止节点...")
+            await node.stop()
+    
+    asyncio.run(main())
 ```
 
 ### 客户端使用示例
@@ -546,14 +637,22 @@ async def use_node_as_client():
 ### 对于现有 FastANP 用户
 
 ```python
-# 之前
+# 之前（阻塞式）
 app = FastAPI()
 anp = FastANP(app=app, ...)
+uvicorn.run(app, host="0.0.0.0", port=8000)  # 阻塞式
 
-# 之后
+# 之后（非阻塞式）
 node = ANPNode(...)
 # node.app 是 FastAPI 应用
 # node.interface() 工作方式相同
+
+async def main():
+    await node.start()  # 非阻塞
+    # 可以做其他事情
+    await asyncio.Event().wait()  # 保持运行
+
+asyncio.run(main())
 ```
 
 ### 对于现有 ANPClient 用户
@@ -563,9 +662,13 @@ node = ANPNode(...)
 client = ANPClient(did_doc_path, key_path)
 result = await client.fetch_url(...)
 
-# 之后
-node = ANPNode(..., server_enabled=False)
-result = await node.call_interface(...)
+# 之后（仅客户端模式）
+node = ANPNode(..., server_enabled=False, client_enabled=True)
+result = await node.call_interface(
+    target_did="did:wba:target.com:agent:1",
+    method="method_name",
+    params={...}
+)
 ```
 
 ## 结论

@@ -220,15 +220,28 @@ class ANPNode:
     
     # Lifecycle
     async def start(self) -> None:
-        """Start the node (server component)."""
+        """
+        Start the node server in non-blocking mode.
+        
+        This method starts the server in the background and returns immediately.
+        Use this when you need to do other things while the server is running.
+        
+        Example:
+            async def main():
+                node = ANPNode(...)
+                await node.start()  # Non-blocking
+                # Can do other things here
+                result = await node.call_interface(...)
+                await node.stop()
+        """
         pass
     
     async def stop(self) -> None:
-        """Stop the node (server component)."""
-        pass
-    
-    async def run(self) -> None:
-        """Run the node (blocking)."""
+        """
+        Stop the node server gracefully.
+        
+        Stops the server and waits for ongoing requests to complete.
+        """
         pass
     
     # Properties
@@ -250,50 +263,128 @@ class ANPNode:
 
 ### Usage Example
 
+#### Simple Server-Only Node
+
 ```python
 from anp.node import ANPNode
-from anp.fastanp import Context
-from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
+import asyncio
 
 # Initialize node
 node = ANPNode(
-    name="My Agent",
-    description="A dual-mode ANP agent",
+    name="Simple Agent",
+    description="A simple ANP agent",
     did_document_path="./did.json",
     private_key_path="./private_key.pem",
     agent_domain="https://myagent.com",
-    port=8000,
-    enable_auth_middleware=True,
-    auth_config=auth_config
+    port=8000
 )
 
 # Register server interface
-@node.interface("/info/search.json", description="Search items")
-def search(query: str, limit: int = 10, ctx: Context = None) -> dict:
-    """Search for items."""
-    # Can call other nodes from server interface
-    if ctx:
-        other_result = await node.call_interface(
-            target_did="did:wba:other.com:agent:1",
-            method="get_related_data",
-            params={"query": query}
-        )
-    
-    return {"results": [...]}
+@node.interface("/info/hello.json", description="Say hello")
+def hello(name: str) -> dict:
+    """Say hello to someone."""
+    return {"message": f"Hello, {name}!"}
 
 # Custom ad.json route
 @node.app.get("/ad.json")
 def get_agent_description():
     ad = node.get_common_header()
     ad["interfaces"] = [
-        node.interfaces[search].link_summary
+        node.interfaces[hello].link_summary
     ]
     return ad
 
-# Start node
+# Start node (minimal setup)
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(node.run())
+    async def main():
+        await node.start()
+        try:
+            await asyncio.Event().wait()  # Keep running until Ctrl+C
+        except KeyboardInterrupt:
+            print("Stopping node...")
+            await node.stop()
+    
+    asyncio.run(main())
+```
+
+#### Dual-Mode Node (Server + Client)
+
+```python
+from anp.node import ANPNode
+from anp.fastanp import Context
+import asyncio
+
+# Initialize node
+node = ANPNode(
+    name="Orchestrator Agent",
+    description="A dual-mode ANP agent",
+    did_document_path="./did.json",
+    private_key_path="./private_key.pem",
+    agent_domain="https://myagent.com",
+    port=8000
+)
+
+# Register server interface that calls other nodes
+@node.interface("/info/aggregate.json", description="Aggregate data from multiple nodes")
+async def aggregate(query: str, ctx: Context = None) -> dict:
+    """Aggregate data from multiple nodes."""
+    results = []
+    
+    # Call other nodes (client functionality)
+    try:
+        result1 = await node.call_interface(
+            target_did="did:wba:node1.com:agent:1",
+            method="get_data",
+            params={"query": query}
+        )
+        results.append(result1)
+        
+        result2 = await node.call_interface(
+            target_did="did:wba:node2.com:agent:1",
+            method="get_data",
+            params={"query": query}
+        )
+        results.append(result2)
+    except Exception as e:
+        return {"error": str(e)}
+    
+    return {"aggregated": results, "count": len(results)}
+
+# Custom ad.json route
+@node.app.get("/ad.json")
+def get_agent_description():
+    ad = node.get_common_header()
+    ad["interfaces"] = [
+        node.interfaces[aggregate].link_summary
+    ]
+    return ad
+
+# Start node with initialization (non-blocking)
+if __name__ == "__main__":
+    async def main():
+        # Start server (non-blocking)
+        await node.start()
+        print("Node server started!")
+        
+        # Can do initialization while server is running
+        try:
+            # Discover other nodes
+            interface = await node.discover_interface(
+                target_did="did:wba:node1.com:agent:1",
+                method="get_data"
+            )
+            print(f"Discovered interface: {interface}")
+        except Exception as e:
+            print(f"Discovery failed: {e}")
+        
+        # Keep server running until stopped
+        try:
+            await asyncio.Event().wait()  # Wait forever
+        except KeyboardInterrupt:
+            print("Stopping node...")
+            await node.stop()
+    
+    asyncio.run(main())
 ```
 
 ### Client Usage Example
@@ -546,14 +637,22 @@ An agent that aggregates data from multiple sources:
 ### For Existing FastANP Users
 
 ```python
-# Before
+# Before (blocking)
 app = FastAPI()
 anp = FastANP(app=app, ...)
+uvicorn.run(app, host="0.0.0.0", port=8000)  # Blocking
 
-# After
+# After (non-blocking)
 node = ANPNode(...)
 # node.app is the FastAPI app
 # node.interface() works the same
+
+async def main():
+    await node.start()  # Non-blocking
+    # Can do other things
+    await asyncio.Event().wait()  # Keep running
+
+asyncio.run(main())
 ```
 
 ### For Existing ANPClient Users
@@ -563,9 +662,13 @@ node = ANPNode(...)
 client = ANPClient(did_doc_path, key_path)
 result = await client.fetch_url(...)
 
-# After
-node = ANPNode(..., server_enabled=False)
-result = await node.call_interface(...)
+# After (client-only mode)
+node = ANPNode(..., server_enabled=False, client_enabled=True)
+result = await node.call_interface(
+    target_did="did:wba:target.com:agent:1",
+    method="method_name",
+    params={...}
+)
 ```
 
 ## Conclusion
