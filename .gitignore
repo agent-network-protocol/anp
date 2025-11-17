@@ -19,3 +19,4 @@ examples/did_wba_examples/did_keys/*
 examples/negotiation_mode/*
 .claude/
 .claude/settings.local.json
+uv.lock

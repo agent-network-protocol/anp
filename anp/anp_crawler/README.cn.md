@@ -27,7 +27,7 @@ ANP Crawler 为 Agent Network Protocol (ANP) 提供了一套轻量级的发现�
 
 ## 简要示例
 ```python
-from anp.anp_crawler.anp_client import ANPClient
+from anp import ANPClient
 from anp.anp_crawler.anp_parser import ANPDocumentParser
 
 client = ANPClient(
