@@ -9,22 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urljoin
 
 import uvicorn
 from fastapi import FastAPI
 
-from anp.anp_crawler.anp_crawler import ANPCrawler
-from anp.anp_crawler.anp_interface import ANPInterface
-from anp.authentication.did_wba import resolve_did_wba_document
+from anp.anp_crawler.anp_client import ANPClient
 from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 from anp.fastanp import FastANP
 from anp.fastanp.interface_manager import InterfaceProxy
 
 logger = logging.getLogger(__name__)
-
-InterfaceMap = Dict[str, ANPInterface]
 
 
 class ANPNode:
@@ -50,8 +46,9 @@ class ANPNode:
         jsonrpc_server_description: Optional[str] = None,
         api_version: str = "1.0.0",
         app: Optional[FastAPI] = None,
-        crawler_cache_enabled: bool = True,
         log_level: str = "info",
+        agent_description_path: str = "/ad.json",
+        initial_information: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """Initialize the ANP node."""
         self.name = name
@@ -70,18 +67,16 @@ class ANPNode:
         self._server_task: Optional[asyncio.Task] = None
         self._start_lock = asyncio.Lock()
 
-        self._crawler: Optional[ANPCrawler] = (
-            ANPCrawler(
+        self._client: Optional[ANPClient] = (
+            ANPClient(
                 did_document_path=did_document_path,
                 private_key_path=private_key_path,
-                cache_enabled=crawler_cache_enabled,
             )
             if client_enabled
             else None
         )
-        self._interface_cache: Dict[str, InterfaceMap] = {}
-        self._agent_description_cache: Dict[str, str] = {}
-        self._discovery_locks: Dict[str, asyncio.Lock] = {}
+        self._agent_description_path = agent_description_path
+        self._information_links: List[Dict[str, str]] = list(initial_information or [])
 
         if server_enabled:
             self._app = app or FastAPI(title=name, description=description)
@@ -100,10 +95,13 @@ class ANPNode:
                 api_version=api_version,
             )
             self.interface = self._fastanp.interface
+            self.information = self._information_decorator
+            self._register_agent_description_route()
         else:
             self._app = None
             self._fastanp = None
             self.interface = self._disabled_server_interface
+            self.information: Callable[..., Any] = self._disabled_server_interface
 
     async def start(self) -> None:
         """Start the FastAPI/uvicorn server in non-blocking mode."""
@@ -153,57 +151,87 @@ class ANPNode:
         self._server_task = None
         logger.info("ANP node server stopped.")
 
-    async def call_interface(
+    async def fetch_agent_description(
         self,
-        target_did: str,
+        base_url: str,
+        *,
+        ad_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fetch `ad.json` from another ANP node."""
+        if not self.client_enabled or not self._client:
+            raise RuntimeError("Client mode is disabled; cannot fetch agent description.")
+
+        ad_endpoint = ad_path or self._agent_description_path
+        ad_url = urljoin(self._normalize_base_url(base_url), ad_endpoint.lstrip("/"))
+        result = await self._client.fetch(ad_url)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error") or "Failed to fetch agent description.")
+        return result["data"] or {}
+
+    async def call_remote_method(
+        self,
+        base_url: str,
         method: str,
         params: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
+        *,
+        rpc_path: str = "/rpc",
     ) -> Dict[str, Any]:
-        """Call a remote JSON-RPC method exposed by another ANP node."""
-        interface = await self.discover_interface(target_did, method)
-        if timeout is not None:
-            logger.warning("ANPNode.call_interface timeout parameter is currently unused.")
-        return await interface.execute(params or {})
+        """Call a JSON-RPC method exposed by another ANP node."""
+        if not self.client_enabled or not self._client:
+            raise RuntimeError("Client mode is disabled; cannot call remote methods.")
 
-    async def discover_interface(
+        rpc_url = self._resolve_rpc_url(base_url, rpc_path)
+        response = await self._client.call_jsonrpc(
+            server_url=rpc_url,
+            method=method,
+            params=params or {},
+        )
+        if not response.get("success"):
+            raise RuntimeError(response.get("error") or "Remote JSON-RPC call failed.")
+        return response["result"]
+
+    async def fetch_information_endpoint(
         self,
-        target_did: str,
-        method: Optional[str] = None,
-    ) -> Union[ANPInterface, InterfaceMap]:
-        """Discover and cache interfaces for the target DID."""
-        if not self.client_enabled or not self._crawler:
-            raise RuntimeError("Client mode is disabled; cannot discover interfaces.")
+        base_url: str,
+        path: str,
+    ) -> Dict[str, Any]:
+        """Fetch a JSON information endpoint exposed by another ANP node."""
+        if not self.client_enabled or not self._client:
+            raise RuntimeError("Client mode is disabled; cannot fetch information endpoints.")
 
-        cached = self._interface_cache.get(target_did)
-        if cached and method and method in cached:
-            return cached[method]
-        if cached and method is None:
-            return cached
-
-        lock = self._discovery_locks.setdefault(target_did, asyncio.Lock())
-        async with lock:
-            cached = self._interface_cache.get(target_did)
-            if cached and method and method in cached:
-                return cached[method]
-            if cached and method is None:
-                return cached
-
-            interfaces = await self._fetch_interfaces_for_did(target_did)
-            self._interface_cache[target_did] = interfaces
-
-            if method:
-                if method not in interfaces:
-                    raise ValueError(f"Method '{method}' not found for DID {target_did}")
-                return interfaces[method]
-
-            return interfaces
+        info_url = urljoin(self._normalize_base_url(base_url), path.lstrip("/"))
+        response = await self._client.fetch(info_url)
+        if not response.get("success"):
+            raise RuntimeError(response.get("error") or "Failed to fetch information endpoint.")
+        return response["data"]
 
     def get_common_header(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """Proxy to FastANP.get_common_header."""
         if not self._fastanp:
             raise RuntimeError("Server mode is disabled; get_common_header is unavailable.")
         return self._fastanp.get_common_header(*args, **kwargs)
+
+    def register_information_endpoint(
+        self,
+        *,
+        path: str,
+        description: str,
+        absolute_url: Optional[str] = None,
+    ) -> None:
+        """Record a custom information endpoint for inclusion in `ad.json`."""
+        if not self._fastanp:
+            raise RuntimeError("Server mode is disabled; cannot register information endpoints.")
+
+        base_url = self._fastanp.base_url
+        info_url = absolute_url or urljoin(self._normalize_base_url(base_url), path.lstrip("/"))
+        entry = {
+            "type": "Information",
+            "description": description,
+            "url": info_url,
+        }
+        # Replace existing entry if same URL to keep metadata fresh.
+        self._information_links = [item for item in self._information_links if item.get("url") != info_url]
+        self._information_links.append(entry)
 
     @property
     def interfaces(self) -> Dict[Callable, InterfaceProxy]:
@@ -219,56 +247,57 @@ class ANPNode:
             raise RuntimeError("Server mode is disabled; FastAPI app is unavailable.")
         return self._app
 
-    async def _fetch_interfaces_for_did(self, target_did: str) -> InterfaceMap:
-        """Fetch and cache ANP interfaces for the provided DID."""
-        ad_url = await self._resolve_agent_description_url(target_did)
-        _, interfaces = await self._crawler.fetch_text(ad_url)
-        if not interfaces:
-            raise RuntimeError(f"No interfaces found in agent description {ad_url}")
+    def _information_decorator(
+        self,
+        path: str,
+        *,
+        description: str,
+        tags: Optional[List[str]] = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+        """Register an information endpoint and decorate a FastAPI handler."""
+        if not self._app:
+            raise RuntimeError("Server mode is disabled; cannot register information routes.")
 
-        interface_map: InterfaceMap = {}
-        for tool in interfaces:
-            tool_name = tool.get("function", {}).get("name")
-            if not tool_name:
-                continue
-            anp_interface = self._crawler._anp_interfaces.get(tool_name)
-            if not anp_interface:
-                continue
-            method_name = anp_interface.method_name or tool_name
-            interface_map[method_name] = anp_interface
+        def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+            route = self._app.get(path, tags=tags or ["information"])(func)
+            self.register_information_endpoint(path=path, description=description)
+            return route
 
-        if not interface_map:
-            raise RuntimeError(f"Failed to build interface map for DID {target_did}")
+        return decorator
 
-        return interface_map
+    def _register_agent_description_route(self) -> None:
+        """Automatically register the `/ad.json` route mirroring the example server."""
+        if not self._app or not self._fastanp:
+            return
 
-    async def _resolve_agent_description_url(self, target_did: str) -> str:
-        """Resolve the Agent Description URL for a DID."""
-        if target_did in self._agent_description_cache:
-            return self._agent_description_cache[target_did]
+        @self._app.get(self._agent_description_path, tags=["agent"])
+        async def get_agent_description() -> Dict[str, Any]:
+            return self._build_agent_description()
 
-        did_document = await resolve_did_wba_document(target_did)
-        if not did_document:
-            raise RuntimeError(f"Failed to resolve DID document for {target_did}")
+    def _build_agent_description(self) -> Dict[str, Any]:
+        """Compose the Agent Description payload using FastANP data."""
+        if not self._fastanp:
+            raise RuntimeError("Server mode is disabled; cannot build agent description.")
 
-        services = did_document.get("service", [])
-        endpoint = None
-        for service in services:
-            if service.get("type") == "AgentDescription":
-                endpoint = service.get("serviceEndpoint")
-                break
+        ad = self._fastanp.get_common_header(agent_description_path=self._agent_description_path)
+        ad["interfaces"] = [
+            proxy.link_summary for proxy in self._fastanp.interfaces.values()
+        ]
+        ad["Infomations"] = list(self._information_links)
+        return ad
 
-        if not endpoint:
-            raise ValueError(f"No AgentDescription service defined for DID {target_did}")
+    def _normalize_base_url(self, base_url: str) -> str:
+        """Ensure base URLs always end with a slash for `urljoin` compatibility."""
+        base_url = base_url.rstrip("/")
+        if "://" not in base_url:
+            raise ValueError(f"Invalid base URL: {base_url}")
+        return f"{base_url}/"
 
-        endpoint = endpoint.rstrip("/")
-        if endpoint.endswith(".json"):
-            ad_url = endpoint
-        else:
-            ad_url = urljoin(f"{endpoint}/", "ad.json")
-
-        self._agent_description_cache[target_did] = ad_url
-        return ad_url
+    def _resolve_rpc_url(self, base_url: str, rpc_path: str) -> str:
+        """Resolve absolute RPC endpoint from a base URL or existing RPC URL."""
+        if base_url.endswith("/rpc") or base_url.endswith(".rpc"):
+            return base_url
+        return urljoin(self._normalize_base_url(base_url), rpc_path.lstrip("/"))
 
     def _disabled_server_interface(self, *args: Any, **kwargs: Any) -> Callable:
         raise RuntimeError("Server mode is disabled; interface decorator is unavailable.")
