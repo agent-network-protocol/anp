@@ -7,7 +7,9 @@ including JCS canonicalization and hash computation.
 import base64
 import hashlib
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import jwt
 
 
 def jcs_canonicalize(obj: Dict[str, Any]) -> str:
@@ -22,12 +24,7 @@ def jcs_canonicalize(obj: Dict[str, Any]) -> str:
     References:
         RFC 8785: https://datatracker.ietf.org/doc/rfc8785/
     """
-    return json.dumps(
-        obj,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True
-    )
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def b64url_no_pad(data: bytes) -> str:
@@ -63,34 +60,57 @@ def compute_hash(obj: Dict[str, Any]) -> str:
     return b64url_no_pad(digest)
 
 
-def compute_cart_hash(cart_contents: Dict[str, Any]) -> str:
-    """Compute cart_hash for CartMandate.contents.
+class JWTVerifier:
+    """Generic JWS token verifier.
 
-    Args:
-        cart_contents: CartMandate.contents dictionary
-
-    Returns:
-        Base64URL encoded cart_hash
-
-    Example:
-        >>> contents = {"id": "cart_123", "payment_request": {...}}
-        >>> cart_hash = compute_cart_hash(contents)
+    This is a stateless component that can be composed into other validators.
     """
-    return compute_hash(cart_contents)
+
+    def __init__(self, public_key: str, algorithm: str = "RS256"):
+        """Initialize the verifier.
+
+        Args:
+            public_key: The public key for signature verification.
+            algorithm: The expected JWT algorithm.
+        """
+        self.public_key = public_key
+        self.algorithm = algorithm
+
+    def verify(
+        self,
+        token: str,
+        expected_audience: Optional[str] = None,
+        verify_time: bool = True,
+    ) -> Dict:
+        """Decode and verify a JWS token.
+
+        Args:
+            token: The JWS token string.
+            expected_audience: The expected audience ('aud') claim.
+            verify_time: Whether to verify time validity (exp, iat, nbf).
+
+        Returns:
+            The decoded JWT payload.
+
+        Raises:
+            jwt.InvalidTokenError: If the token is invalid (bad signature, expired, etc.)
+        """
+        options = {"verify_exp": verify_time}
+        decode_kwargs = {"algorithms": [self.algorithm], "options": options}
+
+        if expected_audience:
+            decode_kwargs["audience"] = expected_audience
+        else:
+            options["verify_aud"] = (
+                False  # Explicitly disable audience verification if not provided
+            )
+
+        return jwt.decode(token, self.public_key, **decode_kwargs)
 
 
-def compute_pmt_hash(payment_mandate_contents: Dict[str, Any]) -> str:
-    """Compute pmt_hash for PaymentMandate.payment_mandate_contents.
-
-    Args:
-        payment_mandate_contents: PaymentMandate.payment_mandate_contents dictionary
-            (without user_authorization field)
-
-    Returns:
-        Base64URL encoded pmt_hash
-
-    Example:
-        >>> contents = {"payment_mandate_id": "pm_123", ...}
-        >>> pmt_hash = compute_pmt_hash(contents)
-    """
-    return compute_hash(payment_mandate_contents)
+__all__ = [
+    "jcs_canonicalize",
+    "b64url_no_pad",
+    "compute_hash",
+    "JWTVerifier",
+]

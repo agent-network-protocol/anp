@@ -153,7 +153,7 @@ from anp.ap2 import (
     PaymentDetails,
     DisplayItem,
     MoneyAmount,
-    PaymentTotal,
+    PaymentDetailsTotal,
     PaymentRequestOptions,
 )
 
@@ -170,6 +170,7 @@ builder = CartMandateBuilder(
 cart_contents = CartContents(
     id="cart_123",
     user_signature_required=False,
+    timestamp="2025-01-17T08:00:00Z",
     payment_request=PaymentRequest(
         method_data=[
             PaymentMethodData(
@@ -193,7 +194,7 @@ cart_contents = CartContents(
                     amount=MoneyAmount(currency="CNY", value=120.0),
                 )
             ],
-            total=PaymentTotal(
+            total=PaymentDetailsTotal(
                 label="Total",
                 amount=MoneyAmount(currency="CNY", value=120.0)
             ),
@@ -285,6 +286,7 @@ payment_mandate = builder.build(
 )
 
 print(f"PaymentMandate created: {payment_mandate.payment_mandate_contents.payment_mandate_id}")
+print(f"Chained prev_hash: {payment_mandate.payment_mandate_contents.prev_hash}")
 ```
 
 ### 5. 验证 PaymentMandate（商户端）
@@ -501,7 +503,7 @@ uv run pytest tests/test_ap2.py -v
 uv run pytest tests/test_ap2.py::TestCartMandate -v
 
 # 运行特定测试方法
-uv run pytest tests/test_ap2.py::TestCartMandate::test_build_cart_mandate -v
+uv run pytest tests/test_ap2.py::TestCartMandate::test_build_cart_mandate_response -v
 ```
 
 ## ES256K 算法支持

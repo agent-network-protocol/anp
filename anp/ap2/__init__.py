@@ -1,27 +1,37 @@
 """AP2 Protocol Support Module.
 
-This module implements the AP2 (Agent Payment Protocol v2) for ANP,
-providing CartMandate and PaymentMandate construction and verification.
-
 Core Components:
-    - models: Pydantic data models for AP2 protocol entities
-    - cart_mandate: CartMandate builder and verifier
-    - payment_mandate: PaymentMandate builder and verifier
-    - utils: Common utilities (JCS canonicalization, hash computation)
+    - MandateVerifier: Unified verifier for all mandate types
+    - cart_mandate: CartMandate request/response utilities
+    - payment_mandate: PaymentMandate request/response utilities
+    - credential_mandate: Credential building/verification utilities
+    - AP2Client: High-level client API for Travel Agents
 """
 
-from anp.ap2.cart_mandate import CartMandateBuilder, CartMandateVerifier
-from anp.ap2.payment_mandate import PaymentMandateBuilder, PaymentMandateVerifier
-from anp.ap2.client import (
-    AP2Client,
-    create_cart_mandate,
-    send_payment_mandate,
-)
+# Agents
+from anp.ap2.shopper_agent import ShopperAgent
+from anp.ap2.merchant_agent import MerchantAgent
+
+# Models
 from anp.ap2.models import (
+    # Mandates
     CartMandate,
     PaymentMandate,
+    PaymentReceipt,
+    FulfillmentReceipt,
+
+    # Content models
     CartContents,
     PaymentMandateContents,
+    PaymentReceiptContents,
+    FulfillmentReceiptContents,
+
+    # Request/Response models
+    CartMandateRequest,
+    CartMandateRequestData,
+    PaymentMandateRequest,
+
+    # Payment models
     PaymentRequest,
     PaymentDetails,
     PaymentDetailsTotal,
@@ -32,24 +42,44 @@ from anp.ap2.models import (
     PaymentMethodData,
     QRCodePaymentData,
     PaymentRequestOptions,
-    PaymentTotal,
+    FulfillmentItem,
+    ShippingInfo,
+    WebhookResponse,
+    CartRequestItem,
+
+    # Enums
+    PaymentProvider,
+    PaymentStatus,
 )
 
+# Convenience function modules (for explicit import)
+from anp.ap2 import cart_mandate
+from anp.ap2 import payment_mandate
+from anp.ap2 import credential_mandate
+
 __all__ = [
-    # Builders and Verifiers
-    "CartMandateBuilder",
-    "CartMandateVerifier",
-    "PaymentMandateBuilder",
-    "PaymentMandateVerifier",
-    # HTTP Client
-    "AP2Client",
-    "create_cart_mandate",
-    "send_payment_mandate",
+    # Agents
+    "ShopperAgent",
+    "MerchantAgent",
+
     # Models
     "CartMandate",
     "PaymentMandate",
+    "PaymentReceipt",
+    "FulfillmentReceipt",
+
+    # Content models
     "CartContents",
     "PaymentMandateContents",
+    "PaymentReceiptContents",
+    "FulfillmentReceiptContents",
+
+    # Request/Response models
+    "CartMandateRequest",
+    "CartMandateRequestData",
+    "PaymentMandateRequest",
+
+    # Payment models
     "PaymentRequest",
     "PaymentDetails",
     "PaymentDetailsTotal",
@@ -60,5 +90,17 @@ __all__ = [
     "PaymentMethodData",
     "QRCodePaymentData",
     "PaymentRequestOptions",
-    "PaymentTotal",
+    "FulfillmentItem",
+    "ShippingInfo",
+    "WebhookResponse",
+    "CartRequestItem",
+
+    # Enums
+    "PaymentProvider",
+    "PaymentStatus",
+
+    # Convenience function modules
+    "cart_mandate",
+    "payment_mandate",
+    "credential_mandate",
 ]

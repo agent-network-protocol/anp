@@ -1,260 +1,254 @@
-"""PaymentMandate Builder and Verifier.
+"""PaymentMandate Request/Response utilities.
 
-This module provides tools to build and verify PaymentMandate with
-user_authorization signatures using JWT.
-
-Supported algorithms:
-- RS256: RSASSA-PKCS1-v1_5 using SHA-256 (default)
-- ES256K: ECDSA using secp256k1 curve and SHA-256 (for blockchain/crypto apps)
+This module provides tools for payment authorization protocol.
 """
 
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
 import time
 import uuid
-from typing import Dict, List, Optional
 
 import jwt
 
-from anp.ap2.models import PaymentMandate, PaymentMandateContents
-from anp.ap2.utils import compute_pmt_hash
+from anp.ap2.models import (
+    PaymentMandate,
+    PaymentMandateContents,
+    PaymentMandateRequest,
+    PaymentDetailsTotal,
+    PaymentResponse,
+    MoneyAmount,
+    ShippingAddress,
+)
+from anp.ap2.utils import compute_hash, JWTVerifier
 
 
-class PaymentMandateBuilder:
-    """PaymentMandate builder.
+# =============================================================================
+# Request Builders (Client Side - TA)
+# =============================================================================
 
-    Used to build PaymentMandate with user_authorization signature.
+def build_payment_mandate_response(
+    payment_mandate_id: str,
+    order_id: str,
+    total_amount: Dict[str, Any],
+    payment_details: Dict[str, Any],
+    cart_hash: str,
+    user_private_key: str,
+    user_did: str,
+    user_kid: str,
+    merchant_did: str,
+    merchant_agent: str = "MerchantAgent",
+    refund_period: int = 30,
+    shipping_address: Optional[Dict[str, str]] = None,
+    algorithm: str = "RS256",
+) -> PaymentMandate:
+    """Create a payment mandate response with shopper authorization.
+
+    This is for Client (TA) to authorize payment after cart creation and
+    return a signed PaymentMandate that can be embedded in a request message.
+
+    Args:
+        payment_mandate_id: Unique payment ID
+        order_id: Order ID from CartMandate
+        total_amount: Total amount dict {"currency": "CNY", "value": 120.0}
+        payment_details: Payment method details (channel, out_trade_no, etc.)
+        cart_hash: Cart hash from verified CartMandate
+        user_private_key: User's private key
+        user_did: User's DID
+        user_kid: User's key identifier
+        merchant_did: Merchant's DID
+        merchant_agent: Merchant agent identifier
+        refund_period: Refund period in days
+        shipping_address: Shipping address (optional)
+        algorithm: JWT algorithm
+
+    Returns:
+        Signed PaymentMandate
+
+    Example:
+        >>> from anp.ap2.payment_mandate import build_payment_mandate_response
+        >>> mandate = create_payment_response(
+        ...     payment_mandate_id="pm_123",
+        ...     order_id="order_123",
+        ...     total_amount={"currency": "CNY", "value": 120.0},
+        ...     payment_details={"channel": "ALIPAY", "out_trade_no": "trade_001"},
+        ...     cart_hash="abc123...",
+        ...     user_private_key=key,
+        ...     user_did="did:wba:didhost.cc:shopper",
+        ...     user_kid="shopper-key-001",
+        ...     merchant_did="did:wba:merchant.example.com:merchant"
+        ... )
     """
+    # Build payment mandate contents
+    pmt_contents = PaymentMandateContents(
+        payment_mandate_id=payment_mandate_id,
+        payment_details_id=order_id,
+        payment_details_total=PaymentDetailsTotal(
+            label="Total",
+            amount=MoneyAmount(**total_amount),
+            refund_period=refund_period,
+        ),
+        payment_response=PaymentResponse(
+            request_id=order_id,
+            method_name=payment_details.get("method_name", "QR_CODE"),
+            details=payment_details,
+            shipping_address=ShippingAddress(**shipping_address) if shipping_address else None,
+        ),
+        merchant_agent=merchant_agent,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        prev_hash=cart_hash,  # Set prev_hash directly
+    )
 
-    def __init__(
-        self,
-        user_private_key: str,
-        user_did: str,
-        user_kid: str,
-        algorithm: str = "RS256",
-        merchant_did: Optional[str] = None,
-    ):
-        """Initialize PaymentMandate builder.
+    # Calculate pmt_hash
+    contents_dict = pmt_contents.model_dump(exclude_none=True)
+    pmt_hash = compute_hash(contents_dict)
 
-        Args:
-            user_private_key: User private key (PEM format)
-            user_did: User DID (e.g., did:wba:didhost.cc:shopper)
-            user_kid: User key identifier
-            algorithm: JWT signing algorithm, supports "RS256" or "ES256K", defaults to "RS256"
-            merchant_did: Merchant DID (optional, used for aud field)
-        """
-        self.user_private_key = user_private_key
-        self.user_did = user_did
-        self.user_kid = user_kid
-        self.algorithm = algorithm
-        self.merchant_did = merchant_did
+    # Build JWT payload (chain via contents.prev_hash, not transaction_data)
+    now = int(time.time())
+    payload = {
+        "iss": user_did,
+        "sub": user_did,
+        "aud": merchant_did,
+        "iat": now,
+        "exp": now + 15552000,  # 180 days
+        "jti": str(uuid.uuid4()),
+        "pmt_hash": pmt_hash,
+    }
 
-    def build(
-        self,
-        payment_mandate_contents: PaymentMandateContents,
-        cart_hash: str,
-        cnf: Optional[Dict] = None,
-        sd_hash: Optional[str] = None,
-        ttl_seconds: int = 15552000,  # 180 days
-        extensions: Optional[List[str]] = None,
-    ) -> PaymentMandate:
-        """Build PaymentMandate.
+    # Build JWT header
+    headers = {
+        "alg": algorithm,
+        "kid": user_kid,
+        "typ": "JWT",
+    }
 
-        Args:
-            payment_mandate_contents: Payment mandate contents
-            cart_hash: Cart hash (from CartMandate)
-            cnf: Holder binding information (optional)
-            sd_hash: SD-JWT/VC hash pointer (optional)
-            ttl_seconds: Time to live in seconds, defaults to 15552000 seconds (180 days)
-            extensions: Extension list (optional)
+    # Generate signature
+    user_authorization = jwt.encode(
+        payload,
+        user_private_key,
+        algorithm=algorithm,
+        headers=headers,
+    )
 
-        Returns:
-            Built PaymentMandate object
+    # Build payment mandate
+    payment_mandate = PaymentMandate(
+        payment_mandate_contents=pmt_contents,
+        user_authorization=user_authorization,
+    )
 
-        Example:
-            >>> builder = PaymentMandateBuilder(private_key, "did:wba:didhost.cc:shopper", "key-001")
-            >>> contents = PaymentMandateContents(...)
-            >>> mandate = builder.build(contents, cart_hash="abc123...")
-        """
-        # Calculate pmt_hash
-        contents_dict = payment_mandate_contents.model_dump(exclude_none=True)
-        pmt_hash = compute_pmt_hash(contents_dict)
+    return payment_mandate
 
-        # Build transaction_data
-        transaction_data = [cart_hash, pmt_hash]
 
-        # Build JWT payload
-        now = int(time.time())
-        payload = {
-            "iss": self.user_did,
-            "sub": self.user_did,
-            "aud": self.merchant_did or "did:wba:MA",
-            "iat": now,
-            "exp": now + ttl_seconds,
-            "jti": str(uuid.uuid4()),
-            "transaction_data": transaction_data,
-        }
+def build_payment_mandate_request(
+    payment_mandate_id: str,
+    order_id: str,
+    total_amount: Dict[str, Any],
+    payment_details: Dict[str, Any],
+    cart_hash: str,
+    user_private_key: str,
+    user_did: str,
+    user_kid: str,
+    merchant_did: str,
+    merchant_agent: str = "MerchantAgent",
+    refund_period: int = 30,
+    shipping_address: Optional[Dict[str, str]] = None,
+    algorithm: str = "RS256",
+) -> PaymentMandateRequest:
+    """Wrap a signed PaymentMandate into an ANP request message."""
 
-        # Add optional fields
-        if cnf:
-            payload["cnf"] = cnf
-        if sd_hash:
-            payload["sd_hash"] = sd_hash
-        if extensions:
-            payload["extensions"] = extensions
+    payment_mandate = build_payment_mandate_response(
+        payment_mandate_id=payment_mandate_id,
+        order_id=order_id,
+        total_amount=total_amount,
+        payment_details=payment_details,
+        cart_hash=cart_hash,
+        user_private_key=user_private_key,
+        user_did=user_did,
+        user_kid=user_kid,
+        merchant_did=merchant_did,
+        merchant_agent=merchant_agent,
+        refund_period=refund_period,
+        shipping_address=shipping_address,
+        algorithm=algorithm,
+    )
 
-        # Build JWT header
-        headers = {
-            "alg": self.algorithm,
-            "kid": self.user_kid,
-            "typ": "JWT",
-        }
+    return PaymentMandateRequest(
+        messageId=f"msg-{payment_mandate_id}",
+        from_=user_did,
+        to=merchant_did,
+        data=payment_mandate,
+    )
 
-        # Generate signature
-        user_authorization = self._encode_jwt(payload, headers)
 
-        # Build PaymentMandate
-        return PaymentMandate(
-            payment_mandate_contents=payment_mandate_contents,
-            user_authorization=user_authorization,
-        )
+# =============================================================================
+# Verification
+# =============================================================================
 
-    def _encode_jwt(self, payload: Dict, headers: Dict) -> str:
-        """Encode JWT using PyJWT library.
-
-        Args:
-            payload: JWT payload
-            headers: JWT headers
-
-        Returns:
-            Encoded JWT string
-        """
+class PaymentMandateValidator:
+    """Validator for PaymentMandate objects.
+    
+    This stateless validator is composed with a JWTVerifier to check
+    the signature, content integrity, and hash chain link of a PaymentMandate.
+    """
+    def __init__(self, shopper_jwt_verifier: JWTVerifier):
+        """Initialize the validator.
         
-        return jwt.encode(
-            payload,
-            self.user_private_key,
-            algorithm=self.algorithm,
-            headers=headers,
-        )
-
-
-class PaymentMandateVerifier:
-    """PaymentMandate verifier.
-
-    Used to verify user_authorization signature of PaymentMandate.
-    """
-
-    def __init__(self, user_public_key: str, algorithm: str = "RS256"):
-        """Initialize PaymentMandate verifier.
-
         Args:
-            user_public_key: User public key (PEM format)
-            algorithm: JWT signing algorithm, supports "RS256" or "ES256K", defaults to "RS256"
+            shopper_jwt_verifier: A JWTVerifier configured with the shopper's public key.
         """
-        self.user_public_key = user_public_key
-        self.algorithm = algorithm
+        self.jwt_verifier = shopper_jwt_verifier
 
-    def verify(
+    def validate(
         self,
         payment_mandate: PaymentMandate,
+        expected_merchant_did: str,
         expected_cart_hash: str,
-        expected_aud: Optional[str] = None,
-        verify_time: bool = True,
-    ) -> Dict:
-        """Verify PaymentMandate.
-
+    ) -> Tuple[Dict[str, Any], str]:
+        """Validate a PaymentMandate.
+        
         Args:
-            payment_mandate: PaymentMandate to verify
-            expected_cart_hash: Expected cart_hash (from CartMandate)
-            expected_aud: Expected aud value (optional)
-            verify_time: Whether to verify time validity (defaults to True)
-
+            payment_mandate: The PaymentMandate object to validate.
+            expected_merchant_did: The DID of the merchant (expected audience).
+            expected_cart_hash: The hash of the preceding CartMandate in the chain.
+            
         Returns:
-            Decoded JWT payload
-
+            A tuple containing the decoded JWT payload and the computed pmt_hash.
+            
         Raises:
-            jwt.InvalidSignatureError: Invalid signature
-            jwt.ExpiredSignatureError: JWT expired
-            jwt.InvalidTokenError: Invalid JWT format
-            ValueError: transaction_data mismatch or cart_hash inconsistency
-
-        Example:
-            >>> verifier = PaymentMandateVerifier(public_key)
-            >>> payload = verifier.verify(payment_mandate, cart_hash="abc123...")
-            >>> print(f"Verified payment from {payload['iss']}")
+            ValueError: If the content hash or chain hash is invalid.
+            jwt.InvalidTokenError: If the JWT is invalid.
         """
-        # Decode and verify JWT
-        payload = self._decode_jwt(
+        # 1. Verify the shopper's JWS
+        payload = self.jwt_verifier.verify(
             payment_mandate.user_authorization,
-            expected_aud=expected_aud,
-            verify_time=verify_time,
+            expected_audience=expected_merchant_did
         )
 
-        # aud is already verified in _decode_jwt, no need to verify again here
-
-        # Recalculate pmt_hash and verify
-        contents_dict = payment_mandate.payment_mandate_contents.model_dump(
-            exclude_none=True
-        )
-        computed_pmt_hash = compute_pmt_hash(contents_dict)
-
-        # Verify transaction_data
-        transaction_data = payload.get("transaction_data", [])
-        if len(transaction_data) != 2:
-            raise ValueError(
-                f"Invalid transaction_data length: expected 2, got {len(transaction_data)}"
-            )
-
-        cart_hash_in_token = transaction_data[0]
-        pmt_hash_in_token = transaction_data[1]
-
-        # Verify cart_hash
-        if cart_hash_in_token != expected_cart_hash:
-            raise ValueError(
-                f"cart_hash mismatch: expected {expected_cart_hash}, "
-                f"got {cart_hash_in_token}"
-            )
-
-        # Verify pmt_hash
+        # 2. Verify the content hash (pmt_hash)
+        contents_dict = payment_mandate.payment_mandate_contents.model_dump(exclude_none=True)
+        computed_pmt_hash = compute_hash(contents_dict)
+        
+        pmt_hash_in_token = payload.get("pmt_hash")
         if pmt_hash_in_token != computed_pmt_hash:
             raise ValueError(
                 f"pmt_hash mismatch: expected {computed_pmt_hash}, "
                 f"got {pmt_hash_in_token}"
             )
 
-        # Verify time window (if enabled)
-        if verify_time:
-            now = int(time.time())
-            iat = payload.get("iat", 0)
-            exp = payload.get("exp", 0)
+        # 3. Verify the hash chain link
+        prev_hash = payment_mandate.payment_mandate_contents.prev_hash
+        if prev_hash != expected_cart_hash:
+            raise ValueError(
+                f"prev_hash mismatch: expected {expected_cart_hash}, got {prev_hash}"
+            )
 
-            if not (iat <= now <= exp):
-                raise ValueError(
-                    f"Token not valid at current time: iat={iat}, now={now}, exp={exp}"
-                )
+        return payload, computed_pmt_hash
 
-        return payload
 
-    def _decode_jwt(
-        self, token: str, expected_aud: Optional[str] = None, verify_time: bool = True
-    ) -> Dict:
-        """Decode JWT using PyJWT library.
-
-        Args:
-            token: JWT token string
-            expected_aud: Expected aud value
-            verify_time: Whether to verify time
-
-        Returns:
-            Decoded payload
-        """
-        
-        options = {"verify_exp": verify_time}
-        decode_kwargs = {"algorithms": [self.algorithm], "options": options}
-        
-        if expected_aud:
-            decode_kwargs["audience"] = expected_aud
-        else:
-            options["verify_aud"] = False
-
-        return jwt.decode(
-            token, self.user_public_key, **decode_kwargs
-        )
+__all__ = [
+    # Request builders (Client side)
+    "build_payment_mandate_response",
+    "build_payment_mandate_request",
+    
+    # Verification
+    "PaymentMandateValidator",
+]
