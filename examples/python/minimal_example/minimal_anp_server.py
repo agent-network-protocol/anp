@@ -62,7 +62,7 @@ def get_agent_description():
 
 
 # 1. Basic one-line calculator function
-@anp.interface("/info/calculate.json", description="Basic calculator")
+@anp.interface("/info/calculate.json", description="Basic calculator, parameters: expression: str")
 def calculate(expression: str) -> dict:
     """
     Evaluate a simple mathematical expression.
@@ -94,7 +94,7 @@ def get_hello():
 
 
 # 3. Basic DeepSeek API call
-@anp.interface("/info/openai_call.json", description="Call DeepSeek API")
+@anp.interface("/info/openai_call.json", description="Call DeepSeek API, parameters: prompt: str, model: str = 'deepseek-chat'")
 def call_openai(prompt: str, model: Optional[str] = "deepseek-chat") -> dict:
     """
     Make a basic DeepSeek API call.

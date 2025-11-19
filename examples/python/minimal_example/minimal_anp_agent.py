@@ -229,144 +229,22 @@ async def main():
                 # Run the agent with the user's query
                 result = await anp_agent.run(user_input)
                 
-                # Print intermediate steps (tool calls)
-                # Check various possible attributes for tool call information
-                tool_calls_found = False
-                
-                # Try to access all_messages (common in pydantic_ai)
-                # Check if it's a method or property
-                all_messages = None
-                if hasattr(result, 'all_messages'):
-                    if callable(result.all_messages):
-                        try:
-                            all_messages = result.all_messages()
-                        except:
-                            pass
-                    else:
-                        all_messages = result.all_messages
-                
-                if all_messages:
+                # Print tool calls and results using official pydantic_ai approach
+                messages = result.all_messages()
+                if messages:
                     print("\n--- Tool Calls & Results ---")
-                    tool_call_count = 0
-                    for i, msg in enumerate(all_messages):
-                        # Check for tool calls in message
-                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                            for tool_call in msg.tool_calls:
-                                tool_calls_found = True
-                                tool_call_count += 1
-                                tool_name = getattr(tool_call, 'function_name', getattr(tool_call, 'name', str(tool_call)))
-                                print(f"\n  🔧 Tool Call #{tool_call_count}: {tool_name}")
-                                
-                                # Display arguments
-                                if hasattr(tool_call, 'args'):
-                                    args = tool_call.args
-                                    if args:
-                                        print(f"     Args: {json.dumps(args, indent=8, ensure_ascii=False)}")
-                                elif hasattr(tool_call, 'arguments'):
-                                    args = tool_call.arguments
-                                    if isinstance(args, str):
-                                        try:
-                                            args = json.loads(args)
-                                        except:
-                                            pass
-                                    if args:
-                                        print(f"     Args: {json.dumps(args, indent=8, ensure_ascii=False)}")
-                        
-                        # Check for tool results in the same message
-                        if hasattr(msg, 'tool_results') and msg.tool_results:
-                            for j, tool_result in enumerate(msg.tool_results):
-                                result_str = str(tool_result)
-                                if len(result_str) > 500:
-                                    result_str = result_str[:500] + "..."
-                                print(f"  ✓ Result: {result_str}")
-                        
-                        # Check if message is a tool result message (role='tool')
-                        if hasattr(msg, 'role') and msg.role == 'tool':
-                            content = getattr(msg, 'content', None)
-                            if content:
-                                content_str = str(content)
-                                if len(content_str) > 500:
-                                    content_str = content_str[:500] + "..."
-                                print(f"  ✓ Tool Result: {content_str}")
-                        
-                        # Check for content in tool messages
-                        if hasattr(msg, 'role') and getattr(msg, 'role', None) in ['tool', 'assistant']:
-                            if hasattr(msg, 'content') and msg.content:
-                                # Check if this is a tool result
-                                if hasattr(msg, 'tool_call_id') or (hasattr(msg, 'role') and msg.role == 'tool'):
-                                    content_str = str(msg.content)
-                                    if len(content_str) > 500:
-                                        content_str = content_str[:500] + "..."
-                                    print(f"  ✓ Tool Result: {content_str}")
-                    
-                    if tool_calls_found or tool_call_count > 0:
-                        print("\n--- End Tool Calls & Results ---\n")
-                
-                # Also check result object directly for tool calls and results
-                if not tool_calls_found:
-                    if hasattr(result, 'tool_calls') and result.tool_calls:
-                        print("\n--- Tool Calls & Results ---")
-                        for tool_call in result.tool_calls:
-                            print(f"  🔧 Tool: {tool_call}")
-                        print("--- End Tool Calls & Results ---\n")
-                        tool_calls_found = True
-                    
-                    # Check for tool results directly on result object
-                    if hasattr(result, 'tool_results') and result.tool_results:
-                        if not tool_calls_found:
-                            print("\n--- Tool Results ---")
-                        for tool_result in result.tool_results:
-                            result_str = str(tool_result)
-                            if len(result_str) > 500:
-                                result_str = result_str[:500] + "..."
-                            print(f"  ✓ Result: {result_str}")
-                        if not tool_calls_found:
-                            print("--- End Tool Results ---\n")
-                    
-                    # Check for data that might contain tool results
-                    if hasattr(result, 'data') and result.data:
-                        # Check if data contains tool-related information
-                        data_str = str(result.data)
-                        if 'tool' in data_str.lower() or 'result' in data_str.lower():
-                            print(f"\n  📊 Additional Data: {data_str[:300]}...")
-                
-                # Check for steps
-                if not tool_calls_found and hasattr(result, 'steps') and result.steps:
-                    print("\n--- Steps ---")
-                    for step_num, step in enumerate(result.steps, 1):
-                        print(f"\n  Step #{step_num}:")
-                        if hasattr(step, 'tool_calls') and step.tool_calls:
-                            for tool_call in step.tool_calls:
-                                tool_name = getattr(tool_call, 'function_name', getattr(tool_call, 'name', str(tool_call)))
-                                print(f"    🔧 Tool: {tool_name}")
-                                if hasattr(tool_call, 'args') and tool_call.args:
-                                    print(f"       Args: {json.dumps(tool_call.args, indent=10, ensure_ascii=False)}")
-                        
-                        # Check for tool results in step
-                        if hasattr(step, 'tool_results') and step.tool_results:
-                            for tool_result in step.tool_results:
-                                result_str = str(tool_result)
-                                if len(result_str) > 500:
-                                    result_str = result_str[:500] + "..."
-                                print(f"    ✓ Result: {result_str}")
-                        
-                        # Check for result/response in step
-                        if hasattr(step, 'result'):
-                            result_str = str(step.result)
-                            if len(result_str) > 500:
-                                result_str = result_str[:500] + "..."
-                            print(f"    ✓ Step Result: {result_str}")
-                    print("\n--- End Steps ---\n")
-                    tool_calls_found = True
-                
-                # If no tool calls found, print debug info (can be removed later)
-                if not tool_calls_found and hasattr(result, '__dict__'):
-                    # Debug: print available attributes
-                    attrs = [attr for attr in dir(result) if not attr.startswith('_')]
-                    if 'all_messages' not in attrs and 'tool_calls' not in attrs:
-                        # Only print debug if we really can't find tool calls
-                        pass  # Comment out this pass to enable debug mode
-                        # print(f"\n[Debug] Result attributes: {', '.join(attrs)}")
+                    for msg in messages:
+                        if hasattr(msg, 'role'):
+                            if msg.role == 'tool_call':
+                                print(f"  🔧 Tool Call: {msg.name}")
+                                if hasattr(msg, 'args') and msg.args:
+                                    print(f"     Args: {json.dumps(msg.args, indent=6, ensure_ascii=False)}")
+                            elif msg.role == 'tool_return':
+                                content = str(msg.content)
+                                if len(content) > 500:
+                                    content = content[:500] + "..."
+                                print(f"  ✓ Tool Return ({msg.name}): {content}")
+                    print("--- End Tool Calls & Results ---\n")
                 
                 print(f"\nAgent: {result.output}\n")
             except KeyboardInterrupt:
