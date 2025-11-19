@@ -16,7 +16,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI
 from anp.fastanp import FastANP
 from openai import OpenAI
 from typing import Optional
@@ -26,19 +25,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Minimal ANP Server",
-    description="A minimal ANP server example",
-    version="1.0.0"
-)
-
-# Paths to DID documents (assuming they exist in docs/did_public)
-did_doc_path = project_root / "docs" / "did_public" / "public-did-doc.json"
-
 # Initialize FastANP plugin (without auth for simplicity)
 anp = FastANP(
-    app=app,
     name="Minimal ANP Server",
     description="A minimal ANP server with calculator, hello JSON, and DeepSeek API",
     agent_domain="http://localhost:8000",
@@ -56,7 +44,7 @@ if os.getenv("DEEPSEEK_API_KEY"):
 
 
 # Define ad.json route
-@app.get("/ad.json", tags=["agent"])
+@anp.information("/ad.json", type="AgentDescription", description="Agent Description", tags=["agent"])
 def get_agent_description():
     """Get Agent Description."""
     ad = anp.get_common_header(agent_description_path="/ad.json")
@@ -67,14 +55,8 @@ def get_agent_description():
         anp.interfaces[call_openai].link_summary,
     ]
     
-    # Add Information endpoint
-    ad["Infomations"] = [
-        {
-            "type": "Information",
-            "description": "Hello message",
-            "url": f"{anp.base_url}/info/hello.json"
-        }
-    ]
+    # Add Information endpoints (automatically includes all registered information, excluding ad.json)
+    ad["Infomations"] = anp.get_information_list(exclude_paths=["/ad.json"])
     
     return ad
 
@@ -100,7 +82,12 @@ def calculate(expression: str) -> dict:
 
 
 # 2. JSON endpoint that returns "hello"
-@app.get("/info/hello.json", tags=["information"])
+@anp.information(
+    "/info/hello.json",
+    type="Information",
+    description="Hello message",
+    tags=["information"]
+)
 def get_hello():
     """Return a hello message as JSON."""
     return {"message": "hello"}
@@ -174,7 +161,7 @@ def main():
         print("  ⚠ DeepSeek client not initialized (set DEEPSEEK_API_KEY)")
     print("=" * 60)
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(anp.app, host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":

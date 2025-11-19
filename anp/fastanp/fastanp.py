@@ -5,8 +5,9 @@ A plugin-based framework for building ANP agents with FastAPI.
 FastAPI is the main framework, FastANP provides helper tools and automation.
 """
 
+import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -14,6 +15,7 @@ from fastapi.responses import JSONResponse
 from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 
 from .ad_generator import ADGenerator
+from .information import InformationManager
 from .interface_manager import InterfaceManager, InterfaceProxy
 from .middleware import create_auth_middleware
 from .utils import normalize_agent_domain
@@ -31,7 +33,6 @@ class FastANP:
     
     def __init__(
         self,
-        app: FastAPI,
         name: str,
         description: str,
         did: str,
@@ -43,13 +44,15 @@ class FastANP:
         enable_auth_middleware: bool = True,
         auth_config: Optional[DidWbaVerifierConfig] = None,
         api_version: str = "1.0.0",
+        app: Optional[FastAPI] = None,
         **kwargs
     ):
         """
         Initialize FastANP plugin.
 
         Args:
-            app: FastAPI application instance
+            app: Optional FastAPI application instance. If omitted, FastANP will
+                create one automatically using the provided metadata.
             name: Agent name
             description: Agent description
             agent_domain: Agent domain (e.g., "https://example.com")
@@ -63,7 +66,12 @@ class FastANP:
             api_version: API version
             **kwargs: Additional arguments
         """
-        self.app = app
+        # Allow FastANP to create FastAPI app automatically when not provided
+        self.app = app or FastAPI(
+            title=name,
+            description=description,
+            version=api_version
+        )
         self.name = name
         self.description = description
 
@@ -95,6 +103,9 @@ class FastANP:
             api_version=api_version,
             api_description=jsonrpc_server_description or description
         )
+        
+        # Initialize Information manager
+        self.information_manager = InformationManager()
 
         # Initialize authentication middleware
         self.auth_middleware = None
@@ -165,6 +176,39 @@ class FastANP:
             require_auth=self.require_auth
         )
     
+    def get_information_list(self, exclude_paths: Optional[List[str]] = None) -> List[Dict[str, str]]:
+        """
+        Get list of all Information items for ad.json.
+        
+        Uses InformationManager.get_information_list() to retrieve all
+        registered information items (both static and dynamic).
+        
+        Args:
+            exclude_paths: Optional list of paths to exclude (e.g., ["/ad.json"])
+        
+        Returns:
+            List of information item dictionaries with type, description, and url
+            
+        Example:
+            @app.get("/ad.json")
+            def get_ad():
+                ad = anp.get_common_header()
+                ad["Infomations"] = anp.get_information_list(exclude_paths=["/ad.json"])
+                ad["interfaces"] = [anp.interfaces[my_func].link_summary]
+                return ad
+        """
+        all_items = self.information_manager.get_information_list(self.base_url)
+        
+        if exclude_paths:
+            # Filter out excluded paths
+            exclude_paths_set = {path if path.startswith('/') else f'/{path}' for path in exclude_paths}
+            all_items = [
+                item for item in all_items
+                if not any(item['url'].endswith(path) for path in exclude_paths_set)
+            ]
+        
+        return all_items
+    
     def interface(
         self,
         path: str,
@@ -207,6 +251,82 @@ class FastANP:
                 return JSONResponse(content=proxy.openrpc_doc)
             
             logger.info(f"Registered OpenRPC document endpoint: GET {path}")
+            
+            return func
+        
+        return decorator
+    
+    def information(
+        self,
+        path: str,
+        type: str = "Information",
+        description: Optional[str] = None,
+        **kwargs
+    ) -> Callable:
+        """
+        Decorator to register an Information endpoint using InformationManager.
+        
+        Registers the route with FastAPI and adds it to InformationManager
+        for automatic inclusion in ad.json.
+        
+        Args:
+            path: URL path (e.g., "/info/hotel.json")
+            type: Information type (default: "Information")
+            description: Description (uses function docstring if not provided)
+            **kwargs: Additional keyword arguments passed to app.get()
+            
+        Returns:
+            Decorator function
+            
+        Example:
+            @anp.information("/info/hello.json", description="Hello message")
+            def get_hello():
+                return {"message": "Hello!"}
+            
+            @anp.information("/info/rooms.json", type="Product", description="Room catalog")
+            def get_rooms():
+                return {"rooms": [...]}
+        """
+        def decorator(func: Callable) -> Callable:
+            # Extract description from docstring if not provided
+            desc = description or (func.__doc__ or "").strip().split('\n')[0] or f"Information at {path}"
+            
+            # Create handler that calls the function
+            async def async_handler():
+                if asyncio.iscoroutinefunction(func):
+                    content = await func()
+                else:
+                    content = func()
+                return JSONResponse(content=content)
+            
+            def sync_handler():
+                content = func()
+                return JSONResponse(content=content)
+            
+            # Determine if function is async and create appropriate handler
+            handler = async_handler if asyncio.iscoroutinefunction(func) else sync_handler
+            
+            # Register route with FastAPI
+            self.app.add_api_route(
+                path,
+                handler,
+                methods=["GET"],
+                tags=kwargs.get("tags", ["information"]),
+                summary=desc,
+                **{k: v for k, v in kwargs.items() if k != "tags"}
+            )
+            
+            # Add to InformationManager for ad.json inclusion
+            # For dynamic content from functions, we store None as content
+            # The route handler will call the function when accessed
+            self.information_manager.add_dynamic(
+                type=type,
+                description=desc,
+                path=path,
+                content=None  # Content comes from function call
+            )
+            
+            logger.info(f"Registered Information endpoint: GET {path} (type: {type})")
             
             return func
         
