@@ -8,82 +8,80 @@ Core Components:
     - AP2Client: High-level client API for Travel Agents
 """
 
-# Agents
-from anp.ap2.shopper_agent import ShopperAgent
+# Agents (Stateless - no session management, no HTTP client)
+# These agents provide protocol-level operations only.
+# State management and HTTP requests are YOUR responsibility.
+# Convenience function modules (for explicit import)
+from anp.ap2 import cart_mandate, credential_mandate, payment_mandate
 from anp.ap2.merchant_agent import MerchantAgent
 
 # Models
 from anp.ap2.models import (
-    # Mandates
-    CartMandate,
-    PaymentMandate,
-    PaymentReceipt,
-    FulfillmentReceipt,
-
     # Content models
     CartContents,
-    PaymentMandateContents,
-    PaymentReceiptContents,
-    FulfillmentReceiptContents,
-
+    # Mandates
+    CartMandate,
     # Request/Response models
     CartMandateRequest,
     CartMandateRequestData,
-    PaymentMandateRequest,
-
-    # Payment models
-    PaymentRequest,
+    CartRequestItem,
+    DisplayItem,
+    FulfillmentItem,
+    FulfillmentReceipt,
+    FulfillmentReceiptContents,
+    MoneyAmount,
     PaymentDetails,
     PaymentDetailsTotal,
-    PaymentResponse,
-    MoneyAmount,
-    DisplayItem,
-    ShippingAddress,
+    PaymentMandate,
+    PaymentMandateContents,
+    PaymentMandateRequest,
     PaymentMethodData,
-    QRCodePaymentData,
-    PaymentRequestOptions,
-    FulfillmentItem,
-    ShippingInfo,
-    WebhookResponse,
-    CartRequestItem,
-
     # Enums
     PaymentProvider,
+    PaymentReceipt,
+    PaymentReceiptContents,
+    # Payment models
+    PaymentRequest,
+    PaymentRequestOptions,
+    PaymentResponse,
+    PaymentResponseDetails,
     PaymentStatus,
+    QRCodePaymentData,
+    ShippingAddress,
+    ShippingInfo,
+    WebhookResponse,
 )
+from anp.ap2.shopper_agent import ShopperAgent
 
-# Convenience function modules (for explicit import)
-from anp.ap2 import cart_mandate
-from anp.ap2 import payment_mandate
-from anp.ap2 import credential_mandate
+# Utility functions
+from anp.ap2.utils import compute_hash
 
 __all__ = [
     # Agents
     "ShopperAgent",
     "MerchantAgent",
-
     # Models
     "CartMandate",
     "PaymentMandate",
     "PaymentReceipt",
     "FulfillmentReceipt",
-
     # Content models
     "CartContents",
     "PaymentMandateContents",
     "PaymentReceiptContents",
     "FulfillmentReceiptContents",
-
     # Request/Response models
     "CartMandateRequest",
     "CartMandateRequestData",
+    "CartMandateResponse",
     "PaymentMandateRequest",
-
+    "PaymentMandateResponse",
     # Payment models
     "PaymentRequest",
     "PaymentDetails",
     "PaymentDetailsTotal",
     "PaymentResponse",
+    "PaymentResponseDetails",
     "MoneyAmount",
     "DisplayItem",
     "ShippingAddress",
@@ -94,13 +92,16 @@ __all__ = [
     "ShippingInfo",
     "WebhookResponse",
     "CartRequestItem",
-
     # Enums
     "PaymentProvider",
     "PaymentStatus",
-
     # Convenience function modules
     "cart_mandate",
     "payment_mandate",
     "credential_mandate",
+    # Utility functions
+    "compute_hash",
+    
+    # Optional modules
+    "fastapi_router",  # Optional FastAPI integration
 ]

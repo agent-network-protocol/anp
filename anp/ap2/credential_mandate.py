@@ -17,11 +17,7 @@ from anp.ap2.models import (
     PaymentReceipt,
     PaymentReceiptContents,
 )
-from anp.ap2.utils import JWTVerifier, compute_hash
-
-# =============================================================================
-# Building Functions - PaymentReceipt
-# =============================================================================
+from anp.ap2.utils import JWTVerifier, compute_hash, verify_jws_payload
 
 
 def build_payment_receipt(
@@ -71,6 +67,9 @@ def build_payment_receipt(
         ...     merchant_kid="merchant-key-001"
         ... )
     """
+    if not isinstance(contents, PaymentReceiptContents):
+        raise TypeError("contents must be a PaymentReceiptContents instance")
+
     # Generate credential ID and timestamp
     credential_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -121,11 +120,6 @@ def build_payment_receipt(
     )
 
 
-# =============================================================================
-# Building Functions - FulfillmentReceipt
-# =============================================================================
-
-
 def build_fulfillment_receipt(
     contents: FulfillmentReceiptContents,
     pmt_hash: str,
@@ -169,6 +163,9 @@ def build_fulfillment_receipt(
         ...     merchant_kid="merchant-key-001"
         ... )
     """
+    if not isinstance(contents, FulfillmentReceiptContents):
+        raise TypeError("contents must be a FulfillmentReceiptContents instance")
+
     # Generate credential ID and timestamp
     credential_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -268,8 +265,11 @@ class CredentialValidator:
             raise TypeError(f"Unsupported credential type: {type(credential).__name__}")
 
         # 2. Verify the merchant's JWS
-        payload = self.jwt_verifier.verify(
-            credential.merchant_authorization, expected_audience=expected_shopper_did
+        payload = verify_jws_payload(
+            token=credential.merchant_authorization,
+            public_key=self.jwt_verifier.public_key,
+            algorithm=self.jwt_verifier.algorithm,
+            expected_audience=expected_shopper_did,
         )
 
         # 3. Verify the credential type from the payload
@@ -290,7 +290,7 @@ class CredentialValidator:
         # 5. Compute and return the hash for this credential
         contents_dict = credential.contents.model_dump(exclude_none=True)
         computed_cred_hash = compute_hash(contents_dict)
-        
+
         # 6. Verify cred_hash in JWT payload
         cred_hash_in_token = payload.get("cred_hash")
         if cred_hash_in_token != computed_cred_hash:

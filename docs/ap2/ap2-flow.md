@@ -73,28 +73,20 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 
 **方向**：MA → TA
 
-**完整消息结构**（包含 ANP 消息头）：
+**数据结构**：
 
 ```json
 {
   "contents": {
     "id": "cart_shoes_123",
     "user_signature_required": false,
+    "timestamp": "2025-01-17T09:00:00Z",
     "payment_request": {
       "method_data": [
         {
           "supported_methods": "QR_CODE",
           "data": {
             "channel": "ALIPAY",
-            "qr_url": "https://pay.example.com/qrcode/abc123",
-            "out_trade_no": "order_20250117_123456",
-            "expires_at": "2025-01-17T09:15:00Z"
-          }
-        },
-        {
-          "supported_methods": "QR_CODE",
-          "data": {
-            "channel": "WECHAT",
             "qr_url": "https://pay.example.com/qrcode/abc123",
             "out_trade_no": "order_20250117_123456",
             "expires_at": "2025-01-17T09:15:00Z"
@@ -122,12 +114,12 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
           }
         ],
         "shipping_address": {
-            "recipient_name": "张三",
-            "phone": "13800138000",
-            "region": "北京市",
-            "city": "北京市",
-            "address_line": "朝阳区某某街道123号",
-            "postal_code": "100000"
+          "recipient_name": "张三",
+          "phone": "13800138000",
+          "region": "北京市",
+          "city": "北京市",
+          "address_line": "朝阳区某某街道123号",
+          "postal_code": "100000"
         },
         "shipping_options": null,
         "modifiers": null,
@@ -149,15 +141,21 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
       }
     }
   },
-  "merchant_authorization": "sig_merchant_shoes_abc1",  # 代码中已经更改为merchant_authorization
-  "timestamp": "2025-08-26T19:36:36.377022Z"
+  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
+**字段说明**：
+- `contents`: CartContents 对象，包含购物车完整信息
+  - `id`: 购物车唯一标识符
+  - `user_signature_required`: 是否需要用户签名（通常为 false）
+  - `timestamp`: ISO-8601 格式的时间戳
+  - `payment_request`: 支付请求详情，包含 method_data、details、options
+- `merchant_authorization`: JWS 格式的商户授权签名（详见下节）
+
 **关键点**：
-- `contents` 包含购物车内容、支付请求和二维码信息
-- `merchant_authorization` 是对 `cart_hash` 的 JWS 签名（RS256 或 ES256K）
-- `cart_hash = b64url(sha256(JCS(contents)))`
+- `merchant_authorization` 是对整个 `contents` 的 JWS 签名（RS256 或 ES256K）
+- `cart_hash = b64url(sha256(JCS(contents)))`，cart_hash 包含在 JWT payload 中
 
 
 以下是你可直接纳入《ANP-AP2 最小实现规范（M1）》中的 **正式版本段落**，用于指导开发者实现 `merchant_authorization` 字段的签名与验签逻辑。语法、格式、字段含义及流程均已对齐最新规范。
@@ -205,17 +203,27 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 
 ### Payload 格式
 
+**基础实现（必需字段）**：
+
 ```json
 {
   "iss": "did:wba:a.com:MA",             // 签发者（商户智能体 DID）
   "sub": "did:wba:a.com:MA",             // 主体（可与 iss 相同）
   "aud": "did:wba:a.com:TA",             // 受众（交易智能体或支付处理方）
-  "iat": 1730000000,               // 签发时间（秒）
-  "exp": 1730000900,               // 过期时间（建议 180天）
-  "jti": "uuid",                   // 全局唯一标识符（防重放攻击）
-  "cart_hash": "<b64url>",         // 对 CartMandate.contents 的哈希（见下节）
-  "cnf": { "kid": "did:wba:a.com:TA#keys-1" },  // （推荐）持有者绑定信息，kid是did文档中的key对应的ID。
-  "sd_hash": "<b64url, optional>", // （可选）SD-JWT / VC 哈希指针占位
+  "iat": 1730000000,                     // 签发时间（秒）
+  "exp": 1730000900,                     // 过期时间（建议 15 分钟，即 900 秒）
+  "jti": "uuid",                         // 全局唯一标识符（防重放攻击）
+  "cart_hash": "<b64url>"                // 对 CartMandate.contents 的哈希（见下节）
+}
+```
+
+**可选扩展字段**（当前基础实现未包含，保留用于未来扩展）：
+
+```json
+{
+  "cnf": { "kid": "did:wba:a.com:TA#keys-1" },  // 持有者绑定信息
+  "sd_hash": "<b64url>",                         // SD-JWT / VC 哈希指针
+  "extensions": ["anp.ap2.qr.v1"]                // 协议扩展标识
 }
 ```
 
@@ -235,11 +243,11 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
 ### 签名生成流程（商户端 MA）
 
-1. 计算 `cart_hash`。
-2. 构造 JWT Payload（含 `iss/sub/aud/iat/exp/jti/cart_hash/cnf/sd_hash/extensions`）。
-3. 构造 Header（`alg=RS256` 或 `alg=ES256K`, `kid=<商户公钥标识>`）。
-4. 用商户私钥对 payload 进行签名，生成紧凑 JWS。
-5. 将生成的 JWS 作为 `merchant_authorization` 写入 `CartMandate` 对象。
+1. 计算 `cart_hash`：对 `CartMandate.contents` 执行 JCS 规范化后进行 SHA-256 哈希
+2. 构造 JWT Payload（必需字段：`iss/sub/aud/iat/exp/jti/cart_hash`）
+3. 构造 JWT Header（`alg=RS256` 或 `alg=ES256K`, `kid=<商户公钥标识>`, `typ=JWT`）
+4. 用商户私钥对 Header 和 Payload 进行签名，生成紧凑 JWS（`header.payload.signature`）
+5. 将生成的 JWS 作为 `merchant_authorization` 写入 `CartMandate` 对象
 
 ---
 
@@ -268,39 +276,56 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
 ### 参考实现（Python / PyJWT）
 
+**基础实现**（与 `/anp/ap2/cart_mandate.py` 一致）：
+
 ```python
 import json, base64, hashlib, uuid, time
 import jwt  # pip install pyjwt
 
 def jcs_canonicalize(obj):
+    """JSON Canonicalization Scheme (RFC 8785)"""
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 def b64url_no_pad(b: bytes) -> str:
+    """Base64URL encode without padding"""
     return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
 
-def compute_cart_hash(contents: dict) -> str:
+def compute_hash(contents: dict) -> str:
+    """Compute hash of contents using JCS + SHA-256"""
     canon = jcs_canonicalize(contents)
     digest = hashlib.sha256(canon.encode("utf-8")).digest()
     return b64url_no_pad(digest)
 
-def sign_merchant_authorization(contents: dict, ma_private_pem: str, kid: str,
-                                iss: str, aud: str, cnf: dict = None,
-                                sd_hash: str = None, ttl_seconds: int = 900) -> str:
+def sign_merchant_authorization(
+    contents: dict,
+    merchant_private_key: str,
+    merchant_did: str,
+    merchant_kid: str,
+    shopper_did: str,
+    algorithm: str = "RS256",
+    ttl_seconds: int = 900
+) -> str:
+    """Sign CartMandate contents with merchant authorization"""
+    cart_hash = compute_hash(contents)
     now = int(time.time())
+    
     payload = {
-        "iss": iss,
-        "sub": iss,
-        "aud": aud,
+        "iss": merchant_did,
+        "sub": merchant_did,
+        "aud": shopper_did,
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": str(uuid.uuid4()),
-        "cart_hash": compute_cart_hash(contents),
-        "extensions": ["anp.ap2.qr.v1","anp.human_presence.v1"]
+        "cart_hash": cart_hash
     }
-    if cnf: payload["cnf"] = cnf
-    if sd_hash: payload["sd_hash"] = sd_hash
-    headers = {"alg": "RS256", "kid": kid, "typ": "JWT"}
-    return jwt.encode(payload, ma_private_pem, algorithm="RS256", headers=headers)
+    
+    headers = {
+        "alg": algorithm,
+        "kid": merchant_kid,
+        "typ": "JWT"
+    }
+    
+    return jwt.encode(payload, merchant_private_key, algorithm=algorithm, headers=headers)
 ```
 
 ---
@@ -310,7 +335,7 @@ def sign_merchant_authorization(contents: dict, ma_private_pem: str, kid: str,
 | 校验项    | 要求                                        |
 | ------ | ----------------------------------------- |
 | 签名算法   | RS256 或 ES256K（需与 Header.alg 一致） |
-| 时间窗    | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟             |
+| 时间窗    | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟             |jti
 | 重放防护   | `jti` 全局唯一                                |
 | 签发者与受众 | `iss=MA`，`aud=TA`（或 MPP）                  |
 | 数据一致性  | `payload.cart_hash == computed_cart_hash` |
@@ -335,62 +360,251 @@ def sign_merchant_authorization(contents: dict, ma_private_pem: str, kid: str,
 
 ## 2. PaymentMandate（支付授权）
 
+**方向**：TA → MA
+
+**数据结构**：
+
 ```json
 {
   "payment_mandate_contents": {
     "payment_mandate_id": "pm_12345",
     "payment_details_id": "order_shoes_123",
     "payment_details_total": {
-        "label": "Total",
-        "amount": {
-            "currency": "CNY",
-            "value": 120.0
-        },
-        "pending": null,
-        "refund_period": 30
+      "label": "Total",
+      "amount": {
+        "currency": "CNY",
+        "value": 120.0
+      },
+      "pending": null,
+      "refund_period": 30
     },
     "payment_response": {
-        "request_id": "order_shoes_123",
-        "method_name": "QR_CODE",
-        "details": {
-            "channel": "ALIPAY",
-            "out_trade_no": "order_20250117_123456",
-        },
-        "shipping_address": null,
-        "shipping_option": null,
-        "payer_name": null,
-        "payer_email": null,
-        "payer_phone": null
+      "request_id": "order_shoes_123",
+      "method_name": "QR_CODE",
+      "details": {
+        "channel": "ALIPAY",
+        "out_trade_no": "order_20250117_123456"
+      },
+      "shipping_address": null,
+      "shipping_option": null,
+      "payer_name": null,
+      "payer_email": null,
+      "payer_phone": null
     },
     "merchant_agent": "MerchantAgent",
-    "timestamp": "2025-08-26T19:36:36.377022Z"
+    "timestamp": "2025-01-17T09:05:00Z",
+    "prev_hash": "abc123def456..."
   },
   "user_authorization": "eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6ZXhhbXBsZ..."
 }
 ```
 
-字段说明：
-- payment_details_id：cart mandate中Payment request的detail的ID
+**字段说明**：
+- `payment_mandate_contents`: PaymentMandateContents 对象
+  - `payment_mandate_id`: 支付授权唯一标识符
+  - `payment_details_id`: 对应 CartMandate 中 payment_request.details.id
+  - `payment_details_total`: 支付总金额及退款期限
+  - `payment_response`: 支付响应详情（支付方式、渠道等）
+  - `merchant_agent`: 商户代理标识
+  - `timestamp`: ISO-8601 格式的时间戳
+  - `prev_hash`: **前序哈希指针，指向 CartMandate 的 cart_hash**（哈希链关键）
+- `user_authorization`: JWS 格式的用户授权签名（详见下节）
 
 
 ### user_authorization(用户授权)
 
-user_authorization的生成方式参考： [## Merchant Authorization（商户授权凭证）](#merchant-authorization商户授权凭证)
+user_authorization 是用户/购物者对支付内容的授权签名，采用与 merchant_authorization 相同的 JWS 格式。
 
-不同点：使用transaction_data代替cart_hash，transaction_data包含cart_hash和pmt_hash。
+**Header 格式**：
 
 ```json
-"transaction_data": [
-    "<cart_hash>",                            // b64url(sha256(JCS(CartMandate.contents)))
-    "<pmt_hash>"                              // b64url(sha256(JCS(PaymentMandate.contents_wo_sig)))
-  ],
+{
+  "alg": "RS256",
+  "kid": "Shopper-key-001",
+  "typ": "JWT"
+}
 ```
 
-pmt_hash的生成方式参考cart_hash的生成方式：
+或：
+
+```json
+{
+  "alg": "ES256K",
+  "kid": "Shopper-es256k-key-001",
+  "typ": "JWT"
+}
+```
+
+**Payload 格式**：
+
+```json
+{
+  "iss": "did:wba:a.com:TA",              // 签发者（购物者智能体 DID）
+  "sub": "did:wba:a.com:TA",              // 主体（可与 iss 相同）
+  "aud": "did:wba:a.com:MA",              // 受众（商户智能体）
+  "iat": 1730000000,                      // 签发时间（秒）
+  "exp": 1730000900,                      // 过期时间（建议 180天）
+  "jti": "uuid",                          // 全局唯一标识符（防重放攻击）
+  "pmt_hash": "<b64url>"                  // 对 PaymentMandateContents 的哈希
+}
+```
+
+**pmt_hash 计算规则**：
 
 ```text
-pmt_hash = Base64URL( SHA-256( JCS(PaymentMandate.contents) ) )
+pmt_hash = Base64URL( SHA-256( JCS(PaymentMandateContents) ) )
 ```
+
+**哈希链维护**：
+
+PaymentMandateContents 中包含 `prev_hash` 字段，指向前序 CartMandate 的 cart_hash，从而形成哈希链：
+
+```
+CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash)
+```
+
+---
+
+## 3. PaymentReceipt（支付凭证）
+
+**方向**：MA → TA（通过 Webhook）
+
+**数据结构**：
+
+```json
+{
+  "credential_type": "PaymentReceipt",
+  "version": 1,
+  "id": "receipt_uuid_123",
+  "timestamp": "2025-01-17T09:10:00Z",
+  "contents": {
+    "payment_mandate_id": "pm_12345",
+    "provider": "ALIPAY",
+    "status": "SUCCEEDED",
+    "transaction_id": "alipay_txn_789",
+    "out_trade_no": "order_20250117_123456",
+    "paid_at": "2025-01-17T09:08:30Z",
+    "amount": {
+      "currency": "CNY",
+      "value": 120.0
+    },
+    "timestamp": "2025-01-17T09:10:00Z",
+    "prev_hash": "def456ghi789..."
+  },
+  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**字段说明**：
+- `credential_type`: 固定值 "PaymentReceipt"
+- `version`: 凭证版本号，当前为 1
+- `id`: 凭证唯一标识符（UUID）
+- `timestamp`: 凭证签发时间（ISO-8601）
+- `contents`: PaymentReceiptContents 对象
+  - `payment_mandate_id`: 对应的 PaymentMandate ID
+  - `provider`: 支付提供商（ALIPAY | WECHAT）
+  - `status`: 支付状态（SUCCEEDED | FAILED | PENDING | TIMEOUT）
+  - `transaction_id`: 支付提供商的交易 ID
+  - `out_trade_no`: 外部交易号
+  - `paid_at`: 支付完成时间（ISO-8601）
+  - `amount`: 支付金额
+  - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
+  - `prev_hash`: **前序哈希指针，指向 PaymentMandate 的 pmt_hash**
+- `merchant_authorization`: JWS 格式的商户授权签名
+
+**merchant_authorization Payload**：
+
+```json
+{
+  "iss": "did:wba:a.com:MA",
+  "sub": "did:wba:a.com:MA",
+  "aud": "did:wba:a.com:TA",
+  "iat": 1730000000,
+  "exp": 1730000900,
+  "jti": "receipt_uuid_123",
+  "credential_type": "PaymentReceipt",
+  "cred_hash": "<b64url(sha256(JCS(contents)))>"
+}
+```
+
+**哈希链扩展**：
+
+```
+CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → PaymentReceipt(cred_hash, prev_hash=pmt_hash)
+```
+
+---
+
+## 4. FulfillmentReceipt（履约凭证）
+
+**方向**：MA → TA（通过 Webhook）
+
+**数据结构**：
+
+```json
+{
+  "credential_type": "FulfillmentReceipt",
+  "version": 1,
+  "id": "fulfillment_uuid_456",
+  "timestamp": "2025-01-18T10:00:00Z",
+  "contents": {
+    "order_id": "order_shoes_123",
+    "items": [
+      {
+        "id": "sku-id-123",
+        "quantity": 1
+      }
+    ],
+    "fulfilled_at": "2025-01-18T09:45:00Z",
+    "shipping": {
+      "carrier": "顺丰速运",
+      "tracking_number": "SF1234567890",
+      "delivered_eta": "2025-01-20T18:00:00Z"
+    },
+    "timestamp": "2025-01-18T10:00:00Z",
+    "prev_hash": "ghi789jkl012...",
+    "metadata": {
+      "warehouse": "Beijing-001",
+      "notes": "已发货，请注意查收"
+    }
+  },
+  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**字段说明**：
+- `credential_type`: 固定值 "FulfillmentReceipt"
+- `version`: 凭证版本号，当前为 1
+- `id`: 凭证唯一标识符（UUID）
+- `timestamp`: 凭证签发时间（ISO-8601）
+- `contents`: FulfillmentReceiptContents 对象
+  - `order_id`: 订单 ID
+  - `items`: 履约商品列表
+  - `fulfilled_at`: 履约完成时间（ISO-8601）
+  - `shipping`: 物流信息（可选）
+  - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
+  - `prev_hash`: **前序哈希指针，指向 PaymentMandate 的 pmt_hash**
+  - `metadata`: 业务特定的履约数据（可选）
+- `merchant_authorization`: JWS 格式的商户授权签名
+
+**merchant_authorization Payload**：
+
+```json
+{
+  "iss": "did:wba:a.com:MA",
+  "sub": "did:wba:a.com:MA",
+  "aud": "did:wba:a.com:TA",
+  "iat": 1730000000,
+  "exp": 1730000900,
+  "jti": "fulfillment_uuid_456",
+  "credential_type": "FulfillmentReceipt",
+  "cred_hash": "<b64url(sha256(JCS(contents)))>"
+}
+```
+
+**注意**：PaymentReceipt 和 FulfillmentReceipt 的 `prev_hash` 都指向同一个 PaymentMandate 的 pmt_hash，形成分支哈希链。
+
+---
 
 # 消息定义
 
@@ -513,11 +727,8 @@ pmt_hash = Base64URL( SHA-256( JCS(PaymentMandate.contents) ) )
 
 **请求消息结构**：
 
-payment_mandate的定义参考上面。
-
 ```json
 {
-
   "messageId": "payment-mandate-001",
   "from": "did:wba:a.com:shopper",
   "to": "did:wba:a.com:merchant",
@@ -548,18 +759,50 @@ payment_mandate的定义参考上面。
         "payer_phone": null
       },
       "merchant_agent": "MerchantAgent",
-      "timestamp": "2025-01-17T09:05:00Z"
+      "timestamp": "2025-01-17T09:05:00Z",
+      "prev_hash": "abc123def456..."
     },
     "user_authorization": "eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6ZXhhbXBsZ..."
   }
 }
 ```
 
+**关键点**：
+- `payment_mandate_contents.prev_hash` 必须指向前序 CartMandate 的 cart_hash
+- `user_authorization` 包含对整个 `payment_mandate_contents` 的签名
+
 
 ## 消息流转顺序
 
-1. **TA 请求** → MA：`create_cart_mandate`（不在三个核心消息中，但触发购物车创建）
-2. **MA 返回（在http响应中）** → TA：`CartMandate`（购物车授权 + 二维码）
-3. **TA 返回** → MA：`PaymentMandate`（支付授权）
+完整的 AP2 交易流程包含以下步骤：
 
+1. **TA 请求** → MA：`create_cart_mandate`
+   - TA 发送购物车请求，包含商品信息和配送地址
+   
+2. **MA 响应** → TA：`CartMandate`
+   - MA 返回签名的购物车授权，包含支付二维码
+   - 包含 `merchant_authorization` 签名
+   
+3. **TA 发送** → MA：`PaymentMandate`
+   - 用户完成支付后，TA 发送支付授权
+   - 包含 `user_authorization` 签名和 `prev_hash` 指向 CartMandate
+   
+4. **MA 推送** → TA：`PaymentReceipt`（通过 Webhook）
+   - MA 确认支付成功后，推送支付凭证
+   - 包含支付提供商的交易信息和 `prev_hash` 指向 PaymentMandate
+   
+5. **MA 推送** → TA：`FulfillmentReceipt`（通过 Webhook，可选）
+   - MA 完成订单履约后，推送履约凭证
+   - 包含物流信息和 `prev_hash` 指向 PaymentMandate
+
+**哈希链完整视图**：
+
+```
+CartMandate(cart_hash)
+    ↓
+PaymentMandate(pmt_hash, prev_hash=cart_hash)
+    ↓
+    ├─→ PaymentReceipt(cred_hash, prev_hash=pmt_hash)
+    └─→ FulfillmentReceipt(cred_hash, prev_hash=pmt_hash)
+```
 

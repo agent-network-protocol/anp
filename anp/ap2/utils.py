@@ -108,9 +108,27 @@ class JWTVerifier:
         return jwt.decode(token, self.public_key, **decode_kwargs)
 
 
+def verify_jws_payload(
+    token: str,
+    public_key: str,
+    algorithm: str = "RS256",
+    expected_audience: Optional[str] = None,
+    verify_time: bool = True,
+) -> Dict:
+    """Convenience helper that verifies a JWS and returns its payload."""
+
+    verifier = JWTVerifier(public_key=public_key, algorithm=algorithm)
+    return verifier.verify(
+        token=token,
+        expected_audience=expected_audience,
+        verify_time=verify_time,
+    )
+
+
 __all__ = [
     "jcs_canonicalize",
     "b64url_no_pad",
     "compute_hash",
     "JWTVerifier",
+    "verify_jws_payload",
 ]

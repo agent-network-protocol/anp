@@ -15,7 +15,6 @@ import aiohttp
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger(__name__)
 
 from anp.ap2 import payment_mandate
 from anp.ap2.cart_mandate import CartMandateValidator
@@ -30,6 +29,7 @@ from anp.ap2.models import (
 from anp.ap2.utils import JWTVerifier
 from anp.authentication import DIDWbaAuthHeader
 
+logger = logging.getLogger(__name__)
 
 class ShopperAgent:
     """AP2 Shopper Agent (Travel Agent/Client).
@@ -186,11 +186,10 @@ class ShopperAgent:
                     merchant_authorization=data["merchant_authorization"],
                 )
 
-                # Verify CartMandate if merchant public key is available
-                if self.merchant_public_key:
-                    payload, verified_cart_hash = cart_mandate.verify_cart_mandate(
+                # Verify CartMandate if validator is configured
+                if self.cart_validator:
+                    _, verified_cart_hash = self.cart_validator.validate(
                         cart_mandate=cart_mandate_obj,
-                        merchant_public_key=self.merchant_public_key,
                         expected_shopper_did=self.shopper_did,
                     )
                     self.cart_hash = verified_cart_hash
@@ -447,7 +446,7 @@ class ShopperAgent:
                     )
 
                 logger.debug("Validating credential signature and hash chain")
-                
+
                 # Validate will raise ValueError if verification fails
                 payload = self.credential_validator.validate(
                     credential=credential,
@@ -458,8 +457,10 @@ class ShopperAgent:
 
                 # Verification successful - extract verified data
                 verified_cred_hash = payload.get("cred_hash")
-                logger.info(f"Credential verified successfully: cred_hash={verified_cred_hash[:16]}...")
-                
+                logger.info(
+                    f"Credential verified successfully: cred_hash={verified_cred_hash[:16]}..."
+                )
+
                 # Call callback if set
                 if self.credential_callback:
                     logger.debug("Calling credential callback")
@@ -485,7 +486,9 @@ class ShopperAgent:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Internal error processing credential: {str(e)}", exc_info=True)
+                logger.error(
+                    f"Internal error processing credential: {str(e)}", exc_info=True
+                )
                 raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
         return router

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum, StrEnum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MoneyAmount(BaseModel):
@@ -38,10 +38,10 @@ class ShippingAddress(BaseModel):
 
     recipient_name: str = Field(..., description="Recipient name")
     phone: str = Field(..., description="Contact phone")
-    region: str = Field(..., description="Province/Region")
-    city: str = Field(..., description="City")
-    address_line: str = Field(..., description="Detailed address")
-    postal_code: str = Field(..., description="Postal code")
+    region: str | None = Field(None, description="Province/Region")
+    city: str | None = Field(None, description="City")
+    address_line: str | None = Field(None, description="Detailed address")
+    postal_code: str | None = Field(None, description="Postal code")
 
 
 class PaymentDetailsTotal(BaseModel):
@@ -134,6 +134,15 @@ class CartMandate(BaseModel):
     )
 
 
+class PaymentResponseDetails(BaseModel):
+    """Payment response detail payload."""
+
+    model_config = ConfigDict(extra="allow")
+
+    channel: str = Field(..., description="Payment channel identifier")
+    out_trade_no: str = Field(..., description="External trade number")
+
+
 class PaymentResponse(BaseModel):
     """Payment response model."""
 
@@ -141,7 +150,9 @@ class PaymentResponse(BaseModel):
         ..., description="Request ID, corresponding to PaymentDetails.id"
     )
     method_name: str = Field(..., description="Payment method name, e.g., QR_CODE")
-    details: Dict[str, Any] = Field(..., description="Payment details")
+    details: PaymentResponseDetails = Field(
+        ..., description="Provider-specific payment response details"
+    )
     shipping_address: Optional[ShippingAddress] = Field(
         None, description="Shipping address"
     )
@@ -183,11 +194,7 @@ class PaymentMandate(BaseModel):
     )
     user_authorization: str = Field(
         ..., description="User authorization signature (JWS format)"
-    )  # ==============================================================================
-
-
-# Generic and Request-specific Models
-# ==============================================================================
+    )
 
 
 class ANPMessage(BaseModel):
@@ -225,6 +232,11 @@ class CartMandateRequestData(BaseModel):
     shipping_address: Optional[ShippingAddress] = Field(
         None, description="Optional shipping address for the cart"
     )
+    remark: Optional[str] = Field(None, description="Optional remark for the order")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Business-specific metadata for fulfillment (e.g., hotel booking info)",
+    )
 
 
 class CartMandateRequest(ANPMessage):
@@ -233,10 +245,22 @@ class CartMandateRequest(ANPMessage):
     data: CartMandateRequestData = Field(..., description="Cart mandate request data")
 
 
+class CartMandateResponse(ANPMessage):
+    """Full ANP message for a CartMandate response."""
+
+    data: CartMandate = Field(..., description="Cart mandate response data")
+
+
 class PaymentMandateRequest(ANPMessage):
     """Full ANP message for a PaymentMandate request."""
 
     data: PaymentMandate = Field(..., description="Payment mandate request data")
+
+
+class PaymentMandateResponse(ANPMessage):
+    """Full ANP message for a PaymentMandate response."""
+
+    data: Dict[str, Any] = Field(..., description="Payment mandate response data")
 
 
 # ==============================================================================
@@ -257,6 +281,7 @@ class PaymentStatus(str, Enum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     PENDING = "PENDING"
+    TIMEOUT = "TIMEOUT"
 
 
 class PaymentReceiptContents(BaseModel):
@@ -321,6 +346,10 @@ class FulfillmentReceiptContents(BaseModel):
     )
     prev_hash: Optional[str] = Field(
         None, description="Previous hash pointer (pmt_hash)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Business-specific fulfillment data (e.g., hotel order number, booking confirmation)",
     )
 
 

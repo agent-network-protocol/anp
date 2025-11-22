@@ -503,7 +503,7 @@ uv run pytest tests/test_ap2.py -v
 uv run pytest tests/test_ap2.py::TestCartMandate -v
 
 # 运行特定测试方法
-uv run pytest tests/test_ap2.py::TestCartMandate::test_build_cart_mandate_response -v
+uv run pytest tests/test_ap2.py::TestCartMandate::test_build_cart_mandate -v
 ```
 
 ## ES256K 算法支持
