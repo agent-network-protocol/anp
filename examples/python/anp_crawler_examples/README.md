@@ -19,7 +19,7 @@ This directory contains examples using ANPCrawler to access AMAP agent services.
 ### Environment Setup
 ```bash
 # Option 1: Install via pip
-pip install agent-connect
+pip install anp
 
 # Option 2: Source installation (recommended for developers)
 git clone https://github.com/agent-network-protocol/AgentConnect.git

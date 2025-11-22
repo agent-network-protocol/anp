@@ -19,7 +19,7 @@ This directory showcases how to build, validate, and verify `did:wba` identities
 ### Environment
 Install AgentConnect from PyPI or work from a local checkout:
 ```bash
-pip install agent-connect
+pip install anp
 # or
 uv venv .venv
 uv pip install --python .venv/bin/python --editable .
