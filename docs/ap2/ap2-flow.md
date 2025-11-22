@@ -4,7 +4,7 @@
 增加一个Protocol
 ```json
     {
-      "type": "NaturalLanguageInterface",
+      "type": "StructuredInterface",
       "protocol": "AP2/ANP",
       "version": "0.0.1",
       "url": "https://grand-hotel.com/api/ap2.json",
@@ -43,7 +43,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 
 ```json
     {
-      "type": "NaturalLanguageInterface",
+      "type": "StructuredInterface",
       "protocol": "AP2/ANP",
       "version": "0.0.1",
       "description": "An implementation of the AP2 protocol based on the ANP protocol, used for payment and transactions between agents."
@@ -91,6 +91,15 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
             "out_trade_no": "order_20250117_123456",
             "expires_at": "2025-01-17T09:15:00Z"
           }
+        },
+        {
+          "supported_methods": "QR_CODE",
+          "data": {
+            "channel": "WECHAT",
+            "qr_url": "https://pay.example.com/qrcode/abc123",
+            "out_trade_no": "order_20250117_123456",
+            "expires_at": "2025-01-17T09:15:00Z"
+          }
         }
       ],
       "details": {
@@ -98,7 +107,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
         "displayItems": [
           {
             "id": "sku-id-123",
-            "sku": "Nike-Air-Max-90",
             "label": "Nike Air Max 90",
             "quantity": 1,
             "options": {
@@ -157,8 +165,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 - `merchant_authorization` 是对整个 `contents` 的 JWS 签名（RS256 或 ES256K）
 - `cart_hash = b64url(sha256(JCS(contents)))`，cart_hash 包含在 JWT payload 中
 
-
-以下是你可直接纳入《ANP-AP2 最小实现规范（M1）》中的 **正式版本段落**，用于指导开发者实现 `merchant_authorization` 字段的签名与验签逻辑。语法、格式、字段含义及流程均已对齐最新规范。
 
 ---
 
@@ -308,7 +314,7 @@ def sign_merchant_authorization(
     """Sign CartMandate contents with merchant authorization"""
     cart_hash = compute_hash(contents)
     now = int(time.time())
-    
+
     payload = {
         "iss": merchant_did,
         "sub": merchant_did,
@@ -318,13 +324,13 @@ def sign_merchant_authorization(
         "jti": str(uuid.uuid4()),
         "cart_hash": cart_hash
     }
-    
+
     headers = {
         "alg": algorithm,
         "kid": merchant_kid,
         "typ": "JWT"
     }
-    
+
     return jwt.encode(payload, merchant_private_key, algorithm=algorithm, headers=headers)
 ```
 
@@ -332,15 +338,15 @@ def sign_merchant_authorization(
 
 ### 校验清单
 
-| 校验项    | 要求                                        |
-| ------ | ----------------------------------------- |
-| 签名算法   | RS256 或 ES256K（需与 Header.alg 一致） |
-| 时间窗    | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟             |jti
-| 重放防护   | `jti` 全局唯一                                |
-| 签发者与受众 | `iss=MA`，`aud=TA`（或 MPP）                  |
-| 数据一致性  | `payload.cart_hash == computed_cart_hash` |
-| DID 解析 | 通过 `kid` → DID 文档解析公钥                     |
-| 兼容扩展   | 支持解析 `cnf`、`sd_hash` 字段                   |
+| 校验项       | 要求                                      |
+|--------------|-------------------------------------------|
+| 签名算法     | RS256 或 ES256K（需与 Header.alg 一致）   |
+| 时间窗       | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟       | jti |
+| 重放防护     | `jti` 全局唯一                            |
+| 签发者与受众 | `iss=MA`，`aud=TA`（或 MPP）              |
+| 数据一致性   | `payload.cart_hash == computed_cart_hash` |
+| DID 解析     | 通过 `kid` → DID 文档解析公钥             |
+| 兼容扩展     | 支持解析 `cnf`、`sd_hash` 字段            |
 
 ---
 
@@ -393,7 +399,7 @@ def sign_merchant_authorization(
     },
     "merchant_agent": "MerchantAgent",
     "timestamp": "2025-01-17T09:05:00Z",
-    "prev_hash": "abc123def456..."
+    "cart_hash": "cart_hash"
   },
   "user_authorization": "eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6ZXhhbXBsZ..."
 }
@@ -407,7 +413,7 @@ def sign_merchant_authorization(
   - `payment_response`: 支付响应详情（支付方式、渠道等）
   - `merchant_agent`: 商户代理标识
   - `timestamp`: ISO-8601 格式的时间戳
-  - `prev_hash`: **前序哈希指针，指向 CartMandate 的 cart_hash**（哈希链关键）
+  - `cart_hash`: **前序 CartMandate 的哈希值**（哈希链关键）
 - `user_authorization`: JWS 格式的用户授权签名（详见下节）
 
 
@@ -457,11 +463,13 @@ pmt_hash = Base64URL( SHA-256( JCS(PaymentMandateContents) ) )
 
 **哈希链维护**：
 
-PaymentMandateContents 中包含 `prev_hash` 字段，指向前序 CartMandate 的 cart_hash，从而形成哈希链：
+PaymentMandateContents 包含前序 CartMandate 的 `cart_hash` 字段，从而形成哈希链：
 
 ```
-CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash)
+CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash)
 ```
+
+格式说明：对象名(前序哈希, 当前哈希)
 
 ---
 
@@ -489,7 +497,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash)
       "value": 120.0
     },
     "timestamp": "2025-01-17T09:10:00Z",
-    "prev_hash": "def456ghi789..."
+    "pmt_hash": "pmt_hash"
   },
   "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
@@ -509,7 +517,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash)
   - `paid_at`: 支付完成时间（ISO-8601）
   - `amount`: 支付金额
   - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
-  - `prev_hash`: **前序哈希指针，指向 PaymentMandate 的 pmt_hash**
+  - `pmt_hash`: **前序 PaymentMandate 的哈希值**
 - `merchant_authorization`: JWS 格式的商户授权签名
 
 **merchant_authorization Payload**：
@@ -530,7 +538,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash)
 **哈希链扩展**：
 
 ```
-CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → PaymentReceipt(cred_hash, prev_hash=pmt_hash)
+CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceipt(pmt_hash, cred_hash)
 ```
 
 ---
@@ -562,7 +570,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
       "delivered_eta": "2025-01-20T18:00:00Z"
     },
     "timestamp": "2025-01-18T10:00:00Z",
-    "prev_hash": "ghi789jkl012...",
+    "pmt_hash": "pmt_hash",
     "metadata": {
       "warehouse": "Beijing-001",
       "notes": "已发货，请注意查收"
@@ -583,7 +591,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
   - `fulfilled_at`: 履约完成时间（ISO-8601）
   - `shipping`: 物流信息（可选）
   - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
-  - `prev_hash`: **前序哈希指针，指向 PaymentMandate 的 pmt_hash**
+  - `pmt_hash`: **前序 PaymentMandate 的哈希值**
   - `metadata`: 业务特定的履约数据（可选）
 - `merchant_authorization`: JWS 格式的商户授权签名
 
@@ -602,7 +610,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
 }
 ```
 
-**注意**：PaymentReceipt 和 FulfillmentReceipt 的 `prev_hash` 都指向同一个 PaymentMandate 的 pmt_hash，形成分支哈希链。
+**注意**：PaymentReceipt 和 FulfillmentReceipt 都包含 `pmt_hash` 字段（指向同一个 PaymentMandate），形成分支哈希链。
 
 ---
 
@@ -626,7 +634,6 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
     "items": [
       {
         "id": "sku-id-123",
-        "sku": "Nike-Air-Max-90",
         "quantity": 1,
         "options": {
           "color": "red",
@@ -676,7 +683,6 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
           "displayItems": [
             {
               "id": "sku-id-123",
-              "sku": "Nike-Air-Max-90",
               "label": "Nike Air Max 90",
               "quantity": 1,
               "options": {
@@ -732,6 +738,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
   "messageId": "payment-mandate-001",
   "from": "did:wba:a.com:shopper",
   "to": "did:wba:a.com:merchant",
+  "mandate_webhook_url":"https://merchant.example.com/ap2/mandate",
   "data": {
     "payment_mandate_contents": {
       "payment_mandate_id": "pm_12345",
@@ -760,7 +767,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
       },
       "merchant_agent": "MerchantAgent",
       "timestamp": "2025-01-17T09:05:00Z",
-      "prev_hash": "abc123def456..."
+      "cart_hash": "cart_hash"
     },
     "user_authorization": "eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6ZXhhbXBsZ..."
   }
@@ -768,7 +775,7 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
 ```
 
 **关键点**：
-- `payment_mandate_contents.prev_hash` 必须指向前序 CartMandate 的 cart_hash
+- `payment_mandate_contents.cart_hash` 存储前序 CartMandate 的哈希值
 - `user_authorization` 包含对整个 `payment_mandate_contents` 的签名
 
 
@@ -778,31 +785,30 @@ CartMandate(cart_hash) → PaymentMandate(pmt_hash, prev_hash=cart_hash) → Pay
 
 1. **TA 请求** → MA：`create_cart_mandate`
    - TA 发送购物车请求，包含商品信息和配送地址
-   
+
 2. **MA 响应** → TA：`CartMandate`
    - MA 返回签名的购物车授权，包含支付二维码
    - 包含 `merchant_authorization` 签名
-   
+
 3. **TA 发送** → MA：`PaymentMandate`
    - 用户完成支付后，TA 发送支付授权
-   - 包含 `user_authorization` 签名和 `prev_hash` 指向 CartMandate
-   
+   - 包含 `user_authorization` 签名和 `cart_hash`（指向前序 CartMandate）
+
 4. **MA 推送** → TA：`PaymentReceipt`（通过 Webhook）
    - MA 确认支付成功后，推送支付凭证
-   - 包含支付提供商的交易信息和 `prev_hash` 指向 PaymentMandate
-   
+   - 包含支付提供商的交易信息和 `pmt_hash`（指向前序 PaymentMandate）
+
 5. **MA 推送** → TA：`FulfillmentReceipt`（通过 Webhook，可选）
    - MA 完成订单履约后，推送履约凭证
-   - 包含物流信息和 `prev_hash` 指向 PaymentMandate
+   - 包含物流信息和 `pmt_hash`（指向前序 PaymentMandate）
 
 **哈希链完整视图**：
 
 ```
 CartMandate(cart_hash)
     ↓
-PaymentMandate(pmt_hash, prev_hash=cart_hash)
+PaymentMandate(cart_hash,pmt_hash)
     ↓
-    ├─→ PaymentReceipt(cred_hash, prev_hash=pmt_hash)
-    └─→ FulfillmentReceipt(cred_hash, prev_hash=pmt_hash)
+    ├─→ PaymentReceipt(pmt_hash,cred_hash)
+    └─→ FulfillmentReceipt(pmt_hash,cred_hash)
 ```
-

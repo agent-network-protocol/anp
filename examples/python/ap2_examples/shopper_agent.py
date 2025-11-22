@@ -9,203 +9,115 @@ The Shopper Agent handles the client-side workflow:
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-
-from anp.ap2 import payment_mandate
-from anp.ap2.cart_mandate import CartMandateValidator
-from anp.ap2.credential_mandate import CredentialValidator
-from anp.ap2.models import (
+from anp.ap2 import (
     CartContents,
     CartMandate,
     FulfillmentReceipt,
+    MoneyAmount,
+    PaymentDetailsTotal,
     PaymentMandate,
+    PaymentMandateContents,
     PaymentReceipt,
+    PaymentResponse,
+    PaymentResponseDetails,
+    ShippingAddress,
 )
-from anp.ap2.utils import JWTVerifier
+from anp.ap2.cart_mandate import validate_cart_mandate
+from anp.ap2.credential_mandate import validate_credential
+from anp.ap2.payment_mandate import build_payment_mandate
+from anp.ap2.utils import compute_hash
 from anp.authentication import DIDWbaAuthHeader
 
 logger = logging.getLogger(__name__)
 
 class ShopperAgent:
-    """AP2 Shopper Agent (Travel Agent/Client).
+    """Stateless AP2 Shopper Agent.
 
-    Handles the complete client-side AP2 workflow:
-    - Request cart creation from merchant
-    - Verify received CartMandate from merchant
-    - Build and send PaymentMandate
-    - Store verified hashes for the credential chain
+    This agent provides protocol-level operations for a shopper, such as
+    building mandates and verifying credentials. It does not manage state
+    (like `cart_hash` or `pmt_hash`) or handle HTTP communication.
+
+    Design:
+    - Stateless: No instance variables for business data.
+    - Pure Methods: Methods are deterministic. Same input -> same output.
+    - Your Responsibility: State management, database/cache, and HTTP clients.
     """
 
     def __init__(
         self,
-        did_document_path: str,
-        private_key_path: str,
+        shopper_private_key: str,
         shopper_did: str,
         shopper_kid: str,
-        merchant_public_key: Optional[str] = None,
         algorithm: str = "RS256",
     ):
-        """Initialize the Shopper Agent.
+        """Initialize the stateless Shopper Agent.
 
         Args:
-            did_document_path: Path to the DID document
-            private_key_path: Path to the DID private key (for both DID auth and JWS signing)
-            shopper_did: Shopper's DID
-            shopper_kid: Shopper's key ID for JWS signing
-            merchant_public_key: Merchant's public key for verification (optional, can be set later)
-            algorithm: JWT algorithm (RS256 or ES256K)
+            shopper_private_key: Shopper's private key for JWS signing.
+            shopper_did: Shopper's DID.
+            shopper_kid: Shopper's key ID for JWS signing.
+            algorithm: JWS algorithm (e.g., "RS256").
         """
-        self.auth_header = DIDWbaAuthHeader(
-            did_document_path=did_document_path,
-            private_key_path=private_key_path,
-        )
+        self.shopper_private_key = shopper_private_key
         self.shopper_did = shopper_did
         self.shopper_kid = shopper_kid
         self.algorithm = algorithm
-
-        # Read private key for JWS signing
-        with open(private_key_path, "r") as f:
-            self.private_key = f.read()
-
-        # Setup cart mandate validator if merchant public key provided
-        self.cart_validator: Optional[CartMandateValidator] = None
-        self.credential_validator: Optional[CredentialValidator] = None
-        if merchant_public_key:
-            merchant_verifier = JWTVerifier(
-                public_key=merchant_public_key,
-                algorithm=algorithm,
-            )
-            self.cart_validator = CartMandateValidator(merchant_verifier)
-            self.credential_validator = CredentialValidator(merchant_verifier)
-
-        # Store verified hashes
         self.cart_hash: Optional[str] = None
         self.pmt_hash: Optional[str] = None
 
-        # Credential callback for webhook
-        self.credential_callback: Optional[Callable] = None
 
-    async def create_cart_mandate(
+
+    def verify_cart_mandate(
         self,
-        merchant_url: str,
-        merchant_did: str,
-        cart_mandate_id: str,
-        items: List[Dict[str, Any]],
-        shipping_address: Dict[str, str],
-        remark: Optional[str] = None,
-    ) -> CartMandate:
-        """Send a create_cart_mandate request to the merchant.
+        cart_mandate: CartMandate,
+        merchant_public_key: str,
+    ) -> dict[str, Any]:
+        """Verify a CartMandate received from a merchant (stateless).
+
+        This method verifies the merchant's signature on the CartMandate.
+        It returns the decoded payload and computed cart_hash for later chaining.
 
         Args:
-            merchant_url: Merchant API base URL (e.g., https://merchant.example.com)
-            merchant_did: Merchant DID
-            cart_mandate_id: Cart mandate ID
-            items: List of items, each containing id, sku, quantity, options, remark, etc.
-            shipping_address: Shipping address containing recipient_name, phone, region, city, address_line, postal_code
-            remark: Optional remark
+            cart_mandate: The CartMandate object to verify.
+            merchant_public_key: The merchant's public key for signature verification.
 
         Returns:
-            CartMandate: Cart mandate returned by the merchant
+            Dict containing decoded payload and cart_hash.
 
         Raises:
-            Exception: HTTP request failed or response error
-
-        Example:
-            >>> client = AP2Client(did_doc_path, key_path, "did:wba:didhost.cc:shopper")
-            >>> items = [{
-            ...     "id": "sku-001",
-            ...     "sku": "Nike-Air-Max-90",
-            ...     "quantity": 1,
-            ...     "options": {"color": "red", "size": "42"},
-            ...     "remark": "Please ship as soon as possible"
-            ... }]
-            >>> address = {
-            ...     "recipient_name": "John Doe",
-            ...     "phone": "13800138000",
-            ...     "region": "Beijing",
-            ...     "city": "Beijing",
-            ...     "address_line": "123 Some Street, Chaoyang District",
-            ...     "postal_code": "100000"
-            ... }
-            >>> cart = await client.create_cart_mandate(
-            ...     merchant_url="https://merchant.example.com",
-            ...     merchant_did="did:wba:merchant.example.com:merchant",
-            ...     cart_mandate_id="cart-123",
-            ...     items=items,
-            ...     shipping_address=address
-            ... )
+            ValueError: If the signature is invalid or the mandate is not
+                        intended for the current shopper.
         """
-        # Build request URL
-        endpoint = f"{merchant_url.rstrip('/')}/ap2/merchant/create_cart_mandate"
+        payload = validate_cart_mandate(
+            cart_mandate=cart_mandate,
+            merchant_public_key=merchant_public_key,
+            merchant_algorithm=self.algorithm,
+            expected_shopper_did=self.shopper_did,
+        )
 
-        # Build request data
-        request_data = {
-            "messageId": f"cart-request-{cart_mandate_id}",
-            "from": self.shopper_did,
-            "to": merchant_did,
-            "data": {
-                "cart_mandate_id": cart_mandate_id,
-                "items": items,
-                "shipping_address": shipping_address,
-            },
-        }
+        cart_hash = compute_hash(cart_mandate.contents.model_dump(exclude_none=True))
+        self.cart_hash = cart_hash
+        logger.info("CartMandate verified: cart_hash=%s...", cart_hash[:16])
 
-        if remark:
-            request_data["data"]["remark"] = remark
-
-        # Get DID WBA authentication header
-        auth_headers = self.auth_header.get_auth_header(endpoint, force_new=True)
-
-        # Send HTTP POST request
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                endpoint,
-                json=request_data,
-                headers={
-                    **auth_headers,
-                    "Content-Type": "application/json",
-                },
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(
-                        f"Failed to create cart mandate: HTTP {response.status}, {error_text}"
-                    )
-
-                result = await response.json()
-
-                # Parse response into CartMandate object
-                data = result.get("data", {})
-                cart_mandate_obj = CartMandate(
-                    contents=CartContents(**data["contents"]),
-                    merchant_authorization=data["merchant_authorization"],
-                )
-
-                # Verify CartMandate if validator is configured
-                if self.cart_validator:
-                    _, verified_cart_hash = self.cart_validator.validate(
-                        cart_mandate=cart_mandate_obj,
-                        expected_shopper_did=self.shopper_did,
-                    )
-                    self.cart_hash = verified_cart_hash
-
-                return cart_mandate_obj
+        return {"payload": payload, "cart_hash": cart_hash}
 
     def build_payment_mandate(
         self,
         payment_mandate_id: str,
         order_id: str,
-        total_amount: Dict[str, Any],
-        payment_details: Dict[str, Any],
+        total_amount: dict[str, Any],
+        payment_details: dict[str, Any],
         merchant_did: str,
+        cart_hash: str,
         merchant_agent: str = "MerchantAgent",
         refund_period: int = 30,
-        shipping_address: Optional[Dict[str, str]] = None,
+        shipping_address: Optional[dict[str, str]] = None,
         algorithm: str = "RS256",
     ) -> PaymentMandate:
         """Build a PaymentMandate using stored cart_hash.
@@ -216,6 +128,7 @@ class ShopperAgent:
             total_amount: Total amount dict
             payment_details: Payment method details
             merchant_did: Merchant's DID
+            cart_hash: The cart_hash from verified CartMandate
             merchant_agent: Merchant agent identifier
             refund_period: Refund period in days
             shipping_address: Shipping address (optional)
@@ -224,37 +137,76 @@ class ShopperAgent:
         Returns:
             PaymentMandate ready to send
 
-        Raises:
-            ValueError: If cart_hash is not available
-
         Example:
             >>> # After verifying CartMandate
+            >>> result = agent.verify_cart_mandate(cart_mandate, merchant_public_key)
             >>> pmt_mandate = agent.build_payment_mandate(
             ...     payment_mandate_id="pm_123",
             ...     order_id="order_123",
             ...     total_amount={"currency": "CNY", "value": 120.0},
             ...     payment_details={"channel": "ALIPAY", "out_trade_no": "trade_001"},
-            ...     merchant_did="did:wba:merchant.example.com:merchant"
+            ...     merchant_did="did:wba:merchant.example.com:merchant",
+            ...     cart_hash=result["cart_hash"],
             ... )
         """
-        if not self.cart_hash:
-            raise ValueError(
-                "cart_hash not available. Please verify CartMandate first."
+        if not cart_hash:
+            raise ValueError("cart_hash is required")
+
+        amount_model = (
+            total_amount
+            if isinstance(total_amount, MoneyAmount)
+            else MoneyAmount(**total_amount)
+        )
+
+        if isinstance(payment_details, PaymentResponseDetails):
+            method_name = "QR_CODE"
+            details_model = payment_details
+        else:
+            method_name = payment_details.get("method_name", "QR_CODE")
+            details_payload = {
+                key: value
+                for key, value in payment_details.items()
+                if key != "method_name"
+            }
+            details_model = PaymentResponseDetails(**details_payload)
+
+        shipping_model: Optional[ShippingAddress] = None
+        if shipping_address:
+            shipping_model = (
+                shipping_address
+                if isinstance(shipping_address, ShippingAddress)
+                else ShippingAddress(**shipping_address)
             )
 
-        return payment_mandate.build_payment_mandate_response(
+        payment_response = PaymentResponse(
+            request_id=order_id,
+            method_name=method_name,
+            details=details_model,
+            shipping_address=shipping_model,
+        )
+
+        contents = PaymentMandateContents(
             payment_mandate_id=payment_mandate_id,
-            order_id=order_id,
-            total_amount=total_amount,
-            payment_details=payment_details,
-            cart_hash=self.cart_hash,
-            user_private_key=self.private_key,
+            payment_details_id=order_id,
+            payment_details_total=PaymentDetailsTotal(
+                label="Total",
+                amount=amount_model,
+                refund_period=refund_period,
+            ),
+            payment_response=payment_response,
+            merchant_agent=merchant_agent,
+            cart_hash=cart_hash,
+        )
+
+        contents_dict = contents.model_dump(exclude_none=True)
+        self.pmt_hash = compute_hash(contents_dict)
+
+        return build_payment_mandate(
+            contents=contents,
+            user_private_key=self.shopper_private_key,
             user_did=self.shopper_did,
             user_kid=self.shopper_kid,
             merchant_did=merchant_did,
-            merchant_agent=merchant_agent,
-            refund_period=refund_period,
-            shipping_address=shipping_address,
             algorithm=algorithm,
         )
 
@@ -263,7 +215,7 @@ class ShopperAgent:
         merchant_url: str,
         merchant_did: str,
         payment_mandate: PaymentMandate,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Send a PaymentMandate to the merchant.
 
         Args:

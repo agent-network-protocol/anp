@@ -50,62 +50,10 @@ def compute_hash(obj: Dict[str, Any]) -> str:
 
     Returns:
         Base64URL encoded hash string
-
-    Example:
-        >>> obj = {"id": "123", "amount": 100}
-        >>> hash_value = compute_hash(obj)
     """
     canonical = jcs_canonicalize(obj)
     digest = hashlib.sha256(canonical.encode("utf-8")).digest()
     return b64url_no_pad(digest)
-
-
-class JWTVerifier:
-    """Generic JWS token verifier.
-
-    This is a stateless component that can be composed into other validators.
-    """
-
-    def __init__(self, public_key: str, algorithm: str = "RS256"):
-        """Initialize the verifier.
-
-        Args:
-            public_key: The public key for signature verification.
-            algorithm: The expected JWT algorithm.
-        """
-        self.public_key = public_key
-        self.algorithm = algorithm
-
-    def verify(
-        self,
-        token: str,
-        expected_audience: Optional[str] = None,
-        verify_time: bool = True,
-    ) -> Dict:
-        """Decode and verify a JWS token.
-
-        Args:
-            token: The JWS token string.
-            expected_audience: The expected audience ('aud') claim.
-            verify_time: Whether to verify time validity (exp, iat, nbf).
-
-        Returns:
-            The decoded JWT payload.
-
-        Raises:
-            jwt.InvalidTokenError: If the token is invalid (bad signature, expired, etc.)
-        """
-        options = {"verify_exp": verify_time}
-        decode_kwargs = {"algorithms": [self.algorithm], "options": options}
-
-        if expected_audience:
-            decode_kwargs["audience"] = expected_audience
-        else:
-            options["verify_aud"] = (
-                False  # Explicitly disable audience verification if not provided
-            )
-
-        return jwt.decode(token, self.public_key, **decode_kwargs)
 
 
 def verify_jws_payload(
@@ -114,21 +62,36 @@ def verify_jws_payload(
     algorithm: str = "RS256",
     expected_audience: Optional[str] = None,
     verify_time: bool = True,
-) -> Dict:
-    """Convenience helper that verifies a JWS and returns its payload."""
+) -> Dict[str, Any]:
+    """Verify JWS token and return decoded payload.
 
-    verifier = JWTVerifier(public_key=public_key, algorithm=algorithm)
-    return verifier.verify(
-        token=token,
-        expected_audience=expected_audience,
-        verify_time=verify_time,
-    )
+    Args:
+        token: JWS token string.
+        public_key: Public key for signature verification.
+        algorithm: Expected JWT algorithm (default: RS256).
+        expected_audience: Expected audience ('aud') claim.
+        verify_time: Whether to verify time validity (exp, iat, nbf).
+
+    Returns:
+        Decoded JWT payload.
+
+    Raises:
+        jwt.InvalidTokenError: If token is invalid.
+    """
+    options = {"verify_exp": verify_time}
+    decode_kwargs: Dict[str, Any] = {"algorithms": [algorithm], "options": options}
+
+    if expected_audience:
+        decode_kwargs["audience"] = expected_audience
+    else:
+        options["verify_aud"] = False
+
+    return jwt.decode(token, public_key, **decode_kwargs)
 
 
 __all__ = [
     "jcs_canonicalize",
     "b64url_no_pad",
     "compute_hash",
-    "JWTVerifier",
     "verify_jws_payload",
 ]

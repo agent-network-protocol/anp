@@ -4,11 +4,19 @@ This module defines Pydantic models for AP2 protocol entities,
 including CartMandate, PaymentMandate, and related structures.
 """
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum, StrEnum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class PaymentProvider(StrEnum):
+    """Payment provider enum."""
+
+    ALIPAY = "ALIPAY"
+    WECHAT = "WECHAT"
 
 
 class MoneyAmount(BaseModel):
@@ -19,16 +27,20 @@ class MoneyAmount(BaseModel):
 
 
 class DisplayItem(BaseModel):
-    """Display item model."""
+    """Display item model.
 
-    id: str = Field(..., description="Item unique identifier")
-    sku: str = Field(..., description="Item SKU")
+    This model serves as both DisplayItem (for cart display) and CartRequestItem
+    (for initial cart requests). The optional fields (options, pending, remark) are
+    only used in display contexts.
+    """
+
+    id: str = Field(..., description="Item unique identifier (e.g., SKU)")
     label: str = Field(..., description="Item display name")
-    quantity: int = Field(..., description="Item quantity")
+    quantity: int = Field(..., ge=1, description="Item quantity")
+    amount: MoneyAmount = Field(..., description="Price per item")
     options: Optional[Dict[str, Any]] = Field(
         None, description="Item options, e.g., color, size"
     )
-    amount: MoneyAmount = Field(..., description="Item amount")
     pending: Optional[bool] = Field(None, description="Whether pending")
     remark: Optional[str] = Field(None, description="Remark")
 
@@ -69,7 +81,7 @@ class PaymentDetails(BaseModel):
 class QRCodePaymentData(BaseModel):
     """QR code payment data model."""
 
-    channel: str = Field(..., description="Payment channel, e.g., ALIPAY, WECHAT")
+    channel: PaymentProvider = Field(..., description="Payment channel")
     qr_url: str = Field(..., description="QR code URL")
     out_trade_no: str = Field(..., description="External trade number")
     expires_at: str = Field(
@@ -181,8 +193,9 @@ class PaymentMandateContents(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Timestamp in ISO 8601 format",
     )
-    prev_hash: Optional[str] = Field(
-        None, description="Previous hash pointer (cart_hash for chaining)"
+    cart_hash: str = Field(
+        ...,
+        description="Hash pointer to the previously verified CartMandate contents",
     )
 
 
@@ -196,30 +209,26 @@ class PaymentMandate(BaseModel):
         ..., description="User authorization signature (JWS format)"
     )
 
-
-class ANPMessage(BaseModel):
-    """Generic ANP message structure for requests."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    messageId: str = Field(..., description="Unique message identifier")
-    from_: str = Field(..., alias="from", description="Sender's DID")
-    to: str = Field(..., description="Recipient's DID")
-    credential_webhook_url: Optional[str] = Field(
-        None, description="Webhook URL for credentials"
-    )
-    data: Optional[Dict[str, Any]] = Field(
-        None, description="Protocol-specific payload for the message"
-    )
+    @property
+    def id(self) -> str:
+        """Returns the payment mandate's unique identifier."""
+        return self.payment_mandate_contents.payment_mandate_id
 
 
-class CartRequestItem(BaseModel):
-    """Simplified item model for an initial cart request."""
+class VerifiedCartMandate(BaseModel):
+    """Result returned by CartMandateValidator."""
 
-    id: str = Field(..., description="Item unique identifier (e.g., SKU)")
-    quantity: int = Field(..., ge=1, description="Item quantity")
-    amount: MoneyAmount = Field(..., description="Price per item")
-    label: Optional[str] = Field(None, description="Item display name")
+    cart_mandate: CartMandate = Field(..., description="Original CartMandate object")
+    merchant_payload: Dict[str, Any] = Field(..., description="Decoded merchant JWT payload")
+    cart_hash: str = Field(..., description="Hash of CartMandate contents")
+
+
+class VerifiedPaymentMandate(BaseModel):
+    """Result returned by PaymentMandateValidator."""
+
+    payment_mandate: PaymentMandate = Field(..., description="Original PaymentMandate object")
+    shopper_payload: Dict[str, Any] = Field(..., description="Decoded shopper JWT payload")
+    pmt_hash: str = Field(..., description="Hash of PaymentMandate contents")
 
 
 class CartMandateRequestData(BaseModel):
@@ -228,7 +237,7 @@ class CartMandateRequestData(BaseModel):
     cart_mandate_id: str = Field(
         ..., description="Unique identifier for the cart mandate"
     )
-    items: List[CartRequestItem] = Field(..., description="List of items in the cart")
+    items: List[DisplayItem] = Field(..., description="List of items in the cart")
     shipping_address: Optional[ShippingAddress] = Field(
         None, description="Optional shipping address for the cart"
     )
@@ -237,42 +246,6 @@ class CartMandateRequestData(BaseModel):
         None,
         description="Business-specific metadata for fulfillment (e.g., hotel booking info)",
     )
-
-
-class CartMandateRequest(ANPMessage):
-    """Full ANP message for a CartMandate request."""
-
-    data: CartMandateRequestData = Field(..., description="Cart mandate request data")
-
-
-class CartMandateResponse(ANPMessage):
-    """Full ANP message for a CartMandate response."""
-
-    data: CartMandate = Field(..., description="Cart mandate response data")
-
-
-class PaymentMandateRequest(ANPMessage):
-    """Full ANP message for a PaymentMandate request."""
-
-    data: PaymentMandate = Field(..., description="Payment mandate request data")
-
-
-class PaymentMandateResponse(ANPMessage):
-    """Full ANP message for a PaymentMandate response."""
-
-    data: Dict[str, Any] = Field(..., description="Payment mandate response data")
-
-
-# ==============================================================================
-# Webhook Credential Models
-# ==============================================================================
-
-
-class PaymentProvider(StrEnum):
-    """Payment provider enum."""
-
-    ALIPAY = "ALIPAY"
-    WECHAT = "WECHAT"
 
 
 class PaymentStatus(str, Enum):
@@ -287,6 +260,17 @@ class PaymentStatus(str, Enum):
 class PaymentReceiptContents(BaseModel):
     """Payment receipt contents model."""
 
+    credential_type: Literal["PaymentReceipt"] = Field(
+        default="PaymentReceipt", description="Credential type"
+    )
+    version: int = Field(default=1, description="Credential version")
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), description="Credential unique ID"
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="Credential issuance time in ISO-8601 format",
+    )
     payment_mandate_id: str = Field(..., description="Payment mandate ID")
     provider: PaymentProvider = Field(..., description="Payment provider")
     status: PaymentStatus = Field(..., description="Payment status")
@@ -294,23 +278,14 @@ class PaymentReceiptContents(BaseModel):
     out_trade_no: str = Field(..., description="External trade number")
     paid_at: str = Field(..., description="Payment time in ISO-8601 format")
     amount: MoneyAmount = Field(..., description="Payment amount")
-    timestamp: Optional[str] = Field(
-        None, description="Credential issuance time in ISO-8601 format"
-    )
-    prev_hash: Optional[str] = Field(
-        None, description="Previous hash pointer (pmt_hash)"
+    pmt_hash: str = Field(
+        ..., description="Hash pointer to PaymentMandate contents (set when issued)"
     )
 
 
 class PaymentReceipt(BaseModel):
     """Payment receipt credential model."""
 
-    credential_type: Literal["PaymentReceipt"] = Field(
-        default="PaymentReceipt", description="Credential type"
-    )
-    version: int = Field(default=1, description="Credential version")
-    id: str = Field(..., description="Credential unique ID")
-    timestamp: str = Field(..., description="ISO-8601 timestamp")
     contents: PaymentReceiptContents = Field(..., description="Receipt contents")
     merchant_authorization: str = Field(
         ..., description="Merchant authorization signature (JWS)"
@@ -337,15 +312,23 @@ class ShippingInfo(BaseModel):
 class FulfillmentReceiptContents(BaseModel):
     """Fulfillment receipt contents model."""
 
+    credential_type: Literal["FulfillmentReceipt"] = Field(
+        default="FulfillmentReceipt", description="Credential type"
+    )
+    version: int = Field(default=1, description="Credential version")
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), description="Credential unique ID"
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="Credential issuance time in ISO-8601 format",
+    )
     order_id: str = Field(..., description="Order ID")
     items: List[FulfillmentItem] = Field(..., description="Fulfilled items")
     fulfilled_at: str = Field(..., description="Fulfillment time in ISO-8601 format")
     shipping: Optional[ShippingInfo] = Field(None, description="Shipping information")
-    timestamp: Optional[str] = Field(
-        None, description="Credential issuance time in ISO-8601 format"
-    )
-    prev_hash: Optional[str] = Field(
-        None, description="Previous hash pointer (pmt_hash)"
+    pmt_hash: str = Field(
+        ..., description="Hash pointer to PaymentMandate contents (set when issued)"
     )
     metadata: Optional[Dict[str, Any]] = Field(
         None,
@@ -356,31 +339,41 @@ class FulfillmentReceiptContents(BaseModel):
 class FulfillmentReceipt(BaseModel):
     """Fulfillment receipt credential model."""
 
-    credential_type: Literal["FulfillmentReceipt"] = Field(
-        default="FulfillmentReceipt", description="Credential type"
-    )
-    version: int = Field(default=1, description="Credential version")
-    id: str = Field(..., description="Credential unique ID")
-    timestamp: str = Field(..., description="ISO-8601 timestamp")
     contents: FulfillmentReceiptContents = Field(..., description="Receipt contents")
     merchant_authorization: str = Field(
         ..., description="Merchant authorization signature (JWS)"
-    )  # Union type for credentials
+    )
 
 
 Credential = PaymentReceipt | FulfillmentReceipt
 
+# Union of all possible ANP message data payloads for composition.
+# Note: Credential types are defined later in the file
+ANPMessageData = (
+    CartMandateRequestData
+    | CartMandate
+    | PaymentMandate
+    | PaymentReceipt
+    | FulfillmentReceipt
+)
 
-class WebhookResponse(BaseModel):
-    """Webhook response model (TA → MA)."""
 
-    status: Literal["received", "already_received", "error"] = Field(
-        ..., description="Response status"
+class ANPMessage(BaseModel):
+    """Generic ANP message structure using composition.
+
+    This structure acts as an envelope, holding common metadata, and a 'data'
+    field that contains the specific message payload as a composed object.
+    This approach is favored over inheritance for flexibility.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    messageId: str = Field(..., description="Unique message identifier")
+    from_: str = Field(..., alias="from", description="Sender's DID")
+    to: str = Field(..., description="Recipient's DID")
+    data: ANPMessageData = Field(
+        ..., description="Protocol-specific payload (composed object)"
     )
-    credential_id: str = Field(..., description="Credential ID")
-    received_at: Optional[str] = Field(None, description="ISO-8601 timestamp")
-    first_received_at: Optional[str] = Field(
-        None, description="First received time (for already_received)"
+    credential_webhook_url: Optional[str] = Field(
+        None, description="Webhook URL for credentials"
     )
-    error_code: Optional[str] = Field(None, description="Error code if status is error")
-    message: Optional[str] = Field(None, description="Error message if status is error")

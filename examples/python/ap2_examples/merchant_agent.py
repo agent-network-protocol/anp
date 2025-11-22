@@ -10,21 +10,33 @@ Design Philosophy:
 """
 
 import logging
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Optional, Sequence
 
-from anp.ap2 import cart_mandate, credential_mandate
-from anp.ap2.models import (
-    CartMandateRequest,
-    CartMandateResponse,
+from anp.ap2 import (
+    ANPMessage,
+    CartContents,
+    CartMandate,
+    CartMandateRequestData,
     DisplayItem,
     FulfillmentReceipt,
     MoneyAmount,
-    PaymentMandateRequest,
+    PaymentDetails,
+    PaymentDetailsTotal,
+    PaymentMandate,
     PaymentReceipt,
+    PaymentRequest,
+    PaymentRequestOptions,
+    PaymentMethodData,
+    QRCodePaymentData,
     ShippingAddress,
 )
-from anp.ap2.payment_mandate import PaymentMandateValidator
-from anp.ap2.utils import JWTVerifier
+from anp.ap2.cart_mandate import build_cart_mandate
+from anp.ap2.credential_mandate import (
+    build_fulfillment_receipt,
+    build_payment_receipt,
+)
+from anp.ap2.payment_mandate import validate_payment_mandate
+from anp.ap2.utils import compute_hash
 
 logger = logging.getLogger(__name__)
 
@@ -60,20 +72,18 @@ class MerchantAgent:
         )
 
         # YOU manage state
-        from anp.ap2.utils import compute_hash
-        cart_hash = compute_hash(cart_mandate.contents.model_dump(exclude_none=True))
-        await my_db.save_cart_hash(order_id="order-123", cart_hash=cart_hash)
+        verified_cart = CartMandateValidator(...).validate(cart_mandate, expected_shopper_did)
+        await my_db.save_cart_hash(order_id="order-123", cart_hash=verified_cart.cart_hash)
 
-        # Verify PaymentMandate (stateless - you provide cart_hash)
-        cart_hash = await my_db.get_cart_hash(order_id="order-123")
-        payload, pmt_hash = agent.verify_payment_mandate(
+        # Verify PaymentMandate (stateless - you provide VerifiedCartMandate)
+        verified_payment = agent.verify_payment_mandate(
             payment_mandate=payment_request.data,
-            expected_cart_hash=cart_hash,
+            verified_cart=verified_cart,
             shopper_public_key=await resolve_did(shopper_did),
         )
 
-        # YOU store pmt_hash
-        await my_db.save_pmt_hash(order_id="order-123", pmt_hash=pmt_hash)
+        # YOU store verified_payment.pmt_hash for credential issuance
+        await my_db.save_pmt_hash(order_id="order-123", pmt_hash=verified_payment.pmt_hash)
         ```
     """
 
@@ -103,18 +113,19 @@ class MerchantAgent:
 
     def verify_cart_mandate_request(
         self,
-        request: CartMandateRequest,
-    ) -> Dict[str, Any]:
+        request: ANPMessage,
+    ) -> dict[str, Any]:
         """Verify an incoming cart creation request.
 
         Args:
-            request: CartMandateRequest from shopper
+            request: ANPMessage containing CartMandateRequestData
 
         Returns:
             Dict containing extracted business data
 
         Raises:
             ValueError: If request validation fails
+            TypeError: If message data payload is not CartMandateRequestData
 
         Example:
             >>> order_data = agent.verify_cart_mandate_request(cart_request)
@@ -122,6 +133,11 @@ class MerchantAgent:
         """
         if request.to != self.merchant_did:
             raise ValueError(f"Request not for this merchant: {request.to}")
+
+        if not isinstance(request.data, CartMandateRequestData):
+            raise TypeError(
+                "Invalid message data type: expected CartMandateRequestData"
+            )
 
         return {
             "cart_mandate_id": request.data.cart_mandate_id,
@@ -147,11 +163,11 @@ class MerchantAgent:
         out_trade_no: str = "",
         shipping_address: Optional[ShippingAddress] = None,
         ttl_seconds: int = 900,
-    ) -> CartMandateResponse:
-        """Build a CartMandate (stateless).
+    ) -> ANPMessage:
+        """Build a CartMandate response (stateless).
 
-        This method builds and signs a CartMandate but does NOT store cart_hash.
-        You must extract and store cart_hash yourself.
+        This method builds a signed CartMandate and wraps it in an ANPMessage.
+        You must extract and store cart_hash from the contained CartMandate yourself.
 
         Args:
             order_id: Order unique identifier
@@ -166,12 +182,13 @@ class MerchantAgent:
             ttl_seconds: JWT Time to live in seconds (default: 900 = 15 minutes)
 
         Returns:
-            CartMandate with merchant authorization
+            ANPMessage containing the CartMandate
 
         Example:
             >>> from anp.ap2.utils import compute_hash
+            >>> from anp.ap2.models import CartMandate
             >>>
-            >>> # 1. Build CartMandate
+            >>> # 1. Build CartMandate response message
             >>> items = [
             ...     DisplayItem(
             ...         id="sku-001",
@@ -180,7 +197,7 @@ class MerchantAgent:
             ...         amount=MoneyAmount(currency="CNY", value=120.0),
             ...     )
             ... ]
-            >>> cart_mandate = agent.build_cart_mandate_response(
+            >>> response_message = agent.build_cart_mandate_response(
             ...     message_id="cart-response-order-123",
             ...     request_from="did:wba:shopper.example.com:alice",
             ...     order_id="order-123",
@@ -191,15 +208,16 @@ class MerchantAgent:
             ...     out_trade_no="trade-order-123",
             ... )
             >>>
-            >>> # 2. YOU extract and store cart_hash
-            >>> cart_hash = compute_hash(
-            ...     cart_mandate.contents.model_dump(exclude_none=True)
-            ... )
-            >>> await my_database.save(
-            ...     order_id="order-123",
-            ...     cart_hash=cart_hash,
-            ...     shopper_did=shopper_did,
-            ... )
+            >>> # 2. YOU extract and store cart_hash from the data payload
+            >>> if isinstance(response_message.data, CartMandate):
+            ...     cart_hash = compute_hash(
+            ...         response_message.data.contents.model_dump(exclude_none=True)
+            ...     )
+            ...     await my_database.save(
+            ...         order_id="order-123",
+            ...         cart_hash=cart_hash,
+            ...         shopper_did=shopper_did,
+            ...     )
         """
         resolved_shopper_did = shopper_did or request_from
         if not resolved_shopper_did:
@@ -213,22 +231,34 @@ class MerchantAgent:
         if not isinstance(total_amount, MoneyAmount):
             raise TypeError("total_amount must be a MoneyAmount instance")
 
-        shipping_payload = shipping_address
-
         logger.info(f"Building CartMandate for order_id={order_id}")
-
-        contents = cart_mandate.build_cart_mandate_contents(
-            order_id=order_id,
-            items=items,
-            total_amount=total_amount,
-            shipping_address=shipping_payload,
-            payment_method=payment_method,
-            payment_channel=payment_channel,
-            qr_url=qr_url,
-            out_trade_no=out_trade_no,
+        payment_request = PaymentRequest(
+            method_data=[
+                PaymentMethodData(
+                    supported_methods=payment_method,
+                    data=QRCodePaymentData(
+                        channel=payment_channel,
+                        qr_url=qr_url,
+                        out_trade_no=out_trade_no,
+                    ),
+                )
+            ],
+            details=PaymentDetails(
+                id=order_id,
+                displayItems=list(items),
+                total=PaymentDetailsTotal(label="Total", amount=total_amount),
+                shipping_address=shipping_address,
+            ),
+            options=PaymentRequestOptions(requestShipping=shipping_address is not None),
         )
 
-        cart_mandate_obj = cart_mandate.build_cart_mandate(
+        contents = CartContents(
+            id=f"cart_{order_id}",
+            user_signature_required=False,
+            payment_request=payment_request,
+        )
+
+        cart_mandate_obj = build_cart_mandate(
             contents=contents,
             merchant_private_key=self.merchant_private_key,
             merchant_did=self.merchant_did,
@@ -238,7 +268,7 @@ class MerchantAgent:
             ttl_seconds=ttl_seconds,
         )
 
-        response = CartMandateResponse(
+        response = ANPMessage(
             messageId=resolved_message_id,
             **{"from": self.merchant_did},
             to=resolved_shopper_did,
@@ -251,27 +281,27 @@ class MerchantAgent:
 
     def verify_payment_mandate(
         self,
-        request: PaymentMandateRequest,
-        expected_cart_hash: str,
+        request: ANPMessage,
+        cart_hash: str,
         shopper_public_key: str,
-    ) -> tuple[Dict[str, Any], str]:
-        """Verify an incoming PaymentMandate (stateless).
+    ) -> dict[str, Any]:
+        """Verify an incoming PaymentMandate message (stateless).
 
-        This method verifies signature and hash chain but does NOT store pmt_hash.
-        You must provide expected_cart_hash from your own storage.
+        This method verifies the signature and hash chain of a PaymentMandate
+        contained within an ANPMessage. It does NOT store the resulting state.
+        You must provide the cart_hash from your own storage.
 
         Args:
-            payment_mandate: PaymentMandate to verify
-            expected_cart_hash: The cart_hash you stored earlier
+            request: ANPMessage containing the PaymentMandate to verify
+            cart_hash: The cart_hash you stored earlier
             shopper_public_key: Shopper's public key for JWT verification
 
         Returns:
-            Tuple of (payload, pmt_hash):
-                - payload: Decoded JWT payload
-                - pmt_hash: Computed payment mandate hash (YOU should store this)
+            Dict containing decoded JWT payload with pmt_hash computed.
 
         Raises:
             ValueError: If signature or hash chain verification fails
+            TypeError: If the message data payload is not a PaymentMandate
 
         Example:
             >>> # 1. YOU retrieve cart_hash from your storage
@@ -281,17 +311,18 @@ class MerchantAgent:
             >>> shopper_pubkey = await resolve_did(payment_request.from_)
             >>>
             >>> # 3. Verify (agent is stateless)
-            >>> payload, pmt_hash = agent.verify_payment_mandate(
-            ...     payment_mandate=payment_request.data,
-            ...     expected_cart_hash=cart_hash,
+            >>> payload = agent.verify_payment_mandate(
+            ...     request=payment_request_message,
+            ...     cart_hash=cart_hash,
             ...     shopper_public_key=shopper_pubkey,
             ... )
             >>>
-            >>> # 4. YOU store pmt_hash
+            >>> # 4. YOU compute and store pmt_hash
+            >>> pmt_hash = compute_hash(request.data.payment_mandate_contents.model_dump(exclude_none=True))
             >>> await my_database.save_pmt_hash(order_id, pmt_hash)
             >>> logger.info(f"Payment verified for order {order_id}")
         """
-        logger.info(f"Verifying PaymentMandateRequest from {request.from_}")
+        logger.info(f"Verifying ANPMessage with PaymentMandate from {request.from_}")
 
         # Verify ANP message routing
         if request.to != self.merchant_did:
@@ -301,21 +332,19 @@ class MerchantAgent:
             )
 
         # Extract PaymentMandate from ANP message
-        payment_mandate = request.data
-        logger.debug(f"Expected cart_hash: {expected_cart_hash[:16]}...")
+        if not isinstance(request.data, PaymentMandate):
+            raise TypeError("Invalid message data type: expected PaymentMandate")
 
-        # Create validator (not cached - stateless design)
-        shopper_verifier = JWTVerifier(
-            public_key=shopper_public_key,
-            algorithm=self.algorithm,
-        )
-        validator = PaymentMandateValidator(shopper_verifier)
+        payment_mandate = request.data
+        logger.debug(f"Expected cart_hash: {cart_hash[:16]}...")
 
         # Verify payment mandate signature and hash chain
-        payload, pmt_hash = validator.validate(
+        payload = validate_payment_mandate(
             payment_mandate=payment_mandate,
+            shopper_public_key=shopper_public_key,
+            shopper_algorithm=self.algorithm,
             expected_merchant_did=self.merchant_did,
-            expected_cart_hash=expected_cart_hash,
+            expected_cart_hash=cart_hash,
         )
 
         # Additional security: JWT issuer should match message sender
@@ -326,8 +355,13 @@ class MerchantAgent:
                 f"message sender ({request.from_})"
             )
 
-        logger.info(f"PaymentMandate verified: pmt_hash={pmt_hash[:16]}...")
-        return payload, pmt_hash
+        # Compute pmt_hash for caller
+        pmt_hash = compute_hash(
+            payment_mandate.payment_mandate_contents.model_dump(exclude_none=True)
+        )
+        logger.info("PaymentMandate verified: pmt_hash=%s...", pmt_hash[:16])
+
+        return {"payload": payload, "pmt_hash": pmt_hash}
 
     def build_payment_receipt(
         self,
@@ -339,11 +373,11 @@ class MerchantAgent:
         """Build a PaymentReceipt credential (stateless).
 
         This method builds and signs a PaymentReceipt but does NOT retrieve stored state.
-        You must provide pmt_hash from your own storage.
+        You must provide the pmt_hash from your own storage.
 
         Args:
             payment_receipt_contents: Payment receipt contents
-            pmt_hash: The pmt_hash you stored after payment verification
+            pmt_hash: The pmt_hash you stored earlier
             shopper_did: Shopper's DID
             ttl_seconds: JWT Time to live in seconds (default: 180 days)
 
@@ -358,7 +392,7 @@ class MerchantAgent:
             ...     MoneyAmount,
             ... )
             >>>
-            >>> # 1. YOU retrieve hashes from your storage
+            >>> # 1. YOU retrieve pmt_hash from your storage
             >>> pmt_hash = await my_db.get_pmt_hash(order_id)
             >>>
             >>> # 2. Build PaymentReceipt
@@ -383,7 +417,7 @@ class MerchantAgent:
         """
         logger.info("Building PaymentReceipt")
 
-        return credential_mandate.build_payment_receipt(
+        return build_payment_receipt(
             contents=payment_receipt_contents,
             pmt_hash=pmt_hash,
             merchant_private_key=self.merchant_private_key,
@@ -404,11 +438,11 @@ class MerchantAgent:
         """Build a FulfillmentReceipt credential (stateless).
 
         This method builds and signs a FulfillmentReceipt but does NOT retrieve stored state.
-        You must provide pmt_hash from your own storage.
+        You must provide the pmt_hash from your own storage.
 
         Args:
             fulfillment_receipt_contents: Fulfillment receipt contents
-            pmt_hash: The pmt_hash you stored after payment verification
+            pmt_hash: The pmt_hash you stored earlier
             shopper_did: Shopper's DID
             ttl_seconds: JWT Time to live in seconds (default: 180 days)
 
@@ -418,7 +452,7 @@ class MerchantAgent:
         Example:
             >>> from anp.ap2.models import FulfillmentReceiptContents, FulfillmentItem
             >>>
-            >>> # 1. YOU retrieve hashes from your storage
+            >>> # 1. YOU retrieve pmt_hash from your storage
             >>> pmt_hash = await my_db.get_pmt_hash(order_id)
             >>>
             >>> # 2. Build FulfillmentReceipt
@@ -440,7 +474,7 @@ class MerchantAgent:
         """
         logger.info("Building FulfillmentReceipt")
 
-        return credential_mandate.build_fulfillment_receipt(
+        return build_fulfillment_receipt(
             contents=fulfillment_receipt_contents,
             pmt_hash=pmt_hash,
             merchant_private_key=self.merchant_private_key,
