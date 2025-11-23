@@ -75,7 +75,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 **方向**：MA → TA
 
 **数据结构**：
-**数据结构**：
 
 ```json
 {
@@ -131,12 +130,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
           "city": "北京市",
           "address_line": "朝阳区某某街道123号",
           "postal_code": "100000"
-          "recipient_name": "张三",
-          "phone": "13800138000",
-          "region": "北京市",
-          "city": "北京市",
-          "address_line": "朝阳区某某街道123号",
-          "postal_code": "100000"
         },
         "shipping_options": null,
         "modifiers": null,
@@ -162,16 +155,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 }
 ```
 
-**字段说明**：
-- `contents`: CartContents 对象，包含购物车完整信息
-  - `id`: 购物车唯一标识符
-  - `user_signature_required`: 是否需要用户签名（通常为 false）
-  - `timestamp`: ISO-8601 格式的时间戳
-  - `payment_request`: 支付请求详情，包含 method_data、details、options
-- `merchant_authorization`: JWS 格式的商户授权签名（详见下节）
-  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
 
 **字段说明**：
 - `contents`: CartContents 对象，包含购物车完整信息
@@ -182,8 +165,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 - `merchant_authorization`: JWS 格式的商户授权签名（详见下节）
 
 **关键点**：
-- `merchant_authorization` 是对整个 `contents` 的 JWS 签名（RS256 或 ES256K）
-- `cart_hash = b64url(sha256(JCS(contents)))`，cart_hash 包含在 JWT payload 中
 - `merchant_authorization` 是对整个 `contents` 的 JWS 签名（RS256 或 ES256K）
 - `cart_hash = b64url(sha256(JCS(contents)))`，cart_hash 包含在 JWT payload 中
 
@@ -233,8 +214,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 
 **基础实现（必需字段）**：
 
-**基础实现（必需字段）**：
-
 ```json
 {
   "iss": "did:wba:a.com:MA",             // 签发者（商户智能体 DID）
@@ -247,20 +226,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 }
 ```
 
-**可选扩展字段**（当前基础实现未包含，保留用于未来扩展）：
-
-```json
-{
-  "cnf": { "kid": "did:wba:a.com:TA#keys-1" },  // 持有者绑定信息
-  "sd_hash": "<b64url>",                         // SD-JWT / VC 哈希指针
-  "extensions": ["anp.ap2.qr.v1"]                // 协议扩展标识
-  "iat": 1730000000,                     // 签发时间（秒）
-  "exp": 1730000900,                     // 过期时间（建议 15 分钟，即 900 秒）
-  "jti": "uuid",                         // 全局唯一标识符（防重放攻击）
-  "cart_hash": "<b64url>"                // 对 CartMandate.contents 的哈希（见下节）
-}
 ```
-
 **可选扩展字段**（当前基础实现未包含，保留用于未来扩展）：
 
 ```json
@@ -287,11 +253,6 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
 ### 签名生成流程（商户端 MA）
 
-1. 计算 `cart_hash`：对 `CartMandate.contents` 执行 JCS 规范化后进行 SHA-256 哈希
-2. 构造 JWT Payload（必需字段：`iss/sub/aud/iat/exp/jti/cart_hash`）
-3. 构造 JWT Header（`alg=RS256` 或 `alg=ES256K`, `kid=<商户公钥标识>`, `typ=JWT`）
-4. 用商户私钥对 Header 和 Payload 进行签名，生成紧凑 JWS（`header.payload.signature`）
-5. 将生成的 JWS 作为 `merchant_authorization` 写入 `CartMandate` 对象
 1. 计算 `cart_hash`：对 `CartMandate.contents` 执行 JCS 规范化后进行 SHA-256 哈希
 2. 构造 JWT Payload（必需字段：`iss/sub/aud/iat/exp/jti/cart_hash`）
 3. 构造 JWT Header（`alg=RS256` 或 `alg=ES256K`, `kid=<商户公钥标识>`, `typ=JWT`）
@@ -327,24 +288,18 @@ cart_hash = Base64URL( SHA-256( JCS(CartMandate.contents) ) )
 
 **基础实现**（与 `/anp/ap2/cart_mandate.py` 一致）：
 
-**基础实现**（与 `/anp/ap2/cart_mandate.py` 一致）：
-
 ```python
 import json, base64, hashlib, uuid, time
 import jwt  # pip install pyjwt
 
 def jcs_canonicalize(obj):
     """JSON Canonicalization Scheme (RFC 8785)"""
-    """JSON Canonicalization Scheme (RFC 8785)"""
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 def b64url_no_pad(b: bytes) -> str:
     """Base64URL encode without padding"""
-    """Base64URL encode without padding"""
     return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
 
-def compute_hash(contents: dict) -> str:
-    """Compute hash of contents using JCS + SHA-256"""
 def compute_hash(contents: dict) -> str:
     """Compute hash of contents using JCS + SHA-256"""
     canon = jcs_canonicalize(contents)
@@ -362,24 +317,9 @@ def sign_merchant_authorization(
 ) -> str:
     """Sign CartMandate contents with merchant authorization"""
     cart_hash = compute_hash(contents)
-def sign_merchant_authorization(
-    contents: dict,
-    merchant_private_key: str,
-    merchant_did: str,
-    merchant_kid: str,
-    shopper_did: str,
-    algorithm: str = "RS256",
-    ttl_seconds: int = 900
-) -> str:
-    """Sign CartMandate contents with merchant authorization"""
-    cart_hash = compute_hash(contents)
     now = int(time.time())
 
-
     payload = {
-        "iss": merchant_did,
-        "sub": merchant_did,
-        "aud": shopper_did,
         "iss": merchant_did,
         "sub": merchant_did,
         "aud": shopper_did,
@@ -388,17 +328,6 @@ def sign_merchant_authorization(
         "jti": str(uuid.uuid4()),
         "cart_hash": cart_hash
     }
-
-    headers = {
-        "alg": algorithm,
-        "kid": merchant_kid,
-        "typ": "JWT"
-    }
-
-    return jwt.encode(payload, merchant_private_key, algorithm=algorithm, headers=headers)
-        "cart_hash": cart_hash
-    }
-
     headers = {
         "alg": algorithm,
         "kid": merchant_kid,
@@ -412,24 +341,15 @@ def sign_merchant_authorization(
 
 ### 校验清单
 
-| 校验项         | 要求                                        |
-|----------------|---------------------------------------------|
-| 签名算法       | RS256 或 ES256K（需与 Header.alg 一致）     |
-| 时间窗         | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟         | jti |
-| 重放防护       | `jti` 全局唯一                              |
-| 签发者与受众   | `iss=MA`，`aud=TA`（或 MPP）                |
-| 数据一致性     | `payload.cart_hash == computed_cart_hash`   |
-| DID 解析       | 通过 `kid` → DID 文档解析公钥               |
-| 兼容扩展       | 支持解析 `cnf`、`sd_hash` 字段              |
-| 校验项         | 要求                                        |
-| -------------- | ------------------------------------------- |
-| 签名算法       | RS256 或 ES256K（需与 Header.alg 一致）     |
-| 时间窗         | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟         | jti |
-| 重放防护       | `jti` 全局唯一                              |
-| 签发者与受众   | `iss=MA`，`aud=TA`（或 MPP）                |
-| 数据一致性     | `payload.cart_hash == computed_cart_hash`   |
-| DID 解析       | 通过 `kid` → DID 文档解析公钥               |
-| 兼容扩展       | 支持解析 `cnf`、`sd_hash` 字段              |
+| 校验项       | 要求                                      |
+|--------------|-------------------------------------------|
+| 签名算法     | RS256 或 ES256K（需与 Header.alg 一致）   |
+| 时间窗       | `iat ≤ now ≤ exp`，有效期 ≤ 15 分钟       | jti |
+| 重放防护     | `jti` 全局唯一                            |
+| 签发者与受众 | `iss=MA`，`aud=TA`（或 MPP）              |
+| 数据一致性   | `payload.cart_hash == computed_cart_hash` |
+| DID 解析     | 通过 `kid` → DID 文档解析公钥             |
+| 兼容扩展     | 支持解析 `cnf`、`sd_hash` 字段            |
 
 ---
 
@@ -453,23 +373,12 @@ def sign_merchant_authorization(
 
 **数据结构**：
 
-**方向**：TA → MA
-
-**数据结构**：
-
 ```json
 {
   "payment_mandate_contents": {
     "payment_mandate_id": "pm_12345",
     "payment_details_id": "order_shoes_123",
     "payment_details_total": {
-      "label": "Total",
-      "amount": {
-        "currency": "CNY",
-        "value": 120.0
-      },
-      "pending": null,
-      "refund_period": 30
       "label": "Total",
       "amount": {
         "currency": "CNY",
@@ -490,21 +399,8 @@ def sign_merchant_authorization(
       "payer_name": null,
       "payer_email": null,
       "payer_phone": null
-      "request_id": "order_shoes_123",
-      "method_name": "QR_CODE",
-      "details": {
-        "channel": "ALIPAY",
-        "out_trade_no": "order_20250117_123456"
-      },
-      "shipping_address": null,
-      "shipping_option": null,
-      "payer_name": null,
-      "payer_email": null,
-      "payer_phone": null
     },
     "merchant_agent": "MerchantAgent",
-    "timestamp": "2025-01-17T09:05:00Z",
-    "cart_hash": "cart_hash"
     "timestamp": "2025-01-17T09:05:00Z",
     "cart_hash": "cart_hash"
   },
@@ -512,16 +408,6 @@ def sign_merchant_authorization(
 }
 ```
 
-**字段说明**：
-- `payment_mandate_contents`: PaymentMandateContents 对象
-  - `payment_mandate_id`: 支付授权唯一标识符
-  - `payment_details_id`: 对应 CartMandate 中 payment_request.details.id
-  - `payment_details_total`: 支付总金额及退款期限
-  - `payment_response`: 支付响应详情（支付方式、渠道等）
-  - `merchant_agent`: 商户代理标识
-  - `timestamp`: ISO-8601 格式的时间戳
-  - `cart_hash`: **前序 CartMandate 的哈希值**（哈希链关键）
-- `user_authorization`: JWS 格式的用户授权签名（详见下节）
 **字段说明**：
 - `payment_mandate_contents`: PaymentMandateContents 对象
   - `payment_mandate_id`: 支付授权唯一标识符
@@ -559,43 +445,8 @@ user_authorization 是用户/购物者对支付内容的授权签名，采用与
 ```
 
 **Payload 格式**：
-user_authorization 是用户/购物者对支付内容的授权签名，采用与 merchant_authorization 相同的 JWS 格式。
-
-**Header 格式**：
 
 ```json
-{
-  "alg": "RS256",
-  "kid": "Shopper-key-001",
-  "typ": "JWT"
-}
-```
-
-或：
-
-```json
-{
-  "alg": "ES256K",
-  "kid": "Shopper-es256k-key-001",
-  "typ": "JWT"
-}
-```
-
-**Payload 格式**：
-
-```json
-{
-  "iss": "did:wba:a.com:TA",              // 签发者（购物者智能体 DID）
-  "sub": "did:wba:a.com:TA",              // 主体（可与 iss 相同）
-  "aud": "did:wba:a.com:MA",              // 受众（商户智能体）
-  "iat": 1730000000,                      // 签发时间（秒）
-  "exp": 1730000900,                      // 过期时间（建议 180天）
-  "jti": "uuid",                          // 全局唯一标识符（防重放攻击）
-  "pmt_hash": "<b64url>"                  // 对 PaymentMandateContents 的哈希
-}
-```
-
-**pmt_hash 计算规则**：
 {
   "iss": "did:wba:a.com:TA",              // 签发者（购物者智能体 DID）
   "sub": "did:wba:a.com:TA",              // 主体（可与 iss 相同）
@@ -1075,17 +926,11 @@ CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceip
       "merchant_agent": "MerchantAgent",
       "timestamp": "2025-01-17T09:05:00Z",
       "cart_hash": "cart_hash"
-      "timestamp": "2025-01-17T09:05:00Z",
-      "cart_hash": "cart_hash"
     },
     "user_authorization": "eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6ZXhhbXBsZ..."
   }
 }
 ```
-
-**关键点**：
-- `payment_mandate_contents.cart_hash` 存储前序 CartMandate 的哈希值
-- `user_authorization` 包含对整个 `payment_mandate_contents` 的签名
 
 **关键点**：
 - `payment_mandate_contents.cart_hash` 存储前序 CartMandate 的哈希值
