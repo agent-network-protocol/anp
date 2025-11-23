@@ -7,7 +7,9 @@ including JCS canonicalization and hash computation.
 import base64
 import hashlib
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import jwt
 
 
 def jcs_canonicalize(obj: Dict[str, Any]) -> str:
@@ -22,12 +24,7 @@ def jcs_canonicalize(obj: Dict[str, Any]) -> str:
     References:
         RFC 8785: https://datatracker.ietf.org/doc/rfc8785/
     """
-    return json.dumps(
-        obj,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True
-    )
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def b64url_no_pad(data: bytes) -> str:
@@ -53,44 +50,48 @@ def compute_hash(obj: Dict[str, Any]) -> str:
 
     Returns:
         Base64URL encoded hash string
-
-    Example:
-        >>> obj = {"id": "123", "amount": 100}
-        >>> hash_value = compute_hash(obj)
     """
     canonical = jcs_canonicalize(obj)
     digest = hashlib.sha256(canonical.encode("utf-8")).digest()
     return b64url_no_pad(digest)
 
 
-def compute_cart_hash(cart_contents: Dict[str, Any]) -> str:
-    """Compute cart_hash for CartMandate.contents.
+def verify_jws_payload(
+    token: str,
+    public_key: str,
+    algorithm: str = "RS256",
+    expected_audience: Optional[str] = None,
+    verify_time: bool = True,
+) -> Dict[str, Any]:
+    """Verify JWS token and return decoded payload.
 
     Args:
-        cart_contents: CartMandate.contents dictionary
+        token: JWS token string.
+        public_key: Public key for signature verification.
+        algorithm: Expected JWT algorithm (default: RS256).
+        expected_audience: Expected audience ('aud') claim.
+        verify_time: Whether to verify time validity (exp, iat, nbf).
 
     Returns:
-        Base64URL encoded cart_hash
+        Decoded JWT payload.
 
-    Example:
-        >>> contents = {"id": "cart_123", "payment_request": {...}}
-        >>> cart_hash = compute_cart_hash(contents)
+    Raises:
+        jwt.InvalidTokenError: If token is invalid.
     """
-    return compute_hash(cart_contents)
+    options = {"verify_exp": verify_time}
+    decode_kwargs: Dict[str, Any] = {"algorithms": [algorithm], "options": options}
+
+    if expected_audience:
+        decode_kwargs["audience"] = expected_audience
+    else:
+        options["verify_aud"] = False
+
+    return jwt.decode(token, public_key, **decode_kwargs)
 
 
-def compute_pmt_hash(payment_mandate_contents: Dict[str, Any]) -> str:
-    """Compute pmt_hash for PaymentMandate.payment_mandate_contents.
-
-    Args:
-        payment_mandate_contents: PaymentMandate.payment_mandate_contents dictionary
-            (without user_authorization field)
-
-    Returns:
-        Base64URL encoded pmt_hash
-
-    Example:
-        >>> contents = {"payment_mandate_id": "pm_123", ...}
-        >>> pmt_hash = compute_pmt_hash(contents)
-    """
-    return compute_hash(payment_mandate_contents)
+__all__ = [
+    "jcs_canonicalize",
+    "b64url_no_pad",
+    "compute_hash",
+    "verify_jws_payload",
+]

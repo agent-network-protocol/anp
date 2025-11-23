@@ -44,6 +44,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 ```json
     {
       "type": "StructuredInterface",
+      "type": "StructuredInterface",
       "protocol": "AP2/ANP",
       "version": "0.0.1",
       "description": "An implementation of the AP2 protocol based on the ANP protocol, used for payment and transactions between agents."
@@ -81,6 +82,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
     "id": "cart_shoes_123",
     "user_signature_required": false,
     "timestamp": "2025-01-17T09:00:00Z",
+    "timestamp": "2025-01-17T09:00:00Z",
     "payment_request": {
       "method_data": [
         {
@@ -107,7 +109,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
         "displayItems": [
           {
             "id": "sku-id-123",
-            "sku": "Nike-Air-Max-90",
             "label": "Nike Air Max 90",
             "quantity": 1,
             "options": {
@@ -153,6 +154,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
   "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
+
 
 **字段说明**：
 - `contents`: CartContents 对象，包含购物车完整信息
@@ -224,6 +226,7 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 }
 ```
 
+```
 **可选扩展字段**（当前基础实现未包含，保留用于未来扩展）：
 
 ```json
@@ -325,7 +328,6 @@ def sign_merchant_authorization(
         "jti": str(uuid.uuid4()),
         "cart_hash": cart_hash
     }
-
     headers = {
         "alg": algorithm,
         "kid": merchant_kid,
@@ -540,7 +542,161 @@ CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash)
 
 ```
 CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceipt(pmt_hash, cred_hash)
+pmt_hash = Base64URL( SHA-256( JCS(PaymentMandateContents) ) )
 ```
+
+**哈希链维护**：
+
+PaymentMandateContents 包含前序 CartMandate 的 `cart_hash` 字段，从而形成哈希链：
+
+```
+CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash)
+```
+
+格式说明：对象名(前序哈希, 当前哈希)
+
+---
+
+## 3. PaymentReceipt（支付凭证）
+
+**方向**：MA → TA（通过 Webhook）
+
+**数据结构**：
+
+```json
+{
+  "credential_type": "PaymentReceipt",
+  "version": 1,
+  "id": "receipt_uuid_123",
+  "timestamp": "2025-01-17T09:10:00Z",
+  "contents": {
+    "payment_mandate_id": "pm_12345",
+    "provider": "ALIPAY",
+    "status": "SUCCEEDED",
+    "transaction_id": "alipay_txn_789",
+    "out_trade_no": "order_20250117_123456",
+    "paid_at": "2025-01-17T09:08:30Z",
+    "amount": {
+      "currency": "CNY",
+      "value": 120.0
+    },
+    "timestamp": "2025-01-17T09:10:00Z",
+    "pmt_hash": "pmt_hash"
+  },
+  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**字段说明**：
+- `credential_type`: 固定值 "PaymentReceipt"
+- `version`: 凭证版本号，当前为 1
+- `id`: 凭证唯一标识符（UUID）
+- `timestamp`: 凭证签发时间（ISO-8601）
+- `contents`: PaymentReceiptContents 对象
+  - `payment_mandate_id`: 对应的 PaymentMandate ID
+  - `provider`: 支付提供商（ALIPAY | WECHAT）
+  - `status`: 支付状态（SUCCEEDED | FAILED | PENDING | TIMEOUT）
+  - `transaction_id`: 支付提供商的交易 ID
+  - `out_trade_no`: 外部交易号
+  - `paid_at`: 支付完成时间（ISO-8601）
+  - `amount`: 支付金额
+  - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
+  - `pmt_hash`: **前序 PaymentMandate 的哈希值**
+- `merchant_authorization`: JWS 格式的商户授权签名
+
+**merchant_authorization Payload**：
+
+```json
+{
+  "iss": "did:wba:a.com:MA",
+  "sub": "did:wba:a.com:MA",
+  "aud": "did:wba:a.com:TA",
+  "iat": 1730000000,
+  "exp": 1730000900,
+  "jti": "receipt_uuid_123",
+  "credential_type": "PaymentReceipt",
+  "cred_hash": "<b64url(sha256(JCS(contents)))>"
+}
+```
+
+**哈希链扩展**：
+
+```
+CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceipt(pmt_hash, cred_hash)
+```
+
+---
+
+## 4. FulfillmentReceipt（履约凭证）
+
+**方向**：MA → TA（通过 Webhook）
+
+**数据结构**：
+
+```json
+{
+  "credential_type": "FulfillmentReceipt",
+  "version": 1,
+  "id": "fulfillment_uuid_456",
+  "timestamp": "2025-01-18T10:00:00Z",
+  "contents": {
+    "order_id": "order_shoes_123",
+    "items": [
+      {
+        "id": "sku-id-123",
+        "quantity": 1
+      }
+    ],
+    "fulfilled_at": "2025-01-18T09:45:00Z",
+    "shipping": {
+      "carrier": "顺丰速运",
+      "tracking_number": "SF1234567890",
+      "delivered_eta": "2025-01-20T18:00:00Z"
+    },
+    "timestamp": "2025-01-18T10:00:00Z",
+    "pmt_hash": "pmt_hash",
+    "metadata": {
+      "warehouse": "Beijing-001",
+      "notes": "已发货，请注意查收"
+    }
+  },
+  "merchant_authorization": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**字段说明**：
+- `credential_type`: 固定值 "FulfillmentReceipt"
+- `version`: 凭证版本号，当前为 1
+- `id`: 凭证唯一标识符（UUID）
+- `timestamp`: 凭证签发时间（ISO-8601）
+- `contents`: FulfillmentReceiptContents 对象
+  - `order_id`: 订单 ID
+  - `items`: 履约商品列表
+  - `fulfilled_at`: 履约完成时间（ISO-8601）
+  - `shipping`: 物流信息（可选）
+  - `timestamp`: 内容时间戳（与顶层 timestamp 相同）
+  - `pmt_hash`: **前序 PaymentMandate 的哈希值**
+  - `metadata`: 业务特定的履约数据（可选）
+- `merchant_authorization`: JWS 格式的商户授权签名
+
+**merchant_authorization Payload**：
+
+```json
+{
+  "iss": "did:wba:a.com:MA",
+  "sub": "did:wba:a.com:MA",
+  "aud": "did:wba:a.com:TA",
+  "iat": 1730000000,
+  "exp": 1730000900,
+  "jti": "fulfillment_uuid_456",
+  "credential_type": "FulfillmentReceipt",
+  "cred_hash": "<b64url(sha256(JCS(contents)))>"
+}
+```
+
+**注意**：PaymentReceipt 和 FulfillmentReceipt 都包含 `pmt_hash` 字段（指向同一个 PaymentMandate），形成分支哈希链。
+
+---
 
 ---
 
@@ -635,7 +791,6 @@ CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceip
     "items": [
       {
         "id": "sku-id-123",
-        "sku": "Nike-Air-Max-90",
         "quantity": 1,
         "options": {
           "color": "red",
@@ -685,7 +840,6 @@ CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceip
           "displayItems": [
             {
               "id": "sku-id-123",
-              "sku": "Nike-Air-Max-90",
               "label": "Nike Air Max 90",
               "quantity": 1,
               "options": {
@@ -741,6 +895,7 @@ CartMandate(cart_hash) → PaymentMandate(cart_hash, pmt_hash) → PaymentReceip
   "messageId": "payment-mandate-001",
   "from": "did:wba:a.com:shopper",
   "to": "did:wba:a.com:merchant",
+  "mandate_webhook_url":"https://merchant.example.com/ap2/mandate",
   "mandate_webhook_url":"https://merchant.example.com/ap2/mandate",
   "data": {
     "payment_mandate_contents": {
@@ -815,4 +970,3 @@ PaymentMandate(cart_hash,pmt_hash)
     ├─→ PaymentReceipt(pmt_hash,cred_hash)
     └─→ FulfillmentReceipt(pmt_hash,cred_hash)
 ```
-

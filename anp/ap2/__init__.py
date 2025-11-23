@@ -1,64 +1,73 @@
 """AP2 Protocol Support Module.
 
-This module implements the AP2 (Agent Payment Protocol v2) for ANP,
-providing CartMandate and PaymentMandate construction and verification.
+This module provides a collection of orthogonal tools for building and
+verifying AP2 protocol data structures.
 
-Core Components:
-    - models: Pydantic data models for AP2 protocol entities
-    - cart_mandate: CartMandate builder and verifier
-    - payment_mandate: PaymentMandate builder and verifier
-    - utils: Common utilities (JCS canonicalization, hash computation)
+The primary API surface is flat, providing direct access to key builders,
+validators, and commonly used Pydantic models so callers can simply import
+`from anp.ap2 import CartMandate` without digging into subpackages.
 """
 
-from anp.ap2.cart_mandate import CartMandateBuilder, CartMandateVerifier
-from anp.ap2.payment_mandate import PaymentMandateBuilder, PaymentMandateVerifier
-from anp.ap2.client import (
-    AP2Client,
-    create_cart_mandate,
-    send_payment_mandate,
-)
-from anp.ap2.models import (
-    CartMandate,
-    PaymentMandate,
+from .models import (
+    ANPMessage,
     CartContents,
-    PaymentMandateContents,
-    PaymentRequest,
+    CartMandate,
+    CartMandateRequestData,
+    DisplayItem,
+    FulfillmentItem,
+    FulfillmentReceipt,
+    FulfillmentReceiptContents,
+    MoneyAmount,
     PaymentDetails,
     PaymentDetailsTotal,
-    PaymentResponse,
-    MoneyAmount,
-    DisplayItem,
-    ShippingAddress,
+    PaymentMandate,
+    PaymentMandateContents,
     PaymentMethodData,
-    QRCodePaymentData,
+    PaymentProvider,
+    PaymentReceipt,
+    PaymentReceiptContents,
+    PaymentRequest,
     PaymentRequestOptions,
-    PaymentTotal,
+    PaymentResponse,
+    PaymentResponseDetails,
+    PaymentStatus,
+    QRCodePaymentData,
+    ShippingAddress,
+    ShippingInfo,
+    VerifiedCartMandate,
+    VerifiedPaymentMandate,
 )
+from .utils import compute_hash
 
 __all__ = [
-    # Builders and Verifiers
-    "CartMandateBuilder",
-    "CartMandateVerifier",
-    "PaymentMandateBuilder",
-    "PaymentMandateVerifier",
-    # HTTP Client
-    "AP2Client",
-    "create_cart_mandate",
-    "send_payment_mandate",
-    # Models
-    "CartMandate",
-    "PaymentMandate",
+    # Data Models
+    "ANPMessage",
     "CartContents",
-    "PaymentMandateContents",
-    "PaymentRequest",
+    "CartMandate",
+    "CartMandateRequestData",
+    "DisplayItem",
+    "MoneyAmount",
     "PaymentDetails",
     "PaymentDetailsTotal",
-    "PaymentResponse",
-    "MoneyAmount",
-    "DisplayItem",
-    "ShippingAddress",
+    "PaymentMandate",
+    "PaymentMandateContents",
     "PaymentMethodData",
-    "QRCodePaymentData",
+    "PaymentReceipt",
+    "PaymentReceiptContents",
+    "PaymentProvider",
+    "PaymentRequest",
     "PaymentRequestOptions",
-    "PaymentTotal",
+    "PaymentResponse",
+    "PaymentResponseDetails",
+    "PaymentStatus",
+    "QRCodePaymentData",
+    "ShippingAddress",
+    "ShippingInfo",
+    "VerifiedCartMandate",
+    "VerifiedPaymentMandate",
+    "FulfillmentItem",
+    "FulfillmentReceipt",
+    "FulfillmentReceiptContents",
+    # Utilities
+    "compute_hash",
 ]
