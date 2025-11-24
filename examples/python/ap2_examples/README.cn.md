@@ -8,29 +8,43 @@ AP2 是基于 ANP（智能体协商协议）构建的协议，用于智能体之
 
 ## 示例列表
 
-### ES256K 示例
+### 完整流程（单进程）
 
-**文件**: `es256k_example.py`
+**文件**: `ap2_complete_flow.py`
 
-演示如何使用 ES256K（基于 secp256k1 曲线的 ECDSA）算法对 CartMandate 和 PaymentMandate 进行签名。这对于区块链和加密货币应用特别有用。
+同时启动商户服务与购物者客户端，快速回放从 CartMandate 创建到收据发放的完整 AP2 流程。
 
 **运行**:
 ```bash
-uv run python examples/python/ap2_examples/es256k_example.py
+uv run python examples/python/ap2_examples/ap2_complete_flow.py
 ```
 
-**功能特性**:
-- 生成 ES256K (secp256k1) 密钥对
-- 使用 ES256K 签名构建 CartMandate
-- 使用 ES256K 验证 CartMandate
-- 使用 ES256K 签名构建 PaymentMandate
-- 使用 ES256K 验证 PaymentMandate
+### 独立商户 & 购物者（双进程）
 
-**适用场景**:
-- 基于区块链的支付系统
-- 加密货币交易
-- 与比特币/以太坊生态系统集成
-- 需要较小签名大小的应用
+**文件**: `merchant_server.py`, `shopper_client.py`
+
+将职责拆分成两个独立进程，便于分别调试 HTTP API、部署到不同主机或演示真实网络交互。
+
+**运行步骤**:
+1. 终端 A：启动商户服务（默认绑定本机 IP）
+   ```bash
+   uv run python examples/python/ap2_examples/merchant_server.py
+   ```
+   可选参数：`--host 0.0.0.0`、`--port 8889`
+
+2. 终端 B：启动购物者客户端，并指向商户 URL
+   ```bash
+   uv run python examples/python/ap2_examples/shopper_client.py \
+     --merchant-url http://<merchant-host>:<port> \
+     --merchant-did did:wba:didhost.cc:public
+   ```
+   若使用仓库内置的公用 DID/证书，上述参数可省略，默认即为本地演示配置。
+
+### Agent 级积木
+
+**文件**: `merchant_agent.py`, `shopper_agent.py`
+
+封装了常用的构建/验证逻辑，不包含 HTTP 服务。可在更复杂的集成场景或测试中直接复用。
 
 ## 支持的算法
 
