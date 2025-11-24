@@ -5,7 +5,7 @@ PaymentReceipt and FulfillmentReceipt credentials.
 """
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional
 
 import jwt
 
@@ -168,8 +168,8 @@ def validate_credential(
     merchant_algorithm: str,
     expected_shopper_did: str,
     expected_pmt_hash: str,
-) -> Tuple[Dict[str, Any], str]:
-    """Validate a Credential (PaymentReceipt or FulfillmentReceipt).
+) -> dict:
+    """Validate a Credential (PaymentReceipt or FulfillmentReceipt) and return the payload.
 
     Args:
         credential: PaymentReceipt or FulfillmentReceipt to validate.
@@ -179,10 +179,10 @@ def validate_credential(
         expected_pmt_hash: Hash of the preceding PaymentMandate in the chain.
 
     Returns:
-        Tuple containing decoded JWT payload and computed credential_hash.
+        Decoded JWT payload from merchant_authorization.
 
     Raises:
-        ValueError: If credential type or chain hash is invalid.
+        ValueError: If content hash or chain hash is invalid.
         jwt.InvalidTokenError: If JWT is invalid.
     """
     # 1. Determine expected credential type
@@ -228,7 +228,8 @@ def validate_credential(
             f"got {cred_hash_in_token}"
         )
 
-    return payload, computed_cred_hash
+    # Return payload only; caller may recompute cred_hash if needed
+    return payload
 
 
 __all__ = [

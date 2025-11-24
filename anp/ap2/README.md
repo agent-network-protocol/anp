@@ -178,7 +178,7 @@ print("[Merchant] PaymentReceipt credential issued.")
 
 # --- 6. Shopper: Verify the Payment Receipt ---
 # The shopper receives the receipt and verifies its authenticity and its link to the payment.
-cred_payload, cred_hash = validate_credential(
+cred_payload = validate_credential(
     credential=payment_receipt,
     merchant_public_key=public_key_pem,
     merchant_algorithm=credential_algorithm,
@@ -187,6 +187,6 @@ cred_payload, cred_hash = validate_credential(
 )
 print("[Shopper] PaymentReceipt verified successfully.")
 print(f"[Shopper] Receipt issuer: {cred_payload['iss']}")
-print(f"[Shopper] Credential hash: {cred_hash[:32]}...")
+print(f\"[Shopper] Credential hash: {cred_payload.get('cred_hash', '')[:32]}...\")
 
 ```

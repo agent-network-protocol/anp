@@ -53,6 +53,12 @@ uv run python examples/python/ap2_examples/es256k_example.py
 - References CartMandate via `cart_hash`
 - Verified by merchant
 
+## Key resolution (travel-anp-agent pattern)
+
+For local runs, both shopper and merchant can reuse the sample DID assets in `docs/did_public/`:
+- Load the DID document (`public-did-doc.json`) to resolve the shopper public key (via `verificationMethod[0].publicKeyJwk`) — mirroring the `user_public_key_resolver` pattern in `travel_anp_agent/agents/ap2/services/mandate_service.py`.
+- Use the same DID document as the merchant DID for demos; no need to derive public keys from private PEMs in production flows. Instead, resolve public keys from the DID document or your DID resolver, and only use the private key for signing.
+
 ## Dependencies
 
 All examples require:
@@ -76,4 +82,3 @@ When adding new examples:
 3. Add error handling
 4. Update this README
 5. Test the example before committing
-
