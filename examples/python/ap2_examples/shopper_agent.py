@@ -6,7 +6,11 @@ The Shopper Agent handles the client-side workflow:
 2. Verify received CartMandate
 3. Build and send PaymentMandate
 4. Receive and verify credentials
+
+启动顺序：请先启动 merchant_agent 服务，再启动 shopper_agent（可参考 ap2_complete_flow.py 的 orchestration）。
 """
+
+from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Optional, Union
@@ -16,7 +20,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from anp.ap2 import (
-    CartContents,
     CartMandate,
     FulfillmentReceipt,
     MoneyAmount,
@@ -36,6 +39,7 @@ from anp.authentication import DIDWbaAuthHeader
 
 logger = logging.getLogger(__name__)
 
+
 class ShopperAgent:
     """Stateless AP2 Shopper Agent.
 
@@ -54,6 +58,10 @@ class ShopperAgent:
         shopper_private_key: str,
         shopper_did: str,
         shopper_kid: str,
+        merchant_public_key: str,
+        *,
+        did_document_path: str | None = None,
+        auth_private_key_path: str | None = None,
         algorithm: str = "RS256",
     ):
         """Initialize the stateless Shopper Agent.
@@ -62,16 +70,26 @@ class ShopperAgent:
             shopper_private_key: Shopper's private key for JWS signing.
             shopper_did: Shopper's DID.
             shopper_kid: Shopper's key ID for JWS signing.
+            merchant_public_key: Merchant public key for credential validation.
+            did_document_path: Path to DID document for DIDWbaAuthHeader (optional).
+            auth_private_key_path: Private key path for DIDWbaAuthHeader (optional).
             algorithm: JWS algorithm (e.g., "RS256").
         """
         self.shopper_private_key = shopper_private_key
         self.shopper_did = shopper_did
         self.shopper_kid = shopper_kid
+        self.merchant_public_key = merchant_public_key
         self.algorithm = algorithm
         self.cart_hash: Optional[str] = None
         self.pmt_hash: Optional[str] = None
-
-
+        self.auth_header = (
+            DIDWbaAuthHeader(
+                did_document_path=did_document_path,
+                private_key_path=auth_private_key_path,
+            )
+            if did_document_path and auth_private_key_path
+            else None
+        )
 
     def verify_cart_mandate(
         self,
@@ -136,18 +154,6 @@ class ShopperAgent:
 
         Returns:
             PaymentMandate ready to send
-
-        Example:
-            >>> # After verifying CartMandate
-            >>> result = agent.verify_cart_mandate(cart_mandate, merchant_public_key)
-            >>> pmt_mandate = agent.build_payment_mandate(
-            ...     payment_mandate_id="pm_123",
-            ...     order_id="order_123",
-            ...     total_amount={"currency": "CNY", "value": 120.0},
-            ...     payment_details={"channel": "ALIPAY", "out_trade_no": "trade_001"},
-            ...     merchant_did="did:wba:merchant.example.com:merchant",
-            ...     cart_hash=result["cart_hash"],
-            ... )
         """
         if not cart_hash:
             raise ValueError("cart_hash is required")
@@ -228,26 +234,11 @@ class ShopperAgent:
 
         Raises:
             Exception: HTTP request failed or response error
-
-        Example:
-            >>> # First create a PaymentMandate
-            >>> from anp.ap2 import PaymentMandateBuilder
-            >>> builder = PaymentMandateBuilder(
-            ...     user_private_key=private_key,
-            ...     user_did="did:wba:didhost.cc:shopper",
-            ...     user_kid="shopper-key-001",
-            ...     algorithm="RS256",
-            ...     merchant_did=merchant_did
-            ... )
-            >>> payment_mandate = builder.build(pmt_contents, cart_hash)
-            >>>
-            >>> # Send the PaymentMandate
-            >>> response = await client.send_payment_mandate(
-            ...     merchant_url="https://merchant.example.com",
-            ...     merchant_did="did:wba:merchant.example.com:merchant",
-            ...     payment_mandate=payment_mandate
-            ... )
+            RuntimeError: If auth header is not configured
         """
+        if self.auth_header is None:
+            raise RuntimeError("DIDWbaAuthHeader is required to send payment mandates")
+
         # Build request URL
         endpoint = f"{merchant_url.rstrip('/')}/ap2/merchant/send_payment_mandate"
 
@@ -264,9 +255,12 @@ class ShopperAgent:
             },
         }
 
-        # Get DID WBA authentication header
-        # Note: Use force_new=True to generate a new nonce for each request
-        auth_headers = self.auth_header.get_auth_header(endpoint, force_new=True)
+        # Get DID WBA authentication header if available
+        auth_headers = (
+            self.auth_header.get_auth_header(endpoint, force_new=True)
+            if self.auth_header
+            else {}
+        )
 
         # Send HTTP POST request
         async with aiohttp.ClientSession() as session:
@@ -300,15 +294,6 @@ class ShopperAgent:
         Args:
             callback: Function that will be called when a credential is received and verified
                      Takes one argument: the credential object (PaymentReceipt or FulfillmentReceipt)
-
-        Example:
-            >>> def handle_credential(credential):
-            ...     if isinstance(credential, PaymentReceipt):
-            ...         print(f"Payment receipt: {credential.contents.transaction_id}")
-            ...     elif isinstance(credential, FulfillmentReceipt):
-            ...         print(f"Fulfillment receipt: {credential.contents.order_id}")
-            >>>
-            >>> agent.set_credential_callback(handle_credential)
         """
         self.credential_callback = callback
 
@@ -324,46 +309,7 @@ class ShopperAgent:
         Returns:
             APIRouter ready to be included in FastAPI app
 
-        Raises:
-            ImportError: If FastAPI is not installed
-            ValueError: If credential_validator is not configured
-
-        Example:
-            >>> from fastapi import FastAPI
-            >>> from anp.ap2 import ShopperAgent
-            >>>
-            >>> # Initialize shopper agent with merchant's public key
-            >>> shopper = ShopperAgent(
-            ...     did_document_path="did.json",
-            ...     private_key_path="key.pem",
-            ...     shopper_did="did:wba:shopper.example.com:alice",
-            ...     shopper_kid="key-1",
-            ...     merchant_public_key=merchant_pub_key
-            ... )
-            >>>
-            >>> # Set callback
-            >>> def handle_credential(cred):
-            ...     print(f"Received: {cred.id}")
-            >>>
-            >>> shopper.set_credential_callback(handle_credential)
-            >>>
-            >>> # Create router
-            >>> app = FastAPI()
-            >>> shopper_router = shopper.create_fastapi_router()
-            >>> app.include_router(shopper_router, prefix="/webhook")
-            >>>
-            >>> # Now merchant can POST credentials to /webhook/credential
         """
-        if not FASTAPI_AVAILABLE:
-            raise ImportError(
-                "FastAPI is not installed. Install with: pip install fastapi"
-            )
-
-        if not self.credential_validator:
-            raise ValueError(
-                "credential_validator not configured. "
-                "Please provide merchant_public_key when initializing ShopperAgent."
-            )
 
         router = APIRouter(prefix=prefix)
 
@@ -399,19 +345,17 @@ class ShopperAgent:
 
                 logger.debug("Validating credential signature and hash chain")
 
-                # Validate will raise ValueError if verification fails
-                payload = self.credential_validator.validate(
+                _ = validate_credential(
                     credential=credential,
+                    merchant_public_key=self.merchant_public_key,
+                    merchant_algorithm=self.algorithm,
                     expected_shopper_did=self.shopper_did,
-                    expected_cart_hash=self.cart_hash,
                     expected_pmt_hash=self.pmt_hash,
                 )
-
-                # Verification successful - extract verified data
-                verified_cred_hash = payload.get("cred_hash")
-                logger.info(
-                    f"Credential verified successfully: cred_hash={verified_cred_hash[:16]}..."
+                verified_cred_hash = compute_hash(
+                    credential.contents.model_dump(exclude_none=True)
                 )
+                logger.info("Credential verified successfully")
 
                 # Call callback if set
                 if self.credential_callback:
@@ -424,7 +368,7 @@ class ShopperAgent:
                     content={
                         "status": "success",
                         "message": "Credential received and verified",
-                        "credential_id": credential.id,
+                        "credential_id": getattr(credential.contents, "id", None),
                         "credential_type": credential_type,
                         "cred_hash": verified_cred_hash,
                     },

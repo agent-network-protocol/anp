@@ -34,8 +34,6 @@ from .models import (
     QRCodePaymentData,
     ShippingAddress,
     ShippingInfo,
-    VerifiedCartMandate,
-    VerifiedPaymentMandate,
 )
 from .utils import compute_hash
 
@@ -63,8 +61,6 @@ __all__ = [
     "QRCodePaymentData",
     "ShippingAddress",
     "ShippingInfo",
-    "VerifiedCartMandate",
-    "VerifiedPaymentMandate",
     "FulfillmentItem",
     "FulfillmentReceipt",
     "FulfillmentReceiptContents",

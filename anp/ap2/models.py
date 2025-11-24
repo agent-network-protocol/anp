@@ -215,22 +215,6 @@ class PaymentMandate(BaseModel):
         return self.payment_mandate_contents.payment_mandate_id
 
 
-class VerifiedCartMandate(BaseModel):
-    """Result returned by CartMandateValidator."""
-
-    cart_mandate: CartMandate = Field(..., description="Original CartMandate object")
-    merchant_payload: Dict[str, Any] = Field(..., description="Decoded merchant JWT payload")
-    cart_hash: str = Field(..., description="Hash of CartMandate contents")
-
-
-class VerifiedPaymentMandate(BaseModel):
-    """Result returned by PaymentMandateValidator."""
-
-    payment_mandate: PaymentMandate = Field(..., description="Original PaymentMandate object")
-    shopper_payload: Dict[str, Any] = Field(..., description="Decoded shopper JWT payload")
-    pmt_hash: str = Field(..., description="Hash of PaymentMandate contents")
-
-
 class CartMandateRequestData(BaseModel):
     """Data for initiating a CartMandate request from TA to MA."""
 
