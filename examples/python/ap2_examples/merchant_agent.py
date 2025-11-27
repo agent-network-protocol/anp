@@ -36,8 +36,8 @@ from anp.ap2.credential_mandate import (
     build_fulfillment_receipt,
     build_payment_receipt,
 )
+from anp.ap2.mandate import compute_hash
 from anp.ap2.payment_mandate import validate_payment_mandate
-from anp.ap2.utils import compute_hash
 
 logger = logging.getLogger(__name__)
 
@@ -98,16 +98,19 @@ class MerchantAgent:
         if request.to != self.merchant_did:
             raise ValueError(f"Request not for this merchant: {request.to}")
 
-        if not isinstance(request.data, CartMandateRequestData):
+        # Parse data dict to CartMandateRequestData
+        try:
+            data = CartMandateRequestData.model_validate(request.data)
+        except Exception as e:
             raise TypeError(
-                "Invalid message data type: expected CartMandateRequestData"
-            )
+                f"Invalid message data type: expected CartMandateRequestData, got {e}"
+            ) from e
 
         return {
-            "cart_mandate_id": request.data.cart_mandate_id,
-            "items": [item.model_dump() for item in request.data.items],
-            "shipping_address": request.data.shipping_address.model_dump()
-            if request.data.shipping_address
+            "cart_mandate_id": data.cart_mandate_id,
+            "items": [item.model_dump() for item in data.items],
+            "shipping_address": data.shipping_address.model_dump()
+            if data.shipping_address
             else None,
             "client_did": request.from_,
             "webhook_url": request.credential_webhook_url,
@@ -161,6 +164,12 @@ class MerchantAgent:
         logger.info(f"Building CartMandate for order_id={order_id}")
         provider = payment_channel
 
+        # Ensure provider is PaymentProvider enum
+        if isinstance(payment_channel, str):
+            provider = PaymentProvider(payment_channel)
+        else:
+            provider = payment_channel
+
         payment_request = PaymentRequest(
             method_data=[
                 PaymentMethodData(
@@ -188,7 +197,7 @@ class MerchantAgent:
         )
 
         cart_mandate_obj = build_cart_mandate(
-            contents=contents,
+            contents=contents.model_dump(exclude_none=True),
             merchant_private_key=self.merchant_private_key,
             merchant_did=self.merchant_did,
             merchant_kid=self.merchant_kid,
@@ -201,7 +210,7 @@ class MerchantAgent:
             messageId=resolved_message_id,
             **{"from": self.merchant_did},
             to=resolved_shopper_did,
-            data=cart_mandate_obj,
+            data=cart_mandate_obj.model_dump(exclude_none=True),
         )
 
         logger.debug(f"CartMandate built successfully for order_id={order_id}")
@@ -242,37 +251,31 @@ class MerchantAgent:
                 f"expected {self.merchant_did}, got {request.to}"
             )
 
-        # Extract PaymentMandate from ANP message
-        if not isinstance(request.data, PaymentMandate):
-            raise TypeError("Invalid message data type: expected PaymentMandate")
-
-        payment_mandate = request.data
+        # Parse data dict to PaymentMandate
+        try:
+            payment_mandate = PaymentMandate.model_validate(request.data)
+        except Exception as e:
+            raise TypeError(
+                f"Invalid message data type: expected PaymentMandate, got {e}"
+            ) from e
         logger.debug(f"Expected cart_hash: {cart_hash[:16]}...")
 
         # Verify payment mandate signature and hash chain
-        payload = validate_payment_mandate(
+        if not validate_payment_mandate(
             payment_mandate=payment_mandate,
             shopper_public_key=shopper_public_key,
             shopper_algorithm=self.algorithm,
             expected_merchant_did=self.merchant_did,
             expected_cart_hash=cart_hash,
-        )
-
-        # Additional security: JWT issuer should match message sender
-        jwt_issuer = payload.get("iss")
-        if jwt_issuer != request.from_:
-            raise ValueError(
-                f"JWT issuer ({jwt_issuer}) does not match "
-                f"message sender ({request.from_})"
-            )
+        ):
+            raise ValueError("PaymentMandate validation failed")
 
         # Compute pmt_hash for caller
-        pmt_hash = compute_hash(
-            payment_mandate.payment_mandate_contents.model_dump(exclude_none=True)
-        )
+        # payment_mandate_contents is already a dict
+        pmt_hash = compute_hash(payment_mandate.payment_mandate_contents)
         logger.info("PaymentMandate verified: pmt_hash=%s...", pmt_hash[:16])
 
-        return {"payload": payload, "pmt_hash": pmt_hash}
+        return {"pmt_hash": pmt_hash}
 
     def build_payment_receipt(
         self,

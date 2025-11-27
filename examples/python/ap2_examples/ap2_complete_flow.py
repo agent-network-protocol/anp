@@ -22,7 +22,6 @@ from anp.ap2 import (
     CartMandate,
     CartMandateRequestData,
     DisplayItem,
-    FulfillmentItem,
     FulfillmentReceipt,
     FulfillmentReceiptContents,
     MoneyAmount,
@@ -44,8 +43,8 @@ from anp.ap2 import (
 )
 from anp.ap2.cart_mandate import build_cart_mandate, validate_cart_mandate
 from anp.ap2.credential_mandate import build_fulfillment_receipt, build_payment_receipt
+from anp.ap2.mandate import compute_hash
 from anp.ap2.payment_mandate import build_payment_mandate, validate_payment_mandate
-from anp.ap2.utils import compute_hash
 from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader
 from anp.authentication.did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig
 from anp.authentication.verification_methods import EcdsaSecp256k1VerificationKey2019
@@ -135,12 +134,15 @@ class MerchantServer:
 
         payload = await request.json()
         message = ANPMessage(**payload)
-        if not isinstance(message.data, CartMandateRequestData):
+
+        # Parse data dict to CartMandateRequestData
+        try:
+            data = CartMandateRequestData.model_validate(message.data)
+        except Exception as e:
             return web.json_response(
-                {"error": "Invalid payload: expected CartMandateRequestData"},
+                {"error": f"Invalid payload: {e}"},
                 status=400,
             )
-        data: CartMandateRequestData = message.data
 
         display_items: list[DisplayItem] = []
         total = 0.0
@@ -189,7 +191,7 @@ class MerchantServer:
             payment_request=payment_request,
         )
         cart_mandate = build_cart_mandate(
-            contents=cart_contents,
+            contents=cart_contents.model_dump(exclude_none=True),
             merchant_private_key=self.merchant_private_key,
             merchant_did=self.merchant_did,
             merchant_kid=self.merchant_kid,
@@ -197,13 +199,15 @@ class MerchantServer:
             algorithm=self.algorithm,
         )
 
-        validate_cart_mandate(
+        if not validate_cart_mandate(
             cart_mandate=cart_mandate,
             merchant_public_key=self.merchant_public_key,
             merchant_algorithm=self.algorithm,
             expected_shopper_did=shopper_did,
-        )
-        cart_hash = compute_hash(cart_mandate.contents.model_dump(exclude_none=True))
+        ):
+            raise ValueError("CartMandate validation failed")
+        # contents is already a dict
+        cart_hash = compute_hash(cart_mandate.contents)
         self.cart_mandates[data.cart_mandate_id] = cart_mandate
         self.cart_hashes[data.cart_mandate_id] = cart_hash
 
@@ -236,39 +240,43 @@ class MerchantServer:
 
         payload = await request.json()
         message = ANPMessage(**payload)
-        if not isinstance(message.data, PaymentMandate):
-            return web.json_response(
-                {"error": "Invalid payload: expected PaymentMandate"}, status=400
-            )
-        payment_mandate = message.data
-        contents: PaymentMandateContents = payment_mandate.payment_mandate_contents
 
-        cart_id = contents.payment_details_id.replace("order_", "")
+        # Parse data dict to PaymentMandate
+        try:
+            payment_mandate = PaymentMandate.model_validate(message.data)
+        except Exception as e:
+            return web.json_response({"error": f"Invalid payload: {e}"}, status=400)
+
+        # payment_mandate_contents is already a dict
+        contents_dict = payment_mandate.payment_mandate_contents
+
+        cart_id = contents_dict["payment_details_id"].replace("order_", "")
         cart_mandate = self.cart_mandates.get(cart_id)
         if not cart_mandate:
             return web.json_response({"error": "Unknown cart mandate"}, status=404)
 
-        validate_cart_mandate(
-            cart_mandate=cart_mandate,
+        if not validate_cart_mandate(
+            cart_mandate=cart_mandate.model_dump(exclude_none=True),
             merchant_public_key=self.merchant_public_key,
             merchant_algorithm=self.algorithm,
             expected_shopper_did=shopper_did,
-        )
-        cart_hash = compute_hash(cart_mandate.contents.model_dump(exclude_none=True))
+        ):
+            raise ValueError("CartMandate validation failed")
+        # contents is already a dict
+        cart_hash = compute_hash(cart_mandate.contents)
 
-        payload = validate_payment_mandate(
-            payment_mandate=payment_mandate,
+        if not validate_payment_mandate(
+            payment_mandate=payment_mandate.model_dump(exclude_none=True),
             shopper_public_key=self.shopper_public_key,
             shopper_algorithm=self.algorithm,
             expected_merchant_did=self.merchant_did,
             expected_cart_hash=cart_hash,
-        )
-        pmt_hash = compute_hash(
-            payment_mandate.payment_mandate_contents.model_dump(exclude_none=True)
-        )
+        ):
+            raise ValueError("PaymentMandate validation failed")
+
+        pmt_hash = compute_hash(contents_dict)
 
         print("[Merchant] ✓ PaymentMandate verified")
-        print(f"[Merchant]   - Issuer: {payload['iss']}")
         print(f"[Merchant]   - Cart hash: {cart_hash[:32]}…")
         print(f"[Merchant]   - Payment hash: {pmt_hash[:32]}…")
 
@@ -280,12 +288,12 @@ class MerchantServer:
         )
 
         response = {
-            "messageId": f"payment-response-{contents.payment_mandate_id}",
+            "messageId": f"payment-response-{contents_dict['payment_mandate_id']}",
             "from": self.merchant_did,
             "to": shopper_did,
             "data": {
                 "status": "accepted",
-                "payment_id": contents.payment_mandate_id,
+                "payment_id": contents_dict["payment_mandate_id"],
                 "message": "Payment authorization accepted",
                 "payment_receipt": payment_receipt.model_dump(exclude_none=True),
                 "fulfillment_receipt": fulfillment_receipt.model_dump(
@@ -303,17 +311,18 @@ class MerchantServer:
         shopper_did: str,
     ) -> tuple[PaymentReceipt, FulfillmentReceipt]:
         """Mock post-payment processing: issue PaymentReceipt and FulfillmentReceipt."""
-        contents = payment_mandate.payment_mandate_contents
+        # payment_mandate_contents is a dict
+        contents_dict = payment_mandate.payment_mandate_contents
         now = datetime.now(timezone.utc).isoformat()
 
         payment_contents = PaymentReceiptContents(
-            payment_mandate_id=contents.payment_mandate_id,
+            payment_mandate_id=contents_dict["payment_mandate_id"],
             provider=PaymentProvider.ALIPAY,
             status=PaymentStatus.SUCCEEDED,
-            transaction_id=f"txn_{contents.payment_mandate_id}",
-            out_trade_no=contents.payment_response.details.out_trade_no,
+            transaction_id=f"txn_{contents_dict['payment_mandate_id']}",
+            out_trade_no=contents_dict["payment_response"]["details"]["out_trade_no"],
             paid_at=now,
-            amount=contents.payment_details_total.amount,
+            amount=MoneyAmount(**contents_dict["payment_details_total"]["amount"]),
             pmt_hash=pmt_hash,
         )
         payment_receipt = build_payment_receipt(
@@ -327,12 +336,16 @@ class MerchantServer:
         )
         print("[Merchant] → Issued PaymentReceipt (mock webhook)")
 
+        # cart_mandate.contents is a dict
+        cart_contents_dict = cart_mandate.contents
+        payment_request_dict = cart_contents_dict["payment_request"]
+        details_dict = payment_request_dict["details"]
         fulfillment_items = [
-            FulfillmentItem(id=item.id, quantity=item.quantity)
-            for item in cart_mandate.contents.payment_request.details.displayItems
+            DisplayItem(**item) for item in details_dict["displayItems"]
         ]
+
         fulfillment_contents = FulfillmentReceiptContents(
-            order_id=cart_mandate.contents.payment_request.details.id,
+            order_id=details_dict["id"],
             items=fulfillment_items,
             fulfilled_at=now,
             shipping=None,
@@ -414,7 +427,7 @@ class ShopperAgent:
             messageId=f"cart-request-{cart_mandate_id}",
             from_=self.client_did,
             to=merchant_did,
-            data=request_data,
+            data=request_data.model_dump(exclude_none=True),
         )
 
         async with ClientSession(trust_env=False) as session:
@@ -431,32 +444,39 @@ class ShopperAgent:
                 self.auth_handler.update_token(merchant_url, dict(response.headers))
                 cart_response = await response.json()
 
-        received_cart = CartMandate(**cart_response["data"])
-        validate_cart_mandate(
-            cart_mandate=received_cart,
+        received_cart = CartMandate.model_validate(cart_response["data"])
+        if not validate_cart_mandate(
+            cart_mandate=received_cart.model_dump(exclude_none=True),
             merchant_public_key=self.merchant_public_key,
             merchant_algorithm="ES256K",
             expected_shopper_did=self.client_did,
-        )
-        cart_hash = compute_hash(received_cart.contents.model_dump(exclude_none=True))
+        ):
+            raise ValueError("CartMandate validation failed")
+        # contents is already a dict
+        cart_hash = compute_hash(received_cart.contents)
         print("[Shopper] Step 3: ✓ CartMandate verified")
 
+        # Parse received cart contents to access fields
+        cart_contents_dict = received_cart.contents
+        payment_request_dict = cart_contents_dict["payment_request"]
+        details_dict = payment_request_dict["details"]
+        method_data_list = payment_request_dict["method_data"]
+
         payment_response = PaymentResponse(
-            request_id=received_cart.contents.payment_request.details.id,
+            request_id=details_dict["id"],
             method_name="QR_CODE",
             details=PaymentResponseDetails(
                 channel=PaymentProvider.ALIPAY,
-                out_trade_no=received_cart.contents.payment_request.method_data[
-                    0
-                ].data.out_trade_no,
+                out_trade_no=method_data_list[0]["data"]["out_trade_no"],
             ),
         )
+
         contents = PaymentMandateContents(
             payment_mandate_id="pm_20250127_001",
-            payment_details_id=received_cart.contents.payment_request.details.id,
+            payment_details_id=details_dict["id"],
             payment_details_total=PaymentDetailsTotal(
                 label="Total",
-                amount=received_cart.contents.payment_request.details.total.amount,
+                amount=MoneyAmount(**details_dict["total"]["amount"]),
                 refund_period=30,
             ),
             payment_response=payment_response,
@@ -464,27 +484,28 @@ class ShopperAgent:
             cart_hash=cart_hash,
         )
         payment_mandate = build_payment_mandate(
-            contents=contents,
-            user_private_key=self.payment_private_key,
-            user_did=self.client_did,
-            user_kid="shopper-key-001",
+            contents=contents.model_dump(exclude_none=True),
+            shopper_private_key=self.payment_private_key,
+            shopper_did=self.client_did,
+            shopper_kid="shopper-key-001",
             merchant_did=merchant_did,
             algorithm="ES256K",
         )
 
-        validate_payment_mandate(
-            payment_mandate=payment_mandate,
+        if not validate_payment_mandate(
+            payment_mandate=payment_mandate.model_dump(exclude_none=True),
             shopper_public_key=self.merchant_public_key,
             shopper_algorithm="ES256K",
             expected_merchant_did=merchant_did,
             expected_cart_hash=cart_hash,
-        )
+        ):
+            raise ValueError("PaymentMandate validation failed")
 
         payment_message = ANPMessage(
-            messageId=f"payment-request-{payment_mandate.payment_mandate_contents.payment_mandate_id}",
+            messageId=f"payment-request-{contents.payment_mandate_id}",
             from_=self.client_did,
             to=merchant_did,
-            data=payment_mandate,
+            data=payment_mandate.model_dump(exclude_none=True),
         )
         auth_header = self.auth_handler.get_auth_header(merchant_url)
         async with ClientSession(trust_env=False) as session:
@@ -553,7 +574,6 @@ async def main():
     print("=" * 60)
     print(f"Local IP: {local_ip}")
     print(f"Port: {port}")
-
 
     root = get_project_root()
     did_document_path = root / "docs/did_public/public-did-doc.json"

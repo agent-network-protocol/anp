@@ -33,8 +33,8 @@ from anp.ap2 import (
 )
 from anp.ap2.cart_mandate import validate_cart_mandate
 from anp.ap2.credential_mandate import validate_credential
+from anp.ap2.mandate import compute_hash
 from anp.ap2.payment_mandate import build_payment_mandate
-from anp.ap2.utils import compute_hash
 from anp.authentication import DIDWbaAuthHeader
 
 logger = logging.getLogger(__name__)
@@ -112,18 +112,20 @@ class ShopperAgent:
             ValueError: If the signature is invalid or the mandate is not
                         intended for the current shopper.
         """
-        payload = validate_cart_mandate(
+        if not validate_cart_mandate(
             cart_mandate=cart_mandate,
             merchant_public_key=merchant_public_key,
             merchant_algorithm=self.algorithm,
             expected_shopper_did=self.shopper_did,
-        )
+        ):
+            raise ValueError("CartMandate validation failed")
 
-        cart_hash = compute_hash(cart_mandate.contents.model_dump(exclude_none=True))
+        # contents is already a dict
+        cart_hash = compute_hash(cart_mandate.contents)
         self.cart_hash = cart_hash
         logger.info("CartMandate verified: cart_hash=%s...", cart_hash[:16])
 
-        return {"payload": payload, "cart_hash": cart_hash}
+        return {"cart_hash": cart_hash}
 
     def build_payment_mandate(
         self,
@@ -325,9 +327,9 @@ class ShopperAgent:
 
                 # Parse credential based on type
                 if credential_type == "PaymentReceipt":
-                    credential = PaymentReceipt(**credential_data)
+                    credential = PaymentReceipt.model_validate(credential_data)
                 elif credential_type == "FulfillmentReceipt":
-                    credential = FulfillmentReceipt(**credential_data)
+                    credential = FulfillmentReceipt.model_validate(credential_data)
                 else:
                     logger.warning(f"Unknown credential type: {credential_type}")
                     raise HTTPException(

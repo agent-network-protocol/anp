@@ -4,28 +4,25 @@ This module provides high-level functions for building and verifying
 PaymentReceipt and FulfillmentReceipt credentials.
 """
 
-import time
-from typing import Optional
-
 import jwt
 
+from anp.ap2.mandate import build_mandate, validate_mandate
 from anp.ap2.models import (
     FulfillmentReceipt,
     FulfillmentReceiptContents,
     PaymentReceipt,
     PaymentReceiptContents,
 )
-from anp.ap2.utils import compute_hash, verify_jws_payload
 
 
 def build_payment_receipt(
     contents: PaymentReceiptContents,
     pmt_hash: str,
-    merchant_private_key: str,
+    shopper_did: str,
     merchant_did: str,
     merchant_kid: str,
-    algorithm: str = "RS256",
-    shopper_did: Optional[str] = None,
+    merchant_private_key: str,
+    algorithm: str = "ES256K",
     ttl_seconds: int = 15552000,
 ) -> PaymentReceipt:
     """Build a PaymentReceipt with merchant authorization.
@@ -35,11 +32,11 @@ def build_payment_receipt(
     Args:
         contents: Payment receipt contents
         pmt_hash: Hash of the preceding PaymentMandate in the chain
-        merchant_private_key: Merchant private key
+        shopper_did: Shopper DID
         merchant_did: Merchant DID
         merchant_kid: Merchant key identifier
+        merchant_private_key: Merchant private key
         algorithm: JWT signing algorithm
-        shopper_did: Shopper DID (optional)
         ttl_seconds: Time to live in seconds
 
     Returns:
@@ -50,54 +47,39 @@ def build_payment_receipt(
 
     # Ensure contents include pmt_hash
     contents_with_chain = contents.model_copy(update={"pmt_hash": pmt_hash})
-
-    # Calculate credential hash
     contents_dict = contents_with_chain.model_dump(exclude_none=True)
-    cred_hash = compute_hash(contents_dict)
 
-    # Build JWT payload
-    now = int(time.time())
-    payload = {
-        "iss": merchant_did,
-        "sub": merchant_did,
-        "aud": shopper_did,
-        "iat": now,
-        "exp": now + ttl_seconds,
-        "jti": contents_with_chain.id,
-        "credential_type": "PaymentReceipt",
-        "cred_hash": cred_hash,
-    }
-
-    # Build JWT header
     headers = {
         "alg": algorithm,
         "kid": merchant_kid,
         "typ": "JWT",
     }
 
-    # Generate signature
-    merchant_authorization = jwt.encode(
-        payload,
-        merchant_private_key,
-        algorithm=algorithm,
+    mandate = build_mandate(
+        contents=contents_dict,
+        private_key=merchant_private_key,
         headers=headers,
+        iss=merchant_did,
+        sub=merchant_did,
+        aud=shopper_did,
+        ttl_seconds=ttl_seconds,
+        algorithm=algorithm,
+        hash_field_name="cred_hash",
     )
 
-    # Build PaymentReceipt
-    return PaymentReceipt(
-        contents=contents_with_chain,
-        merchant_authorization=merchant_authorization,
+    return PaymentReceipt.model_validate(
+        {"contents": contents_dict, "merchant_authorization": mandate["auth"]}
     )
 
 
 def build_fulfillment_receipt(
     contents: FulfillmentReceiptContents,
     pmt_hash: str,
-    merchant_private_key: str,
+    shopper_did: str,
     merchant_did: str,
     merchant_kid: str,
-    algorithm: str = "RS256",
-    shopper_did: Optional[str] = None,
+    merchant_private_key: str,
+    algorithm: str = "ES256K",
     ttl_seconds: int = 15552000,
 ) -> FulfillmentReceipt:
     """Build a FulfillmentReceipt with merchant authorization.
@@ -107,11 +89,11 @@ def build_fulfillment_receipt(
     Args:
         contents: Fulfillment receipt contents
         pmt_hash: Hash of the preceding PaymentMandate in the chain
-        merchant_private_key: Merchant private key
+        shopper_did: Shopper DID
         merchant_did: Merchant DID
         merchant_kid: Merchant key identifier
+        merchant_private_key: Merchant private key
         algorithm: JWT signing algorithm
-        shopper_did: Shopper DID (optional)
         ttl_seconds: Time to live in seconds
 
     Returns:
@@ -120,72 +102,55 @@ def build_fulfillment_receipt(
     if not isinstance(contents, FulfillmentReceiptContents):
         raise TypeError("contents must be a FulfillmentReceiptContents instance")
 
-    # Ensure contents include pmt_hash
     contents_with_chain = contents.model_copy(update={"pmt_hash": pmt_hash})
-
-    # Calculate credential hash
     contents_dict = contents_with_chain.model_dump(exclude_none=True)
-    cred_hash = compute_hash(contents_dict)
 
-    # Build JWT payload
-    now = int(time.time())
-    payload = {
-        "iss": merchant_did,
-        "sub": merchant_did,
-        "aud": shopper_did,
-        "iat": now,
-        "exp": now + ttl_seconds,
-        "jti": contents_with_chain.id,
-        "credential_type": "FulfillmentReceipt",
-        "cred_hash": cred_hash,
-    }
-
-    # Build JWT header
     headers = {
         "alg": algorithm,
         "kid": merchant_kid,
         "typ": "JWT",
     }
 
-    # Generate signature
-    merchant_authorization = jwt.encode(
-        payload,
-        merchant_private_key,
-        algorithm=algorithm,
+    mandate = build_mandate(
+        contents=contents_dict,
+        private_key=merchant_private_key,
         headers=headers,
+        iss=merchant_did,
+        sub=merchant_did,
+        aud=shopper_did,
+        ttl_seconds=ttl_seconds,
+        algorithm=algorithm,
+        hash_field_name="cred_hash",
     )
 
-    # Build FulfillmentReceipt
-    return FulfillmentReceipt(
-        contents=contents_with_chain,
-        merchant_authorization=merchant_authorization,
+    return FulfillmentReceipt.model_validate(
+        {"contents": contents_dict, "merchant_authorization": mandate["auth"]}
     )
 
 
 def validate_credential(
     credential: PaymentReceipt | FulfillmentReceipt,
+    expected_shopper_did: str,
     merchant_public_key: str,
     merchant_algorithm: str,
-    expected_shopper_did: str,
     expected_pmt_hash: str,
-) -> dict:
+) -> bool:
     """Validate a Credential (PaymentReceipt or FulfillmentReceipt) and return the payload.
 
     Args:
         credential: PaymentReceipt or FulfillmentReceipt to validate.
-        merchant_public_key: Merchant's public key for verification.
-        merchant_algorithm: JWT algorithm (e.g., RS256).
         expected_shopper_did: DID of the shopper (expected audience).
+        merchant_public_key: Merchant's public key for verification.
+        merchant_algorithm: JWT algorithm (e.g., ES256K).
         expected_pmt_hash: Hash of the preceding PaymentMandate in the chain.
 
     Returns:
-        Decoded JWT payload from merchant_authorization.
+        True if the credential passes verification, False otherwise.
 
     Raises:
-        ValueError: If content hash or chain hash is invalid.
-        jwt.InvalidTokenError: If JWT is invalid.
+        TypeError: If the credential type is unsupported.
+        jwt.InvalidTokenError: If JWT decoding fails (allowing caller to inspect failure reason).
     """
-    # 1. Determine expected credential type
     if isinstance(credential, PaymentReceipt):
         expected_cred_type = "PaymentReceipt"
     elif isinstance(credential, FulfillmentReceipt):
@@ -193,43 +158,31 @@ def validate_credential(
     else:
         raise TypeError(f"Unsupported credential type: {type(credential).__name__}")
 
-    # 2. Verify the merchant's JWS
-    payload = verify_jws_payload(
-        token=credential.merchant_authorization,
+    credential_dict = {
+        "contents": credential.contents,
+        "auth": credential.merchant_authorization,
+    }
+
+    if not validate_mandate(
+        mandate=credential_dict,
         public_key=merchant_public_key,
         algorithm=merchant_algorithm,
         expected_audience=expected_shopper_did,
+        hash_field_name="cred_hash",
+    ):
+        return False
+
+    payload = jwt.decode(
+        credential.merchant_authorization,
+        merchant_public_key,
+        algorithms=[merchant_algorithm],
+        audience=expected_shopper_did,
     )
 
-    # 3. Verify the credential type from the payload
-    cred_type_in_token = payload.get("credential_type")
-    if cred_type_in_token != expected_cred_type:
-        raise ValueError(
-            f"credential_type mismatch: expected {expected_cred_type}, "
-            f"got {cred_type_in_token}"
-        )
+    if payload.get("credential_type") != expected_cred_type:
+        return False
 
-    # 4. Verify the hash chain link
-    contents_pmt_hash = credential.contents.pmt_hash
-    if contents_pmt_hash != expected_pmt_hash:
-        raise ValueError(
-            f"pmt_hash mismatch: expected {expected_pmt_hash}, got {contents_pmt_hash}"
-        )
-
-    # 5. Compute and return the hash for this credential
-    contents_dict = credential.contents.model_dump(exclude_none=True)
-    computed_cred_hash = compute_hash(contents_dict)
-
-    # 6. Verify cred_hash in JWT payload
-    cred_hash_in_token = payload.get("cred_hash")
-    if cred_hash_in_token != computed_cred_hash:
-        raise ValueError(
-            f"cred_hash mismatch: expected {computed_cred_hash}, "
-            f"got {cred_hash_in_token}"
-        )
-
-    # Return payload only; caller may recompute cred_hash if needed
-    return payload
+    return credential.contents.get("pmt_hash") == expected_pmt_hash
 
 
 __all__ = [
