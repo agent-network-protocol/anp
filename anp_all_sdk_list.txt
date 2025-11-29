@@ -152,7 +152,7 @@ Module: anp.ap2.payment_mandate
     - def verify(self, payment_mandate: PaymentMandate, expected_cart_hash: str, expected_aud: Optional[str] = None, verify_time: bool = True) -> Dict
 
 
-Module: anp.ap2.utils
+Module: anp.ap2.mandate
 --------------------------------------------------------------------------------
   Functions:
     - def b64url_no_pad(data: bytes) -> str
@@ -600,7 +600,7 @@ from anp.ap2.cart_mandate import CartMandateBuilder, CartMandateVerifier, build,
 from anp.ap2.client import AP2Client, create_cart_mandate, send_payment_mandate
 from anp.ap2.models import CartContents, CartMandate, DisplayItem, MoneyAmount, PaymentDetails, ... and 10 more
 from anp.ap2.payment_mandate import PaymentMandateBuilder, PaymentMandateVerifier, build, verify
-from anp.ap2.utils import b64url_no_pad, compute_cart_hash, compute_hash, compute_pmt_hash, jcs_canonicalize
+from anp.ap2.mandate import b64url_no_pad, compute_hash, jcs_canonicalize
 from anp.authentication import DIDWbaAuthHeader, DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError, create_did_wba_document, ... and 5 more
 from anp.authentication.did_wba import create_did_wba_document, extract_auth_header_parts, generate_auth_header, generate_auth_json, resolve_did_wba_document, ... and 3 more
 from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader, clear_all_tokens, clear_token, get_auth_header, update_token

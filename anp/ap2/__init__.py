@@ -14,7 +14,6 @@ from .models import (
     CartMandate,
     CartMandateRequestData,
     DisplayItem,
-    FulfillmentItem,
     FulfillmentReceipt,
     FulfillmentReceiptContents,
     MoneyAmount,
@@ -34,10 +33,14 @@ from .models import (
     QRCodePaymentData,
     ShippingAddress,
     ShippingInfo,
-    VerifiedCartMandate,
-    VerifiedPaymentMandate,
 )
-from .utils import compute_hash
+from .mandate import (
+    b64url_no_pad,
+    build_mandate,
+    compute_hash,
+    jcs_canonicalize,
+    validate_mandate,
+)
 
 __all__ = [
     # Data Models
@@ -63,11 +66,13 @@ __all__ = [
     "QRCodePaymentData",
     "ShippingAddress",
     "ShippingInfo",
-    "VerifiedCartMandate",
-    "VerifiedPaymentMandate",
-    "FulfillmentItem",
     "FulfillmentReceipt",
     "FulfillmentReceiptContents",
     # Utilities
     "compute_hash",
+    "b64url_no_pad",
+    "jcs_canonicalize",
+    # Functional Mandate API
+    "build_mandate",
+    "validate_mandate",
 ]

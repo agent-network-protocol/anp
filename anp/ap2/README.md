@@ -55,7 +55,7 @@ from anp.ap2.models import (
 from anp.ap2.cart_mandate import build_cart_mandate, validate_cart_mandate
 from anp.ap2.credential_mandate import build_payment_receipt, validate_credential
 from anp.ap2.payment_mandate import build_payment_mandate, validate_payment_mandate
-from anp.ap2.utils import compute_hash
+from anp.ap2.mandate import compute_hash
 
 # --- 0. Setup: DIDs and Keys ---
 # In a real system, these would be unique to each party.
@@ -142,13 +142,14 @@ print("[Shopper] PaymentMandate created.")
 
 # --- 4. Merchant: Verify the Payment Mandate ---
 # This check ensures the payment is for the correct, unmodified cart.
-payload = validate_payment_mandate(
+if not validate_payment_mandate(
     payment_mandate=payment_mandate,
     shopper_public_key=public_key_pem,
     shopper_algorithm=algorithm,
     expected_merchant_did=merchant_did,
     expected_cart_hash=cart_hash,
-)
+):
+    raise ValueError("PaymentMandate validation failed")
 print("[Merchant] PaymentMandate verified successfully.")
 # The hash of the payment mandate is needed for the next step in the chain.
 pmt_hash = compute_hash(payment_mandate.payment_mandate_contents.model_dump(exclude_none=True))
@@ -178,7 +179,7 @@ print("[Merchant] PaymentReceipt credential issued.")
 
 # --- 6. Shopper: Verify the Payment Receipt ---
 # The shopper receives the receipt and verifies its authenticity and its link to the payment.
-cred_payload, cred_hash = validate_credential(
+cred_payload = validate_credential(
     credential=payment_receipt,
     merchant_public_key=public_key_pem,
     merchant_algorithm=credential_algorithm,
@@ -187,6 +188,6 @@ cred_payload, cred_hash = validate_credential(
 )
 print("[Shopper] PaymentReceipt verified successfully.")
 print(f"[Shopper] Receipt issuer: {cred_payload['iss']}")
-print(f"[Shopper] Credential hash: {cred_hash[:32]}...")
+print(f\"[Shopper] Credential hash: {cred_payload.get('cred_hash', '')[:32]}...\")
 
 ```

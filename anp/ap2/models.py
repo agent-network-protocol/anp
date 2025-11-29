@@ -6,13 +6,13 @@ including CartMandate, PaymentMandate, and related structures.
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class PaymentProvider(StrEnum):
+class PaymentProvider(str, Enum):
     """Payment provider enum."""
 
     ALIPAY = "ALIPAY"
@@ -138,9 +138,9 @@ class CartContents(BaseModel):
 
 
 class CartMandate(BaseModel):
-    """Cart mandate model (CartMandate)."""
+    """Cart mandate with cart contents and merchant authorization."""
 
-    contents: CartContents = Field(..., description="Cart contents")
+    contents: Dict[str, Any] = Field(..., description="Cart contents as plain dict")
     merchant_authorization: str = Field(
         ..., description="Merchant authorization signature (JWS format)"
     )
@@ -200,10 +200,10 @@ class PaymentMandateContents(BaseModel):
 
 
 class PaymentMandate(BaseModel):
-    """Payment mandate model (PaymentMandate)."""
+    """Payment mandate envelope."""
 
-    payment_mandate_contents: PaymentMandateContents = Field(
-        ..., description="Payment mandate contents"
+    payment_mandate_contents: Dict[str, Any] = Field(
+        ..., description="Payment mandate contents as plain dict"
     )
     user_authorization: str = Field(
         ..., description="User authorization signature (JWS format)"
@@ -212,23 +212,7 @@ class PaymentMandate(BaseModel):
     @property
     def id(self) -> str:
         """Returns the payment mandate's unique identifier."""
-        return self.payment_mandate_contents.payment_mandate_id
-
-
-class VerifiedCartMandate(BaseModel):
-    """Result returned by CartMandateValidator."""
-
-    cart_mandate: CartMandate = Field(..., description="Original CartMandate object")
-    merchant_payload: Dict[str, Any] = Field(..., description="Decoded merchant JWT payload")
-    cart_hash: str = Field(..., description="Hash of CartMandate contents")
-
-
-class VerifiedPaymentMandate(BaseModel):
-    """Result returned by PaymentMandateValidator."""
-
-    payment_mandate: PaymentMandate = Field(..., description="Original PaymentMandate object")
-    shopper_payload: Dict[str, Any] = Field(..., description="Decoded shopper JWT payload")
-    pmt_hash: str = Field(..., description="Hash of PaymentMandate contents")
+        return self.payment_mandate_contents.get("payment_mandate_id", "")
 
 
 class CartMandateRequestData(BaseModel):
@@ -258,7 +242,14 @@ class PaymentStatus(str, Enum):
 
 
 class PaymentReceiptContents(BaseModel):
-    """Payment receipt contents model."""
+    """Payment receipt contents model (template/helper for building contents dict).
+
+    This class serves as a template for constructing PaymentReceipt.contents.
+    Use model_dump() to convert to plain dict for use with PaymentReceipt.
+
+    Note: credential_type, version, id, and timestamp are now part of contents,
+    not top-level fields in PaymentReceipt.
+    """
 
     credential_type: Literal["PaymentReceipt"] = Field(
         default="PaymentReceipt", description="Credential type"
@@ -284,19 +275,32 @@ class PaymentReceiptContents(BaseModel):
 
 
 class PaymentReceipt(BaseModel):
-    """Payment receipt credential model."""
+    """Payment receipt credential model.
 
-    contents: PaymentReceiptContents = Field(..., description="Receipt contents")
+    Structure:
+    {
+        "contents": {
+            "credential_type": "PaymentReceipt",
+            "version": 1,
+            "id": "receipt_uuid_123",
+            "timestamp": "2025-01-17T09:10:00Z",
+            "payment_mandate_id": "pm_12345",
+            "provider": "ALIPAY",
+            "status": "SUCCEEDED",
+            ...
+            "pmt_hash": "..."
+        },
+        "merchant_authorization": "eyJhbGc..."
+    }
+
+    Use PaymentReceiptContents.model_dump() to create the contents dict,
+    or build manually as a plain dict.
+    """
+
+    contents: Dict[str, Any] = Field(..., description="Receipt contents as plain dict")
     merchant_authorization: str = Field(
         ..., description="Merchant authorization signature (JWS)"
     )
-
-
-class FulfillmentItem(BaseModel):
-    """Fulfillment item model."""
-
-    id: str = Field(..., description="Item ID")
-    quantity: int = Field(..., description="Fulfilled quantity")
 
 
 class ShippingInfo(BaseModel):
@@ -324,7 +328,7 @@ class FulfillmentReceiptContents(BaseModel):
         description="Credential issuance time in ISO-8601 format",
     )
     order_id: str = Field(..., description="Order ID")
-    items: List[FulfillmentItem] = Field(..., description="Fulfilled items")
+    items: List[DisplayItem] = Field(..., description="Fulfilled items")
     fulfilled_at: str = Field(..., description="Fulfillment time in ISO-8601 format")
     shipping: Optional[ShippingInfo] = Field(None, description="Shipping information")
     pmt_hash: str = Field(
@@ -337,9 +341,29 @@ class FulfillmentReceiptContents(BaseModel):
 
 
 class FulfillmentReceipt(BaseModel):
-    """Fulfillment receipt credential model."""
+    """Fulfillment receipt credential model.
 
-    contents: FulfillmentReceiptContents = Field(..., description="Receipt contents")
+    Structure:
+    {
+        "contents": {
+            "credential_type": "FulfillmentReceipt",
+            "version": 1,
+            "id": "fulfillment_uuid_456",
+            "timestamp": "2025-01-18T10:00:00Z",
+            "order_id": "order_shoes_123",
+            "items": [...],
+            "fulfilled_at": "2025-01-18T09:45:00Z",
+            ...
+            "pmt_hash": "..."
+        },
+        "merchant_authorization": "eyJhbGc..."
+    }
+
+    Use FulfillmentReceiptContents.model_dump() to create the contents dict,
+    or build manually as a plain dict.
+    """
+
+    contents: Dict[str, Any] = Field(..., description="Receipt contents as plain dict")
     merchant_authorization: str = Field(
         ..., description="Merchant authorization signature (JWS)"
     )
@@ -347,32 +371,17 @@ class FulfillmentReceipt(BaseModel):
 
 Credential = PaymentReceipt | FulfillmentReceipt
 
-# Union of all possible ANP message data payloads for composition.
-# Note: Credential types are defined later in the file
-ANPMessageData = (
-    CartMandateRequestData
-    | CartMandate
-    | PaymentMandate
-    | PaymentReceipt
-    | FulfillmentReceipt
-)
-
 
 class ANPMessage(BaseModel):
-    """Generic ANP message structure using composition.
-
-    This structure acts as an envelope, holding common metadata, and a 'data'
-    field that contains the specific message payload as a composed object.
-    This approach is favored over inheritance for flexibility.
-    """
+    """Generic ANP message envelope."""
 
     model_config = ConfigDict(populate_by_name=True)
 
     messageId: str = Field(..., description="Unique message identifier")
     from_: str = Field(..., alias="from", description="Sender's DID")
     to: str = Field(..., description="Recipient's DID")
-    data: ANPMessageData = Field(
-        ..., description="Protocol-specific payload (composed object)"
+    data: Dict[str, Any] = Field(
+        ..., description="Protocol-specific payload as plain dict"
     )
     credential_webhook_url: Optional[str] = Field(
         None, description="Webhook URL for credentials"
