@@ -1,0 +1,15 @@
+{
+  "name": "authentication-example",
+  "version": "1.0.0",
+  "description": "DID:WBA authentication example",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@anp/typescript-sdk": "file:../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}
