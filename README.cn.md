@@ -1,5 +1,5 @@
 <div align="center">
-  
+
 [English](README.md) | [中文](README.cn.md)
 
 </div>
@@ -40,7 +40,7 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
 - **灵活路由**：完全控制所有路由包括 ad.json
 - **会话管理**：基于 DID 的内置会话管理
 
-完整文档请参考 [FastANP README](anp/fastanp/README.md)
+完整文档请参考 [OpenANP README](anp/openanp/README.md)
 
 ### AP2（智能体支付协议 v2）
 安全的智能体交易支付授权协议：
@@ -78,10 +78,10 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 位置：`examples/python/did_wba_examples/`
 
 #### 主要示例
-- **创建DID文档** (`create_did_document.py`)  
+- **创建DID文档** (`create_did_document.py`)
   演示如何生成智能体的DID身份文档和密钥对
-  
-- **身份认证验证** (`authenticate_and_verify.py`)  
+
+- **身份认证验证** (`authenticate_and_verify.py`)
   展示完整的DID-WBA身份认证和验证流程
 
 #### 运行示例
@@ -99,10 +99,10 @@ uv run python examples/python/did_wba_examples/authenticate_and_verify.py
 位置：`examples/python/anp_crawler_examples/`
 
 #### 主要示例
-- **简单示例** (`simple_amap_example.py`)  
+- **简单示例** (`simple_amap_example.py`)
   快速入门：连接AMAP服务并调用地图搜索接口
-  
-- **完整示例** (`amap_crawler_example.py`)  
+
+- **完整示例** (`amap_crawler_example.py`)
   完整演示：智能体发现、接口解析、工具调用的全流程
 
 #### 运行示例
@@ -196,10 +196,10 @@ uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description
 
 ## 联系我们
 
-- **作者**：常高伟  
-- **邮箱**：chgaowei@gmail.com  
-- **官网**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)  
-- **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)  
+- **作者**：常高伟
+- **邮箱**：chgaowei@gmail.com
+- **官网**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)
+- **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
 - **GitHub**：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
 - **微信**：flow10240
 

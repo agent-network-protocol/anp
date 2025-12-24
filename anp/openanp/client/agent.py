@@ -1,0 +1,227 @@
+"""
+RemoteAgent - Handle to a discovered remote ANP agent.
+
+Example:
+
+    from anp.openanp import RemoteAgent
+
+    agent = await RemoteAgent.discover(ad_url, auth)
+    result = await agent.search(query="Tokyo")
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+from ...authentication import DIDWbaAuthHeader
+from .http import call_rpc, call_rpc_stream, fetch
+from .openrpc import convert_to_openai_tool, parse_agent_document, parse_openrpc
+
+
+def _require_non_empty_str(value: Any, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string, got {type(value).__name__}")
+    if not value.strip():
+        raise ValueError(f"{field} cannot be empty")
+    return value
+
+
+def _is_openrpc(data: dict) -> bool:
+    """Check if data is a valid OpenRPC document."""
+    return (
+        isinstance(data, dict)
+        and "openrpc" in data
+        and "methods" in data
+        and isinstance(data["methods"], list)
+    )
+
+
+@dataclass(frozen=True)
+class Method:
+    """Immutable method definition."""
+
+    name: str
+    description: str
+    params: tuple[dict[str, Any], ...]
+    rpc_url: str
+    streaming: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteAgent:
+    """
+    Handle to a discovered remote ANP agent.
+
+    Immutable. Created via RemoteAgent.discover().
+    """
+
+    url: str
+    name: str
+    description: str
+    methods: tuple[Method, ...]
+    _auth: DIDWbaAuthHeader
+
+    @classmethod
+    async def discover(cls, ad_url: str, auth: DIDWbaAuthHeader) -> RemoteAgent:
+        """
+        Discover agent from AD URL.
+
+        Fail Fast: Raises if no methods found.
+        """
+        text = await fetch(ad_url, auth)
+        ad = json.loads(text)
+        _, raw_methods = parse_agent_document(ad)
+
+        # If no embedded methods, fetch from interface URLs (fail fast with context).
+        if not raw_methods:
+            interfaces = ad.get("interfaces")
+            if not isinstance(interfaces, list):
+                raise TypeError("ad.interfaces must be a list")
+
+            interface_urls: list[str] = []
+            for idx, raw_interface in enumerate(interfaces):
+                if not isinstance(raw_interface, dict):
+                    raise TypeError(f"ad.interfaces[{idx}] must be a dict")
+                if (
+                    raw_interface.get("type") == "StructuredInterface"
+                    and raw_interface.get("protocol") == "openrpc"
+                    and "url" in raw_interface
+                ):
+                    interface_urls.append(
+                        _require_non_empty_str(
+                            raw_interface.get("url"), field=f"ad.interfaces[{idx}].url"
+                        )
+                    )
+
+            if not interface_urls:
+                raise ValueError(f"No OpenRPC interface URLs found at {ad_url}")
+
+            errors: list[str] = []
+            for interface_url in interface_urls:
+                try:
+                    interface_text = await fetch(interface_url, auth)
+                    interface_data = json.loads(interface_text)
+                    if not _is_openrpc(interface_data):
+                        raise ValueError(f"Invalid OpenRPC document at {interface_url}")
+                    raw_methods.extend(parse_openrpc(interface_data))
+                    break
+                except Exception as exc:  # surface all failures if none succeed
+                    errors.append(f"{interface_url}: {type(exc).__name__}: {exc}")
+
+            if not raw_methods:
+                raise ValueError(
+                    f"Failed to load OpenRPC methods for {ad_url}. Errors: {errors}"
+                )
+
+        if not raw_methods:
+            raise ValueError(f"No methods found at {ad_url}")
+
+        methods = tuple(
+            Method(
+                name=m["name"],
+                description=m["description"],
+                params=tuple(m["params"]),
+                rpc_url=_extract_rpc_url(m),
+            )
+            for m in raw_methods
+        )
+
+        if not methods:
+            raise ValueError(f"No callable methods at {ad_url}")
+
+        return cls(
+            url=ad_url,
+            name=_require_non_empty_str(ad.get("name"), field="ad.name"),
+            description=_require_non_empty_str(
+                ad.get("description"), field="ad.description"
+            ),
+            methods=methods,
+            _auth=auth,
+        )
+
+    @property
+    def method_names(self) -> tuple[str, ...]:
+        """Available method names."""
+        return tuple(m.name for m in self.methods)
+
+    @property
+    def tools(self) -> list[dict[str, Any]]:
+        """OpenAI Tools format."""
+        return [
+            convert_to_openai_tool(
+                {
+                    "name": m.name,
+                    "description": m.description,
+                    "params": list(m.params),
+                }
+            )
+            for m in self.methods
+        ]
+
+    def get_method(self, name: str) -> Method:
+        """Get method by name. Raises KeyError if not found."""
+        for m in self.methods:
+            if m.name == name:
+                return m
+        raise KeyError(f"Method not found: {name}")
+
+    async def call(self, method: str, **params: Any) -> Any:
+        """Call method. Raises KeyError if method not found."""
+        m = self.get_method(method)
+        return await call_rpc(m.rpc_url, method, params, self._auth)
+
+    async def call_stream(
+        self, method: str, **params: Any
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Call streaming method. Returns async iterator of chunks.
+
+        Use this for methods marked with @interface(streaming=True).
+        Each yielded chunk is the result field from JSON-RPC response.
+
+        Args:
+            method: Method name
+            **params: Method parameters
+
+        Yields:
+            Result chunks from the SSE stream
+
+        Raises:
+            KeyError: If method not found
+            RpcError: On JSON-RPC error in stream
+        """
+        m = self.get_method(method)
+        async for chunk in call_rpc_stream(m.rpc_url, method, params, self._auth):
+            yield chunk
+
+    def __getattr__(self, name: str) -> Any:
+        """Dynamic method access: agent.search(query="...")"""
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        try:
+            method = self.get_method(name)
+        except KeyError:
+            raise AttributeError(f"No method: {name}") from None
+
+        async def caller(**params: Any) -> Any:
+            return await call_rpc(method.rpc_url, name, params, self._auth)
+
+        return caller
+
+    def __repr__(self) -> str:
+        return f"RemoteAgent({self.name!r}, methods={self.method_names})"
+
+
+def _extract_rpc_url(method: dict[str, Any]) -> str:
+    """Extract RPC URL from method. Raises if not found."""
+    servers = method.get("servers", [])
+    if not servers:
+        raise ValueError(f"No servers for method: {method.get('name')}")
+    url = servers[0].get("url")
+    if not url:
+        raise ValueError(f"No URL in server for method: {method.get('name')}")
+    return url

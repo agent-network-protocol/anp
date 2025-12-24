@@ -254,15 +254,14 @@ class PaymentReceiptContents(BaseModel):
     credential_type: Literal["PaymentReceipt"] = Field(
         default="PaymentReceipt", description="Credential type"
     )
-    version: int = Field(default=1, description="Credential version")
-    id: str = Field(
+    payment_receipt_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), description="Credential unique ID"
     )
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Credential issuance time in ISO-8601 format",
     )
-    payment_mandate_id: str = Field(..., description="Payment mandate ID")
+    cart_mandate_id: str = Field(..., description="Cart mandate ID")
     provider: PaymentProvider = Field(..., description="Payment provider")
     status: PaymentStatus = Field(..., description="Payment status")
     transaction_id: str = Field(..., description="Provider transaction ID")
@@ -281,10 +280,9 @@ class PaymentReceipt(BaseModel):
     {
         "contents": {
             "credential_type": "PaymentReceipt",
-            "version": 1,
-            "id": "receipt_uuid_123",
+            "payment_receipt_id": "receipt_uuid_123",
             "timestamp": "2025-01-17T09:10:00Z",
-            "payment_mandate_id": "pm_12345",
+            "cart_mandate_id": "cart_123",
             "provider": "ALIPAY",
             "status": "SUCCEEDED",
             ...
@@ -319,14 +317,14 @@ class FulfillmentReceiptContents(BaseModel):
     credential_type: Literal["FulfillmentReceipt"] = Field(
         default="FulfillmentReceipt", description="Credential type"
     )
-    version: int = Field(default=1, description="Credential version")
-    id: str = Field(
+    fulfillment_receipt_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), description="Credential unique ID"
     )
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Credential issuance time in ISO-8601 format",
     )
+    cart_mandate_id: str = Field(..., description="Cart mandate ID")
     order_id: str = Field(..., description="Order ID")
     items: List[DisplayItem] = Field(..., description="Fulfilled items")
     fulfilled_at: str = Field(..., description="Fulfillment time in ISO-8601 format")
@@ -347,9 +345,9 @@ class FulfillmentReceipt(BaseModel):
     {
         "contents": {
             "credential_type": "FulfillmentReceipt",
-            "version": 1,
-            "id": "fulfillment_uuid_456",
+            "fulfillment_receipt_id": "fulfillment_uuid_456",
             "timestamp": "2025-01-18T10:00:00Z",
+            "cart_mandate_id": "cart_123",
             "order_id": "order_shoes_123",
             "items": [...],
             "fulfilled_at": "2025-01-18T09:45:00Z",

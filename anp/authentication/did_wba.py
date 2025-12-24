@@ -12,13 +12,11 @@ import json
 import logging
 import re
 import secrets
-import traceback
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import aiohttp
-import base58  # Need to add this dependency
 import jcs
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.serialization import (
@@ -28,7 +26,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from .verification_methods import CURVE_MAPPING, create_verification_method
+from .verification_methods import create_verification_method
 
 
 def _is_ip_address(hostname: str) -> bool:
@@ -223,11 +221,13 @@ async def resolve_did_wba_document(did: str) -> Dict:
                 return did_document
 
     except aiohttp.ClientError as e:
-        logging.error(f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        return None
+        logging.error(f"Failed to resolve DID document: {str(e)}")
+        raise
+    except ValueError:
+        raise
     except Exception as e:
-        logging.error(f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        return None
+        logging.error(f"Failed to resolve DID document: {str(e)}")
+        raise RuntimeError(f"Failed to resolve DID document: {str(e)}") from e
 
 # Add a sync wrapper for backward compatibility
 def resolve_did_wba_document_sync(did: str) -> Dict:
@@ -387,181 +387,6 @@ def _select_authentication_method(did_document: Dict) -> Tuple[Dict, str]:
         
     return method_dict, verification_method_fragment
 
-
-def _extract_ec_public_key_from_jwk(jwk: Dict) -> ec.EllipticCurvePublicKey:
-    """
-    Extract EC public key from JWK format.
-    
-    Args:
-        jwk: JWK dictionary
-        
-    Returns:
-        ec.EllipticCurvePublicKey: Public key
-        
-    Raises:
-        ValueError: If JWK format is invalid or curve is unsupported
-    """
-    if jwk.get('kty') != 'EC':
-        raise ValueError("Invalid JWK: kty must be EC")
-        
-    crv = jwk.get('crv')
-    if not crv:
-        raise ValueError("Missing curve parameter in JWK")
-        
-    curve = CURVE_MAPPING.get(crv)
-    if curve is None:
-        raise ValueError(f"Unsupported curve: {crv}. Supported curves: {', '.join(CURVE_MAPPING.keys())}")
-        
-    try:
-        # Decode using base64url
-        x = int.from_bytes(base64.urlsafe_b64decode(
-            jwk['x'] + '=' * (-len(jwk['x']) % 4)), 'big')
-        y = int.from_bytes(base64.urlsafe_b64decode(
-            jwk['y'] + '=' * (-len(jwk['y']) % 4)), 'big')
-        public_numbers = ec.EllipticCurvePublicNumbers(x, y, curve)
-        return public_numbers.public_key()
-    except Exception as e:
-        logging.error(f"Invalid JWK parameters: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        raise ValueError(f"Invalid JWK parameters: {str(e)}")
-
-def _extract_ed25519_public_key_from_multibase(multibase: str) -> ed25519.Ed25519PublicKey:
-    """
-    Extract Ed25519 public key from multibase format.
-    
-    Args:
-        multibase: Multibase encoded string
-        
-    Returns:
-        ed25519.Ed25519PublicKey: Public key
-        
-    Raises:
-        ValueError: If multibase format is invalid
-    """
-    if not multibase.startswith('z'):
-        raise ValueError("Unsupported multibase encoding")
-    try:
-        key_bytes = base58.b58decode(multibase[1:])
-        return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
-    except Exception as e:
-        logging.error(f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        raise ValueError(f"Invalid multibase key: {str(e)}")
-
-def _extract_ed25519_public_key_from_base58(base58_key: str) -> ed25519.Ed25519PublicKey:
-    """
-    Extract Ed25519 public key from base58 format.
-    
-    Args:
-        base58_key: Base58 encoded string
-        
-    Returns:
-        ed25519.Ed25519PublicKey: Public key
-        
-    Raises:
-        ValueError: If base58 format is invalid
-    """
-    try:
-        key_bytes = base58.b58decode(base58_key)
-        return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
-    except Exception as e:
-        logging.error(f"Invalid base58 key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        raise ValueError(f"Invalid base58 key: {str(e)}")
-def _extract_secp256k1_public_key_from_multibase(multibase: str) -> ec.EllipticCurvePublicKey:
-    """
-    Extract secp256k1 public key from multibase format.
-    
-    Args:
-        multibase: Multibase encoded string (base58btc format starting with 'z')
-        
-    Returns:
-        ec.EllipticCurvePublicKey: secp256k1 public key object
-        
-    Raises:
-        ValueError: If multibase format is invalid
-    """
-    if not multibase.startswith('z'):
-        raise ValueError("Unsupported multibase encoding format, must start with 'z' (base58btc)")
-    
-    try:
-        # Decode base58btc (remove the 'z' prefix)
-        key_bytes = base58.b58decode(multibase[1:])
-        
-        # The compressed format public key for secp256k1 is 33 bytes:
-        # 1 byte prefix (0x02 or 0x03) + 32 bytes X coordinate
-        if len(key_bytes) != 33:
-            raise ValueError("Invalid secp256k1 public key length")
-            
-        # Recover public key from compressed format
-        return ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP256K1(),
-            key_bytes
-        )
-    except Exception as e:
-        logging.error(f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
-        raise ValueError(f"Invalid multibase key: {str(e)}")
-
-def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey]:
-    """
-    Extract public key from verification method.
-    
-    Supported verification method types:
-    - EcdsaSecp256k1VerificationKey2019 (JWK, Multibase)
-    - Ed25519VerificationKey2020 (JWK, Base58, Multibase)
-    - Ed25519VerificationKey2018 (JWK, Base58, Multibase)
-    - JsonWebKey2020 (JWK)
-    
-    Args:
-        verification_method: Verification method dictionary
-        
-    Returns:
-        Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey]: Public key
-        
-    Raises:
-        ValueError: If key format or type is unsupported or invalid
-    """
-    method_type = verification_method.get('type')
-    if not method_type:
-        raise ValueError("Verification method missing 'type' field")
-        
-    # Handle EcdsaSecp256k1VerificationKey2019
-    if method_type == 'EcdsaSecp256k1VerificationKey2019':
-        if 'publicKeyJwk' in verification_method:
-            jwk = verification_method['publicKeyJwk']
-            if jwk.get('crv') != 'secp256k1':
-                raise ValueError("Invalid curve for EcdsaSecp256k1VerificationKey2019")
-            return _extract_ec_public_key_from_jwk(jwk)
-        elif 'publicKeyMultibase' in verification_method:
-            return _extract_secp256k1_public_key_from_multibase(
-                verification_method['publicKeyMultibase']
-            )
-            
-    # Handle Ed25519 verification methods
-    elif method_type in ['Ed25519VerificationKey2020', 'Ed25519VerificationKey2018']:
-        if 'publicKeyJwk' in verification_method:
-            jwk = verification_method['publicKeyJwk']
-            if jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519':
-                raise ValueError(f"Invalid JWK parameters for {method_type}")
-            try:
-                key_bytes = base64.b64decode(jwk['x'] + '==')
-                return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
-            except Exception as e:
-                raise ValueError(f"Invalid Ed25519 JWK: {str(e)}")
-        elif 'publicKeyBase58' in verification_method:
-            return _extract_ed25519_public_key_from_base58(
-                verification_method['publicKeyBase58']
-            )
-        elif 'publicKeyMultibase' in verification_method:
-            return _extract_ed25519_public_key_from_multibase(
-                verification_method['publicKeyMultibase']
-            )
-            
-    # Handle JsonWebKey2020
-    elif method_type == 'JsonWebKey2020':
-        if 'publicKeyJwk' in verification_method:
-            return _extract_ec_public_key_from_jwk(verification_method['publicKeyJwk'])
-            
-    raise ValueError(
-        f"Unsupported verification method type or missing required key format: {method_type}"
-    )
 
 def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str]:
     """
