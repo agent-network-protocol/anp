@@ -21,3 +21,6 @@ examples/negotiation_mode/*
 .claude/settings.local.json
 uv.lock
 .DS_Store
+.cursor/
+
+examples/python/did_wba_examples/generated/*
