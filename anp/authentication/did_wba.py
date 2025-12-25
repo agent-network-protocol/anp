@@ -245,72 +245,85 @@ def resolve_did_wba_document_sync(did: str) -> Dict:
 def generate_auth_header(
     did_document: Dict,
     service_domain: str,
-    sign_callback: Callable[[bytes, str], bytes]
+    sign_callback: Callable[[bytes, str], bytes],
+    version: str = "1.0"
 ) -> str:
     """
     Generate the Authorization header for DID authentication.
-    
+
     Args:
         did_document: DID document dictionary.
         service_domain: Server domain.
         sign_callback: Signature callback function that takes the content to sign and the verification method fragment as parameters.
             callback(content_to_sign: bytes, verification_method_fragment: str) -> bytes.
             If ECDSA, return signature in DER format.
-            
+        version: Protocol version (default "1.0"). Versions >= 1.1 use "aud" field instead of "service" in signature.
+
     Returns:
         str: Value of the Authorization header. Do not include "Authorization:" prefix.
-        
+
     Raises:
         ValueError: If the DID document format is invalid.
     """
-    logging.info("Starting to generate DID authentication header.")
-    
+    logging.info(f"Starting to generate DID authentication header with version {version}.")
+
     # Validate DID document
     did = did_document.get('id')
     if not did:
         raise ValueError("DID document is missing the id field.")
-    
+
     # Select authentication method
     method_dict, verification_method_fragment = _select_authentication_method(did_document)
-    
+
     # Generate a 16-byte random nonce
     nonce = secrets.token_hex(16)
-    
+
     # Generate ISO 8601 formatted UTC timestamp
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
+
+    # Determine which field to use based on version
+    # For version >= 1.1, use "aud" instead of "service"
+    try:
+        version_float = float(version)
+        domain_field = "aud" if version_float >= 1.1 else "service"
+    except ValueError:
+        # If version is not a valid float, default to "service" for backward compatibility
+        domain_field = "service"
+        logging.warning(f"Invalid version format '{version}', using 'service' field for backward compatibility")
+
     # Construct the data to sign
     data_to_sign = {
         "nonce": nonce,
         "timestamp": timestamp,
-        "service": service_domain,
+        domain_field: service_domain,
         "did": did
     }
-    
+
     # Normalize JSON using JCS
     canonical_json = jcs.canonicalize(data_to_sign)
     logging.debug(f"generate_auth_header Canonical JSON: {canonical_json}")
-    
+
     # Calculate SHA-256 hash
     content_hash = hashlib.sha256(canonical_json).digest()
-    
+
     # Create verifier and encode signature
     verifier = create_verification_method(method_dict)
     signature_bytes = sign_callback(content_hash, verification_method_fragment)
     signature = verifier.encode_signature(signature_bytes)
-    
+
     # Construct the Authorization header
     auth_header = (
-        f'DIDWba did="{did}", '
+        f'DIDWba v="{version}", '
+        f'did="{did}", '
         f'nonce="{nonce}", '
         f'timestamp="{timestamp}", '
         f'verification_method="{verification_method_fragment}", '
         f'signature="{signature}"'
     )
-    
+
     logging.info("Successfully generated DID authentication header.")
     logging.debug(f"Generated Authorization header: {auth_header}")
-    
+
     return auth_header
 
 def _find_verification_method(did_document: Dict, verification_method_id: str) -> Optional[Dict]:
@@ -563,26 +576,27 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
         f"Unsupported verification method type or missing required key format: {method_type}"
     )
 
-def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str]:
+def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str, Optional[str]]:
     """
     Extract authentication information from the authorization header.
-    
+
     Args:
         auth_header: Authorization header value without "Authorization:" prefix.
-        
+
     Returns:
-        Tuple[str, str, str, str, str]: A tuple containing:
+        Tuple[str, str, str, str, str, Optional[str]]: A tuple containing:
             - did: DID string
             - nonce: Nonce value
             - timestamp: Timestamp string
             - verification_method: Verification method fragment
             - signature: Signature value
-            
+            - version: Version string (optional, defaults to "1.0" if not present)
+
     Raises:
         ValueError: If any required field is missing in the auth header
     """
     logging.debug(f"Extracting auth header parts from: {auth_header}")
-    
+
     required_fields = {
         'did': r'(?i)did="([^"]+)"',
         'nonce': r'(?i)nonce="([^"]+)"',
@@ -590,21 +604,28 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
         'verification_method': r'(?i)verification_method="([^"]+)"',
         'signature': r'(?i)signature="([^"]+)"'
     }
-    
+
+    # Optional version field (defaults to "1.0" for backward compatibility)
+    version_pattern = r'(?i)v="([^"]+)"'
+
     # Verify the header starts with DIDWba
     if not auth_header.strip().startswith('DIDWba'):
         raise ValueError("Authorization header must start with 'DIDWba'")
-    
+
     parts = {}
     for field, pattern in required_fields.items():
         match = re.search(pattern, auth_header)
         if not match:
             raise ValueError(f"Missing required field in auth header: {field}")
         parts[field] = match.group(1)
-    
-    logging.debug(f"Extracted auth header parts: {parts}")
-    return (parts['did'], parts['nonce'], parts['timestamp'], 
-            parts['verification_method'], parts['signature'])
+
+    # Extract version if present, default to "1.0"
+    version_match = re.search(version_pattern, auth_header)
+    version = version_match.group(1) if version_match else "1.0"
+
+    logging.debug(f"Extracted auth header parts: {parts}, version: {version}")
+    return (parts['did'], parts['nonce'], parts['timestamp'],
+            parts['verification_method'], parts['signature'], version)
 
 def verify_auth_header_signature(
     auth_header: str,
@@ -613,53 +634,65 @@ def verify_auth_header_signature(
 ) -> Tuple[bool, str]:
     """
     Verify the DID authentication header signature.
-    
+
     Args:
         auth_header: Authorization header value without "Authorization:" prefix.
         did_document: DID document dictionary.
         service_domain: Server domain that should match the one used to generate the signature.
-        
+
     Returns:
         Tuple[bool, str]: A tuple containing:
             - Boolean indicating if verification was successful
             - Message describing the verification result or error
     """
     logging.info("Starting DID authentication header verification")
-    
+
     try:
-        # Extract auth header parts
-        client_did, nonce, timestamp_str, verification_method, signature = extract_auth_header_parts(auth_header)
-         
-        # Verify DID (case-sensitive)
+        # Extract auth header parts (now includes version)
+        client_did, nonce, timestamp_str, verification_method, signature, version = extract_auth_header_parts(auth_header)
+
+        # Verify DID (case-insensitive comparison)
         if did_document.get('id').lower() != client_did.lower():
             return False, "DID mismatch"
-            
+
+        # Determine which field to use based on version
+        # For version >= 1.1, use "aud" instead of "service"
+        try:
+            version_float = float(version)
+            domain_field = "aud" if version_float >= 1.1 else "service"
+        except ValueError:
+            # If version is not a valid float, default to "service" for backward compatibility
+            domain_field = "service"
+            logging.warning(f"Invalid version format '{version}', using 'service' field for verification")
+
         # Construct data to verify
         data_to_verify = {
             "nonce": nonce,
             "timestamp": timestamp_str,
-            "service": service_domain,
+            domain_field: service_domain,
             "did": client_did
         }
-        
+
         canonical_json = jcs.canonicalize(data_to_verify)
+        logging.debug(f"verify_auth_header_signature Canonical JSON: {canonical_json}")
         content_hash = hashlib.sha256(canonical_json).digest()
-        
+
         verification_method_id = f"{client_did}#{verification_method}"
         method_dict = _find_verification_method(did_document, verification_method_id)
         if not method_dict:
             return False, "Verification method not found"
-            
+
         try:
             verifier = create_verification_method(method_dict)
             if verifier.verify_signature(content_hash, signature):
+                logging.info(f"Signature verification successful for version {version}")
                 return True, "Verification successful"
             return False, "Signature verification failed"
         except ValueError as e:
             return False, f"Invalid or unsupported verification method: {str(e)}"
         except Exception as e:
             return False, f"Verification error: {str(e)}"
-            
+
     except ValueError as e:
         logging.error(f"Error extracting auth header parts: {str(e)}")
         return False, str(e)
@@ -670,68 +703,81 @@ def verify_auth_header_signature(
 def generate_auth_json(
     did_document: Dict,
     service_domain: str,
-    sign_callback: Callable[[bytes, str], bytes]
+    sign_callback: Callable[[bytes, str], bytes],
+    version: str = "1.0"
 ) -> str:
     """
     Generate JSON format string for DID authentication.
-    
+
     Args:
         did_document: DID document dictionary
         service_domain: Server domain
         sign_callback: Signature callback function that takes content to sign and verification method fragment
             callback(content_to_sign: bytes, verification_method_fragment: str) -> bytes
             For ECDSA, return signature in DER format
-            
+        version: Protocol version (default "1.0"). Versions >= 1.1 use "aud" field instead of "service" in signature.
+
     Returns:
         str: Authentication information in JSON format
-        
+
     Raises:
         ValueError: If DID document format is invalid
     """
-    logging.info("Starting to generate DID authentication JSON")
-    
+    logging.info(f"Starting to generate DID authentication JSON with version {version}")
+
     # Validate DID document
     did = did_document.get('id')
     if not did:
         raise ValueError("DID document missing id field")
-    
+
     # Select authentication method
     method_dict, verification_method_fragment = _select_authentication_method(did_document)
-    
+
     # Generate 16-byte random nonce
     nonce = secrets.token_hex(16)
-    
+
     # Generate ISO 8601 formatted UTC timestamp
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
+
+    # Determine which field to use based on version
+    # For version >= 1.1, use "aud" instead of "service"
+    try:
+        version_float = float(version)
+        domain_field = "aud" if version_float >= 1.1 else "service"
+    except ValueError:
+        # If version is not a valid float, default to "service" for backward compatibility
+        domain_field = "service"
+        logging.warning(f"Invalid version format '{version}', using 'service' field for backward compatibility")
+
     # Construct data to sign
     data_to_sign = {
         "nonce": nonce,
         "timestamp": timestamp,
-        "service": service_domain,
+        domain_field: service_domain,
         "did": did
     }
-    
+
     # Normalize JSON using JCS
     canonical_json = jcs.canonicalize(data_to_sign)
-    
+
     # Calculate SHA-256 hash
     content_hash = hashlib.sha256(canonical_json).digest()
-    
+
     # Create verifier and encode signature
     verifier = create_verification_method(method_dict)
     signature_bytes = sign_callback(content_hash, verification_method_fragment)
     signature = verifier.encode_signature(signature_bytes)
-    
+
     # Construct authentication JSON
     auth_json = {
+        "v": version,
         "did": did,
         "nonce": nonce,
         "timestamp": timestamp,
         "verification_method": verification_method_fragment,
         "signature": signature
     }
-    
+
     logging.info("Successfully generated DID authentication JSON")
     return json.dumps(auth_json)
 
@@ -742,19 +788,19 @@ def verify_auth_json_signature(
 ) -> Tuple[bool, str]:
     """
     Verify the signature of DID authentication JSON.
-    
+
     Args:
         auth_json: Authentication information in JSON string or dictionary format
         did_document: DID document dictionary
         service_domain: Server domain, must match the domain used to generate the signature
-        
+
     Returns:
         Tuple[bool, str]: A tuple containing:
             - Boolean indicating if verification was successful
             - Message describing the verification result or error
     """
     logging.info("Starting DID authentication JSON verification")
-    
+
     try:
         # Parse JSON string (if input is string)
         if isinstance(auth_json, str):
@@ -764,48 +810,61 @@ def verify_auth_json_signature(
                 return False, f"Invalid JSON format: {str(e)}"
         else:
             auth_data = auth_json
-            
+
         # Extract authentication data
         client_did = auth_data.get('did')
         nonce = auth_data.get('nonce')
         timestamp_str = auth_data.get('timestamp')
         verification_method = auth_data.get('verification_method')
         signature = auth_data.get('signature')
-        
+        version = auth_data.get('v', '1.0')  # Default to "1.0" for backward compatibility
+
         # Verify all required fields exist
         if not all([client_did, nonce, timestamp_str, verification_method, signature]):
             return False, "Authentication JSON missing required fields"
-         
-        # Verify DID (case-sensitive)
+
+        # Verify DID (case-insensitive comparison)
         if did_document.get('id').lower() != client_did.lower():
             return False, "DID mismatch"
-            
+
+        # Determine which field to use based on version
+        # For version >= 1.1, use "aud" instead of "service"
+        try:
+            version_float = float(version)
+            domain_field = "aud" if version_float >= 1.1 else "service"
+        except ValueError:
+            # If version is not a valid float, default to "service" for backward compatibility
+            domain_field = "service"
+            logging.warning(f"Invalid version format '{version}', using 'service' field for verification")
+
         # Construct data to verify
         data_to_verify = {
             "nonce": nonce,
             "timestamp": timestamp_str,
-            "service": service_domain,
+            domain_field: service_domain,
             "did": client_did
         }
-        
+
         canonical_json = jcs.canonicalize(data_to_verify)
+        logging.debug(f"verify_auth_json_signature Canonical JSON: {canonical_json}")
         content_hash = hashlib.sha256(canonical_json).digest()
-        
+
         verification_method_id = f"{client_did}#{verification_method}"
         method_dict = _find_verification_method(did_document, verification_method_id)
         if not method_dict:
             return False, "Verification method not found"
-            
+
         try:
             verifier = create_verification_method(method_dict)
             if verifier.verify_signature(content_hash, signature):
+                logging.info(f"JSON signature verification successful for version {version}")
                 return True, "Verification successful"
             return False, "Signature verification failed"
         except ValueError as e:
             return False, f"Invalid or unsupported verification method: {str(e)}"
         except Exception as e:
             return False, f"Verification error: {str(e)}"
-            
+
     except ValueError as e:
         logging.error(f"Error extracting authentication data: {str(e)}")
         return False, str(e)
