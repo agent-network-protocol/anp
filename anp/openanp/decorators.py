@@ -19,15 +19,16 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, Literal, TypeVar, cast
 
-from .types import AgentConfig, RPCMethodInfo  # pyright: ignore[reportMissingImports]
+from .types import AgentConfig, RPCMethodInfo, Information  # pyright: ignore[reportMissingImports]
 
 APIRouter = Any
 
 __all__ = [
     "anp_agent",
     "interface",
+    "information",
     "extract_rpc_methods",
 ]
 
@@ -102,6 +103,7 @@ def interface(
     description: str | None = None,
     protocol: str | None = None,
     streaming: bool = False,
+    mode: Literal["content", "link"] = "content",
     params_schema: dict[str, Any] | None = None,
     result_schema: dict[str, Any] | None = None,
 ) -> T | Callable[[T], T]:
@@ -115,6 +117,7 @@ def interface(
         description: 方法描述，默认使用函数文档的第一行
         protocol: 协议类型，如 "AP2/ANP" 表示 AP2 支付协议方法
         streaming: 标记为流式方法，返回 AsyncIterator，/rpc 端点会返回 SSE 流
+        mode: 接口模式，"content" 嵌入 OpenRPC 文档，"link" 仅提供 URL 链接
         params_schema: 自定义参数 schema
         result_schema: 自定义返回值 schema
 
@@ -124,12 +127,12 @@ def interface(
     Example:
         最简单的用法：
             @interface
-            async def search(self, request, query: str) -> dict:
+            async def search(self, query: str) -> dict:
                 return {"results": []}
 
-        指定名称和描述：
-            @interface(name="book", description="Book a hotel")
-            async def book_hotel(self, request, hotel_id: str) -> dict:
+        Link 模式（生成独立的 OpenRPC 文档端点）：
+            @interface(mode="link")
+            async def book(self, hotel_id: str) -> dict:
                 return {"status": "booked"}
 
         AP2 协议方法：
@@ -142,21 +145,6 @@ def interface(
             async def ask_stream(self, content: str) -> AsyncIterator[dict]:
                 async for chunk in upstream.stream(content):
                     yield chunk
-
-        自定义 schema：
-            @interface(
-                params_schema={"type": "object", "properties": {"city": {"type": "string"}}},
-                result_schema={"type": "array"}
-            )
-            async def search(self, request, query: str) -> dict:
-                return {"results": []}
-
-    Note:
-        这个装饰器只是标记函数，真正的逻辑在用户自己的实现中。
-        用户可以：
-        1. 使用 @anp_agent 自动生成路由
-        2. 自己处理 RPC 调用
-        3. 提取标记的方法信息
     """
     # 如果直接调用装饰器（没有参数）
     if func is not None:
@@ -170,6 +158,7 @@ def interface(
             description=resolved_description,
             protocol=protocol,
             streaming=streaming,
+            mode=mode,
             params_schema=params_schema,
             result_schema=result_schema,
         )
@@ -186,6 +175,7 @@ def interface(
             description=resolved_description,
             protocol=protocol,
             streaming=streaming,
+            mode=mode,
             params_schema=params_schema,
             result_schema=result_schema,
         )
@@ -199,6 +189,7 @@ def _rpc_decorator(
     description: str,
     protocol: str | None = None,
     streaming: bool = False,
+    mode: Literal["content", "link"] = "content",
     params_schema: dict[str, Any] | None = None,
     result_schema: dict[str, Any] | None = None,
 ) -> T:
@@ -210,6 +201,7 @@ def _rpc_decorator(
         description: 方法描述
         protocol: 协议类型（如 "AP2/ANP"）
         streaming: 标记为流式方法
+        mode: 接口模式
         params_schema: 参数 schema
         result_schema: 返回值 schema
 
@@ -230,15 +222,90 @@ def _rpc_decorator(
         if result_schema is None:
             result_schema = extracted_result
 
+    # 检测是否有 Context 参数
+    has_context = _check_has_context(func)
+
     # 设置元数据属性（使用 object.__setattr__ 因为函数默认是不可变的）
     object.__setattr__(func, "_rpc_name", name)
     object.__setattr__(func, "_rpc_description", description)
     object.__setattr__(func, "_protocol", protocol)
     object.__setattr__(func, "_streaming", streaming)
+    object.__setattr__(func, "_mode", mode)
+    object.__setattr__(func, "_has_context", has_context)
     object.__setattr__(func, "_rpc_params_schema", params_schema)
     object.__setattr__(func, "_rpc_result_schema", result_schema)
 
     return func
+
+
+def _check_has_context(func: Callable) -> bool:
+    """检查函数是否有 Context 参数。
+
+    Args:
+        func: 要检查的函数
+
+    Returns:
+        True 如果函数有 Context 参数
+    """
+    import inspect
+    try:
+        sig = inspect.signature(func)
+        for param_name, param in sig.parameters.items():
+            if param_name == "ctx" or param_name == "context":
+                return True
+            # 检查类型注解
+            if param.annotation != inspect.Parameter.empty:
+                ann = param.annotation
+                if hasattr(ann, "__name__") and ann.__name__ == "Context":
+                    return True
+                if isinstance(ann, str) and ann == "Context":
+                    return True
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+def information(
+    type: str,
+    description: str,
+    path: str | None = None,
+    mode: Literal["url", "content"] = "url",
+) -> Callable[[T], T]:
+    """标记一个方法为 Information 端点。
+
+    将方法注册为动态 Information 端点，方法返回值将作为 Information 内容。
+
+    Args:
+        type: Information 类型（Product, VideoObject, ImageObject 等）
+        description: 描述
+        path: URL 路径（URL 模式必需）
+        mode: "url"（托管并返回 URL）或 "content"（内嵌到 ad.json）
+
+    Returns:
+        装饰后的函数
+
+    Example:
+        # URL 模式 - 生成独立端点
+        @information(type="Product", description="Room list", path="/products/rooms.json")
+        def get_rooms(self) -> dict:
+            return {"rooms": [...]}
+
+        # Content 模式 - 内嵌到 ad.json
+        @information(type="Service", description="Menu", mode="content")
+        def get_menu(self) -> dict:
+            return {"menu": [...]}
+    """
+    if mode == "url" and not path:
+        raise ValueError("URL mode @information requires 'path' parameter")
+
+    def decorator(func: T) -> T:
+        object.__setattr__(func, "_info_type", type)
+        object.__setattr__(func, "_info_description", description)
+        object.__setattr__(func, "_info_path", path)
+        object.__setattr__(func, "_info_mode", mode)
+        return func
+
+    return decorator
 
 
 def anp_agent(config: AgentConfig) -> Callable[[type[T]], type[T]]:
@@ -280,14 +347,20 @@ def anp_agent(config: AgentConfig) -> Callable[[type[T]], type[T]]:
     def decorator(cls: type[T]) -> type[T]:
         # 收集类中所有被 @interface 标记的方法
         rpc_method_names: list[str] = []
+        # 收集类中所有被 @information 标记的方法
+        info_method_names: list[str] = []
+
         for attr_name in dir(cls):
             attr = getattr(cls, attr_name)
             if hasattr(attr, "_rpc_name"):
                 rpc_method_names.append(attr_name)
+            if hasattr(attr, "_info_type"):
+                info_method_names.append(attr_name)
 
         # 将配置附加到类（不可变）
         cls._anp_config = config  # type: ignore[attr-defined]
         cls._anp_rpc_method_names = tuple(rpc_method_names)  # type: ignore[attr-defined]
+        cls._anp_info_method_names = tuple(info_method_names)  # type: ignore[attr-defined]
 
         # 使用描述符实现 router
         cls.router = _RouterDescriptor()  # type: ignore[attr-defined]
@@ -364,6 +437,8 @@ def extract_rpc_methods(obj: object) -> list[RPCMethodInfo]:
                 handler=attr,
                 protocol=getattr(attr, "_protocol", None),
                 streaming=getattr(attr, "_streaming", False),
+                mode=getattr(attr, "_mode", "content"),
+                has_context=getattr(attr, "_has_context", False),
             )
             methods.append(method_info)
 
@@ -432,6 +507,8 @@ def _extract_unbound_methods(cls: type) -> list[RPCMethodInfo]:
                     handler=attr,
                     protocol=getattr(attr, "_protocol", None),
                     streaming=getattr(attr, "_streaming", False),
+                    mode=getattr(attr, "_mode", "content"),
+                    has_context=getattr(attr, "_has_context", False),
                 )
             )
 
@@ -456,6 +533,8 @@ def _extract_bound_methods(instance: Any) -> list[RPCMethodInfo]:
                     handler=attr,  # 绑定方法
                     protocol=getattr(attr, "_protocol", None),
                     streaming=getattr(attr, "_streaming", False),
+                    mode=getattr(attr, "_mode", "content"),
+                    has_context=getattr(attr, "_has_context", False),
                 )
             )
 
@@ -500,6 +579,8 @@ def get_rpc_method_info(func: Callable) -> RPCMethodInfo | None:
         handler=func,
         protocol=getattr(f, "_protocol", None),
         streaming=getattr(f, "_streaming", False),
+        mode=getattr(f, "_mode", "content"),
+        has_context=getattr(f, "_has_context", False),
     )
 
 

@@ -6,16 +6,39 @@ client and server.
 Quick Start - Server:
 
     from fastapi import FastAPI
-    from anp.openanp import anp_agent, interface, AgentConfig
+    from anp.openanp import anp_agent, interface, AgentConfig, Information
 
     @anp_agent(AgentConfig(name="Hotel", did="did:wba:example.com:hotel"))
     class HotelAgent:
+        # Static Information
+        informations = [
+            Information(type="Product", description="Room catalog", path="/products/rooms.json", file="data/rooms.json"),
+        ]
+
         @interface
         async def search(self, query: str) -> dict:
             return {"results": [{"name": "Tokyo Hotel", "price": 100}]}
 
+        @interface(mode="link")  # Separate interface file
+        async def book(self, hotel_id: str) -> dict:
+            return {"status": "booked"}
+
     app = FastAPI()
     app.include_router(HotelAgent.router())
+
+Quick Start - With Context:
+
+    from anp.openanp import anp_agent, interface, AgentConfig, Context
+
+    @anp_agent(AgentConfig(name="Hotel", did="did:wba:example.com:hotel"))
+    class HotelAgent:
+        @interface
+        async def search(self, query: str, ctx: Context) -> dict:
+            # ctx.did - requester's DID
+            # ctx.session - session object for this DID
+            # ctx.request - FastAPI Request
+            ctx.session.set("last_query", query)
+            return {"results": [...], "user": ctx.did}
 
 Quick Start - Client:
 
@@ -63,7 +86,7 @@ from . import client
 # 自动生成路由（可选，需要 fastapi）
 # =============================================================================
 try:
-    from .autogen import create_agent_router
+    from .autogen import create_agent_router, generate_ad
 except ImportError:
     # fastapi 未安装时，create_agent_router 不可用
     # 提供一个友好的错误提示函数
@@ -71,6 +94,13 @@ except ImportError:
         """create_agent_router requires fastapi. Install with: pip install 'anp[api]' or uv sync --extra api"""
         raise ImportError(
             "create_agent_router requires fastapi. "
+            "Install with: pip install 'anp[api]' or uv sync --extra api"
+        )
+
+    def generate_ad(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+        """generate_ad requires fastapi. Install with: pip install 'anp[api]' or uv sync --extra api"""
+        raise ImportError(
+            "generate_ad requires fastapi. "
             "Install with: pip install 'anp[api]' or uv sync --extra api"
         )
 
@@ -83,7 +113,17 @@ from .client import Method, RemoteAgent
 from .decorators import (
     anp_agent,
     extract_rpc_methods,
+    information,
     interface,
+)
+
+# =============================================================================
+# Context 和 Session 管理
+# =============================================================================
+from .context import (
+    Context,
+    Session,
+    SessionManager,
 )
 
 # =============================================================================
@@ -101,6 +141,7 @@ from .types import (
     ConfigurationError,
     FrozenRPCMethodCollection,
     IHealthCheck,
+    Information,
     InternalError,
     InvalidParamsError,
     InvalidRequestError,
@@ -144,12 +185,17 @@ __all__ = [
     "RPCMethodInfo",
     "RPCMethodCollection",
     "FrozenRPCMethodCollection",
+    "Information",
     # Protocols (extension points)
     "IRPCAgent",
     "AgentProtocol",
     "RPCProtocol",
     "IRPCMiddleware",
     "IHealthCheck",
+    # Context and Session
+    "Context",
+    "Session",
+    "SessionManager",
     # Errors (structured error handling)
     "OpenANPError",
     "ConfigurationError",
@@ -169,10 +215,12 @@ __all__ = [
     "RPCErrorCodes",
     # Decorators (optional, for quick start)
     "interface",
+    "information",
     "anp_agent",
     "extract_rpc_methods",
     # Router generation (optional)
     "create_agent_router",
+    "generate_ad",
     # Schema generation (advanced)
     "type_to_json_schema",
     "extract_method_schemas",

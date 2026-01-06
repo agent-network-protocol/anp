@@ -15,6 +15,7 @@ from typing import (
     Any,
     Callable,
     Generic,
+    Literal,
     Protocol,
     TypeVar,
     runtime_checkable,
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AgentConfig",
     "RPCMethodInfo",
+    "Information",
     "RPCMethodCollection",
     "FrozenRPCMethodCollection",
     "IRPCAgent",
@@ -72,6 +74,7 @@ class AgentConfig:
         prefix: FastAPI router prefix, defaults to empty
         tags: FastAPI tags, defaults to ["ANP"]
         url_config: Custom URL configuration
+        auth_config: DID WBA authentication configuration
 
     Note:
         OpenANP focuses on ANP protocol, not infrastructure.
@@ -96,6 +99,7 @@ class AgentConfig:
     prefix: str = ""
     tags: list[str] | None = None
     url_config: dict[str, str] | None = None
+    auth_config: Any = None  # DidWbaVerifierConfig, optional to avoid circular import
 
     def __post_init__(self):
         """Validate configuration."""
@@ -109,6 +113,89 @@ class AgentConfig:
 
         object.__setattr__(self, "name", self.name.strip())
         object.__setattr__(self, "did", self.did.strip())
+
+
+@dataclass(frozen=True)
+class Information:
+    """Information document definition.
+
+    Supports both URL mode (link to external resource) and Content mode (embedded content).
+
+    Attributes:
+        type: Information type (Product, VideoObject, ImageObject, etc.)
+        description: Description of this information
+        mode: Output mode - "url" for link, "content" for embedded
+        path: Relative path (URL mode, hosted by OpenANP)
+        url: External URL (URL mode)
+        file: Static file path (URL mode, for hosting)
+        content: Embedded content (Content mode)
+
+    Example:
+        # URL mode - hosted file
+        Information(
+            type="Product",
+            description="Room catalog",
+            path="/products/rooms.json",
+            file="data/rooms.json"
+        )
+
+        # URL mode - external link
+        Information(
+            type="VideoObject",
+            description="Hotel tour",
+            url="https://cdn.hotel.com/tour.mp4"
+        )
+
+        # Content mode - embedded
+        Information(
+            type="Organization",
+            description="Contact info",
+            mode="content",
+            content={"name": "Hotel", "phone": "+1-234-567"}
+        )
+    """
+
+    type: str
+    description: str
+    mode: Literal["url", "content"] = "url"
+    path: str | None = None
+    url: str | None = None
+    file: str | None = None
+    content: dict[str, Any] | None = None
+
+    def __post_init__(self):
+        """Validate information configuration."""
+        if self.mode == "url" and not self.path and not self.url:
+            raise ValueError("URL mode Information must have either 'path' or 'url'")
+        if self.mode == "content" and self.content is None:
+            raise ValueError("Content mode Information must have 'content'")
+
+    def to_dict(self, base_url: str = "") -> dict[str, Any]:
+        """Convert to dictionary for ad.json.
+
+        Args:
+            base_url: Base URL for constructing full URLs
+
+        Returns:
+            Dictionary representation
+        """
+        result: dict[str, Any] = {
+            "type": self.type,
+            "description": self.description,
+        }
+
+        if self.mode == "content":
+            result["content"] = self.content
+        else:
+            if self.url:
+                result["url"] = self.url
+            elif self.path:
+                if base_url:
+                    result["url"] = f"{base_url.rstrip('/')}{self.path}"
+                else:
+                    result["url"] = self.path
+
+        return result
 
 
 @dataclass(frozen=True)
@@ -140,6 +227,14 @@ class RPCMethodInfo:
             protocol="AP2/ANP",  # 标记为 AP2 协议方法
             ...
         )
+
+        # Link 模式示例
+        link_method = RPCMethodInfo(
+            name="book",
+            description="Book a hotel",
+            mode="link",  # 在 ad.json 中使用 URL 而非嵌入内容
+            ...
+        )
     """
 
     name: str
@@ -162,6 +257,12 @@ class RPCMethodInfo:
 
     streaming: bool = False
     """可选：标记为流式方法 - 返回 AsyncIterator，/rpc 端点会返回 SSE 流"""
+
+    mode: Literal["content", "link"] = "content"
+    """可选：接口模式 - "content" 嵌入 OpenRPC 文档，"link" 仅提供 URL 链接"""
+
+    has_context: bool = False
+    """可选：标记方法是否需要 Context 参数注入"""
 
     def __post_init__(self):
         object.__setattr__(self, "name", self.name.strip())

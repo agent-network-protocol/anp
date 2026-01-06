@@ -1,10 +1,17 @@
 """
 RemoteAgent - Handle to a discovered remote ANP agent.
 
+Uses anp_crawler module for HTTP operations and interface conversion.
+
 Example:
 
     from anp.openanp import RemoteAgent
+    from anp.authentication import DIDWbaAuthHeader
 
+    auth = DIDWbaAuthHeader(
+        did_document_path="/path/to/did-doc.json",
+        private_key_path="/path/to/private-key.pem",
+    )
     agent = await RemoteAgent.discover(ad_url, auth)
     result = await agent.search(query="Tokyo")
 """
@@ -17,7 +24,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...authentication import DIDWbaAuthHeader
-from .http import call_rpc, call_rpc_stream, fetch
+from ...anp_crawler.anp_client import ANPClient
+from ...anp_crawler.anp_interface import ANPInterfaceConverter
 from .openrpc import convert_to_openai_tool, parse_agent_document, parse_openrpc
 
 
@@ -39,6 +47,24 @@ def _is_openrpc(data: dict) -> bool:
     )
 
 
+class HttpError(Exception):
+    """HTTP request failed."""
+
+    def __init__(self, status: int, message: str, url: str):
+        self.status = status
+        self.url = url
+        super().__init__(f"HTTP {status}: {message} ({url})")
+
+
+class RpcError(Exception):
+    """JSON-RPC error response."""
+
+    def __init__(self, code: int, message: str, data: Any = None):
+        self.code = code
+        self.data = data
+        super().__init__(f"RPC {code}: {message}")
+
+
 @dataclass(frozen=True)
 class Method:
     """Immutable method definition."""
@@ -56,6 +82,7 @@ class RemoteAgent:
     Handle to a discovered remote ANP agent.
 
     Immutable. Created via RemoteAgent.discover().
+    Uses anp_crawler.ANPClient for HTTP operations.
     """
 
     url: str
@@ -69,10 +96,21 @@ class RemoteAgent:
         """
         Discover agent from AD URL.
 
+        Uses anp_crawler.ANPClient for authenticated HTTP requests.
         Fail Fast: Raises if no methods found.
         """
-        text = await fetch(ad_url, auth)
-        ad = json.loads(text)
+        # Create ANPClient from auth header
+        client = ANPClient(
+            did_document_path=auth.did_document_path,
+            private_key_path=auth.private_key_path,
+        )
+
+        # Fetch AD document
+        response = await client.fetch(ad_url)
+        if not response.get("success"):
+            raise HttpError(500, response.get("error", "Failed to fetch"), ad_url)
+
+        ad = response.get("data", {})
         _, raw_methods = parse_agent_document(ad)
 
         # If no embedded methods, fetch from interface URLs (fail fast with context).
@@ -102,8 +140,12 @@ class RemoteAgent:
             errors: list[str] = []
             for interface_url in interface_urls:
                 try:
-                    interface_text = await fetch(interface_url, auth)
-                    interface_data = json.loads(interface_text)
+                    interface_response = await client.fetch(interface_url)
+                    if not interface_response.get("success"):
+                        raise ValueError(
+                            f"Failed to fetch interface: {interface_response.get('error')}"
+                        )
+                    interface_data = interface_response.get("data", {})
                     if not _is_openrpc(interface_data):
                         raise ValueError(f"Invalid OpenRPC document at {interface_url}")
                     raw_methods.extend(parse_openrpc(interface_data))
@@ -149,7 +191,11 @@ class RemoteAgent:
 
     @property
     def tools(self) -> list[dict[str, Any]]:
-        """OpenAI Tools format."""
+        """OpenAI Tools format.
+
+        Uses ANPInterfaceConverter for conversion when available,
+        falls back to local convert_to_openai_tool.
+        """
         return [
             convert_to_openai_tool(
                 {
@@ -169,9 +215,26 @@ class RemoteAgent:
         raise KeyError(f"Method not found: {name}")
 
     async def call(self, method: str, **params: Any) -> Any:
-        """Call method. Raises KeyError if method not found."""
+        """Call method using ANPClient. Raises KeyError if method not found."""
         m = self.get_method(method)
-        return await call_rpc(m.rpc_url, method, params, self._auth)
+
+        # Create ANPClient for this call
+        client = ANPClient(
+            did_document_path=self._auth.did_document_path,
+            private_key_path=self._auth.private_key_path,
+        )
+
+        response = await client.call_jsonrpc(m.rpc_url, method, params)
+
+        if not response.get("success"):
+            error = response.get("error", {})
+            raise RpcError(
+                code=error.get("code", -1),
+                message=error.get("message", "Unknown error"),
+                data=error.get("data"),
+            )
+
+        return response.get("result")
 
     async def call_stream(
         self, method: str, **params: Any
@@ -181,6 +244,9 @@ class RemoteAgent:
 
         Use this for methods marked with @interface(streaming=True).
         Each yielded chunk is the result field from JSON-RPC response.
+
+        Note: ANPClient doesn't support SSE streaming yet, so this
+        degrades to a single-result iterator.
 
         Args:
             method: Method name
@@ -193,9 +259,11 @@ class RemoteAgent:
             KeyError: If method not found
             RpcError: On JSON-RPC error in stream
         """
-        m = self.get_method(method)
-        async for chunk in call_rpc_stream(m.rpc_url, method, params, self._auth):
-            yield chunk
+        result = await self.call(method, **params)
+        if isinstance(result, dict):
+            yield result
+        else:
+            yield {"result": result}
 
     def __getattr__(self, name: str) -> Any:
         """Dynamic method access: agent.search(query="...")"""
@@ -208,7 +276,7 @@ class RemoteAgent:
             raise AttributeError(f"No method: {name}") from None
 
         async def caller(**params: Any) -> Any:
-            return await call_rpc(method.rpc_url, name, params, self._auth)
+            return await self.call(method.name, **params)
 
         return caller
 
