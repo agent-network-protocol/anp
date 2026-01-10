@@ -787,9 +787,22 @@ def create_agent_router(
 
     @router.get("/ad.json")
     async def get_ad(request: Request) -> JSONResponse:
-        """Generate and return ad.json document."""
+        """Generate and return ad.json document.
+
+        If the agent instance has a `customize_ad` method, it will be called
+        to allow customization of the ad.json content.
+        """
         base_url = resolve_base_url(request)
         doc = generate_ad(config, instance, base_url, methods)
+
+        # Call customize_ad hook if exists
+        if instance is not None and hasattr(instance, "customize_ad"):
+            customize_fn = getattr(instance, "customize_ad")
+            if inspect.iscoroutinefunction(customize_fn):
+                doc = await customize_fn(doc, base_url)
+            else:
+                doc = customize_fn(doc, base_url)
+
         return JSONResponse(doc, media_type="application/json; charset=utf-8")
 
     # =========================================================================

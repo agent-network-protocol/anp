@@ -7,6 +7,7 @@ Demonstrates all advanced features:
 3. Static Information (URL / Content modes)
 4. Dynamic @information decorator
 5. Constructor dependency injection
+6. customize_ad() hook for customizing ad.json
 
 Context Core Concepts:
 ======================
@@ -333,6 +334,59 @@ class ShopAgent:
             ]
         }
 
+    # =========================================================================
+    # Custom ad.json Hook
+    # =========================================================================
+
+    def customize_ad(self, ad: dict, base_url: str) -> dict:
+        """Customize the auto-generated ad.json.
+
+        This method is automatically called by OpenANP when generating ad.json.
+        You can modify the ad dict to add custom fields, additional Informations,
+        or any other customization.
+
+        Args:
+            ad: The auto-generated ad.json dict
+            base_url: The base URL of the server
+
+        Returns:
+            The modified ad.json dict
+        """
+        # Add custom metadata
+        ad["custom_metadata"] = {
+            "version": "2.0.0",
+            "environment": "production",
+            "features": ["discount", "session", "cart"],
+        }
+
+        # Add additional Informations
+        if "Infomations" not in ad:
+            ad["Infomations"] = []
+
+        ad["Infomations"].append({
+            "type": "FAQ",
+            "description": "Frequently Asked Questions",
+            "url": f"{base_url}/shop/faq.json",
+        })
+
+        ad["Infomations"].append({
+            "type": "Policy",
+            "description": "Return Policy",
+            "content": {
+                "return_window_days": 30,
+                "conditions": ["unused", "original packaging"],
+            },
+        })
+
+        # Add custom service links
+        ad["support"] = {
+            "email": "support@example-shop.com",
+            "phone": "+1-800-SHOP",
+            "hours": "24/7",
+        }
+
+        return ad
+
 
 def create_app() -> FastAPI:
     """Create FastAPI application.
@@ -356,92 +410,17 @@ app = create_app()
 
 
 # =============================================================================
-# Custom ad.json Example (Override on existing app)
+# Additional Custom Endpoints
 # =============================================================================
-# This example demonstrates how to override the auto-generated ad.json
-# on an existing app by registering a custom route.
-#
-# Key steps:
-# 1. Use generate_ad() to get the base ad.json from SDK
-# 2. Modify the ad.json content as needed
-# 3. Register the custom route to override the auto-generated one
+# You can add additional endpoints to the app that are referenced in ad.json
+# (e.g., the FAQ endpoint added via customize_ad)
 
-from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from anp.openanp import generate_ad
-from anp.openanp.decorators import extract_rpc_methods
-from anp.openanp.utils import resolve_base_url
 
-# Get agent instance for customization
-# Note: In real usage, you would keep a reference to the agent when creating the app
-_custom_agent = ShopAgent(discount_rate=0.15)
-_custom_config = _custom_agent.config
-_custom_methods = extract_rpc_methods(_custom_agent)
-
-
-@app.get("/shop/ad.json")
-async def custom_ad(request: Request) -> JSONResponse:
-    """Override the auto-generated ad.json with custom content.
-
-    This route is registered AFTER include_router(), but FastAPI allows
-    overriding routes when they have the same path. The last registered
-    route with the same path will be used.
-
-    Steps demonstrated:
-    1. Call generate_ad() to get the base ad.json from SDK
-    2. Modify the returned dict to add custom fields
-    3. Return the modified ad.json
-    """
-    # Step 1: Get base URL from request
-    base_url = resolve_base_url(request)
-
-    # Step 2: Generate base ad.json using SDK's generate_ad()
-    ad = generate_ad(_custom_config, _custom_agent, base_url, _custom_methods)
-
-    # Step 3: Customize the ad.json content
-    # =========================================================================
-
-    # Add custom metadata
-    ad["custom_metadata"] = {
-        "version": "2.0.0",
-        "environment": "production",
-        "features": ["discount", "session", "cart"],
-    }
-
-    # Add additional Informations
-    if "Infomations" not in ad:
-        ad["Infomations"] = []
-
-    ad["Infomations"].append({
-        "type": "FAQ",
-        "description": "Frequently Asked Questions",
-        "url": f"{base_url}/shop/faq.json",
-    })
-
-    ad["Infomations"].append({
-        "type": "Policy",
-        "description": "Return Policy",
-        "content": {
-            "return_window_days": 30,
-            "conditions": ["unused", "original packaging"],
-        },
-    })
-
-    # Add custom service links
-    ad["support"] = {
-        "email": "support@example-shop.com",
-        "phone": "+1-800-SHOP",
-        "hours": "24/7",
-    }
-
-    return JSONResponse(ad, media_type="application/json; charset=utf-8")
-
-
-# Add additional custom endpoints to the existing app
 @app.get("/shop/faq.json")
 async def get_faq() -> JSONResponse:
-    """Custom FAQ endpoint referenced in ad.json."""
+    """Custom FAQ endpoint referenced in ad.json via customize_ad."""
     return JSONResponse({
         "faqs": [
             {"question": "How long does shipping take?", "answer": "3-5 business days."},

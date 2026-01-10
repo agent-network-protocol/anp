@@ -333,21 +333,13 @@ class MyAgent:
 
 ---
 
-### Custom ad.json (Override Existing Route)
+### Custom ad.json (customize_ad Hook)
 
-Use `generate_ad()` to get the base ad.json from SDK, then customize it and override the auto-generated route.
-
-**Key Steps**:
-1. Call `generate_ad()` to get the base ad.json
-2. Modify the returned dict to add custom fields
-3. Register a route with the same path to override the auto-generated one
+Define a `customize_ad` method in your Agent class to customize ad.json. This method is automatically called by the framework when generating ad.json.
 
 ```python
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from anp.openanp import generate_ad, anp_agent, interface, AgentConfig
-from anp.openanp.decorators import extract_rpc_methods
-from anp.openanp.utils import resolve_base_url
+from fastapi import FastAPI
+from anp.openanp import anp_agent, interface, AgentConfig
 
 @anp_agent(AgentConfig(name="Hotel", did="did:wba:example.com:hotel", prefix="/hotel"))
 class HotelAgent:
@@ -355,47 +347,51 @@ class HotelAgent:
     async def search(self, query: str) -> dict:
         return {"results": [...]}
 
-app = FastAPI()
+    def customize_ad(self, ad: dict, base_url: str) -> dict:
+        """Customize ad.json - automatically called by OpenANP.
 
-# Create agent and include router
+        Args:
+            ad: The auto-generated ad.json dict
+            base_url: The base URL of the server
+
+        Returns:
+            The modified ad.json dict
+        """
+        # Add custom metadata
+        ad["custom_metadata"] = {"version": "2.0.0"}
+
+        # Add additional Informations
+        if "Infomations" not in ad:
+            ad["Infomations"] = []
+        ad["Infomations"].append({
+            "type": "FAQ",
+            "description": "FAQ",
+            "url": f"{base_url}/hotel/faq.json",
+        })
+
+        # Add custom support info
+        ad["support"] = {"email": "support@hotel.com"}
+
+        return ad
+
+app = FastAPI()
 agent = HotelAgent()
 app.include_router(agent.router())
 
-# Get config and methods for generate_ad()
-config = agent.config
-methods = extract_rpc_methods(agent)
-
-# Override ad.json by registering a route with the same path
-# FastAPI uses last-match for same paths, so this will override the auto-generated one
-@app.get("/hotel/ad.json")
-async def custom_ad(request: Request) -> JSONResponse:
-    # Step 1: Get base URL
-    base_url = resolve_base_url(request)
-
-    # Step 2: Generate base ad.json using SDK
-    ad = generate_ad(config, agent, base_url, methods)
-
-    # Step 3: Customize the ad.json
-    ad["custom_metadata"] = {"version": "2.0.0"}
-
-    # Add additional Informations
-    if "Infomations" not in ad:
-        ad["Infomations"] = []
-    ad["Infomations"].append({
-        "type": "FAQ",
-        "description": "FAQ",
-        "url": f"{base_url}/hotel/faq.json",
-    })
-
-    # Add custom support info
-    ad["support"] = {"email": "support@hotel.com"}
-
-    return JSONResponse(ad, media_type="application/json; charset=utf-8")
-
-# Add additional custom endpoints
+# Add endpoints referenced in customize_ad
 @app.get("/hotel/faq.json")
-async def get_faq() -> JSONResponse:
-    return JSONResponse({"faqs": [...]})
+async def get_faq():
+    return {"faqs": [...]}
+```
+
+**Note**: `customize_ad` can also be an async method:
+
+```python
+async def customize_ad(self, ad: dict, base_url: str) -> dict:
+    # Async operations supported
+    extra_info = await self.fetch_extra_info()
+    ad["extra"] = extra_info
+    return ad
 ```
 
 **Extending Router with New Endpoints**:
