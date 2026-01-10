@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""OpenANP 极简服务端示例。
+"""OpenANP Minimal Server Example.
 
-用最少的代码搭建一个完整的 ANP Server。
+Build a complete ANP Server with minimal code.
 
-运行命令：
+Run:
     uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
 
-生成的端点：
+Generated Endpoints:
     GET  /agent/ad.json           - Agent Description
-    GET  /agent/interface.json    - OpenRPC 接口文档
-    POST /agent/rpc               - JSON-RPC 端点
+    GET  /agent/interface.json    - OpenRPC Interface Document
+    POST /agent/rpc               - JSON-RPC Endpoint
 
-测试调用：
+Test:
     curl -X POST http://localhost:8000/agent/rpc \
         -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"add","params":{"a":10,"b":20},"id":1}'
@@ -27,35 +27,35 @@ from anp.openanp import AgentConfig, anp_agent, interface
         name="Calculator",
         did="did:wba:example.com:calculator",
         prefix="/agent",
-        description="一个简单的计算器代理",
+        description="A simple calculator agent",
     )
 )
 class CalculatorAgent:
-    """极简计算器代理。"""
+    """Minimal calculator agent."""
 
     @interface
     async def add(self, a: int, b: int) -> int:
-        """计算两数之和。
+        """Calculate the sum of two numbers.
 
         Args:
-            a: 第一个数
-            b: 第二个数
+            a: First number
+            b: Second number
 
         Returns:
-            两数之和
+            Sum of the two numbers
         """
         return a + b
 
     @interface
     async def multiply(self, a: int, b: int) -> int:
-        """计算两数之积。
+        """Calculate the product of two numbers.
 
         Args:
-            a: 第一个数
-            b: 第二个数
+            a: First number
+            b: Second number
 
         Returns:
-            两数之积
+            Product of the two numbers
         """
         return a * b
 
@@ -67,8 +67,8 @@ app.include_router(CalculatorAgent.router())
 if __name__ == "__main__":
     import uvicorn
 
-    print("启动极简 ANP Server...")
+    print("Starting Minimal ANP Server...")
     print("  Agent Description: http://localhost:8000/agent/ad.json")
-    print("  OpenRPC 文档:      http://localhost:8000/agent/interface.json")
-    print("  JSON-RPC 端点:     http://localhost:8000/agent/rpc")
+    print("  OpenRPC Document:  http://localhost:8000/agent/interface.json")
+    print("  JSON-RPC Endpoint: http://localhost:8000/agent/rpc")
     uvicorn.run(app, host="0.0.0.0", port=8000)

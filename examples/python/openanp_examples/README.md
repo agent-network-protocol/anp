@@ -1,10 +1,10 @@
 # OpenANP Examples
 
-OpenANP - 极简的 ANP (Agent Network Protocol) Python SDK。
+OpenANP - The simplest ANP (Agent Network Protocol) Python SDK.
 
-## 🚀 30 秒快速开始
+## 🚀 Quick Start in 30 Seconds
 
-### 服务端（3 步搭建 ANP Server）
+### Server (Build an ANP Server in 3 Steps)
 
 ```python
 from fastapi import FastAPI
@@ -24,9 +24,9 @@ app = FastAPI()
 app.include_router(MyAgent.router())
 ```
 
-启动：`uvicorn app:app --port 8000`
+Run: `uvicorn app:app --port 8000`
 
-### 客户端（3 行调用远程代理）
+### Client (Call Remote Agent in 3 Lines)
 
 ```python
 from anp.openanp import RemoteAgent
@@ -37,100 +37,100 @@ result = await agent.hello(name="World")  # "Hello, World!"
 
 ---
 
-## 📁 示例文件
+## 📁 Example Files
 
-| 文件 | 说明 | 复杂度 |
-|------|------|--------|
-| `minimal_server.py` | 极简服务端 | ⭐ |
-| `minimal_client.py` | 极简客户端 | ⭐ |
-| `advanced_server.py` | 完整服务端（Context、Session、Information） | ⭐⭐⭐ |
-| `advanced_client.py` | 完整客户端（方法发现、错误处理、LLM集成） | ⭐⭐⭐ |
+| File | Description | Complexity |
+|------|-------------|------------|
+| `minimal_server.py` | Minimal server | ⭐ |
+| `minimal_client.py` | Minimal client | ⭐ |
+| `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
+| `advanced_client.py` | Full client (discovery, error handling, LLM integration) | ⭐⭐⭐ |
 
 ---
 
-## 🏃 运行示例
+## 🏃 Running Examples
 
-### 前提条件
+### Prerequisites
 
 ```bash
-# 安装依赖（需要 api extra）
+# Install dependencies (requires api extra)
 uv sync --extra api
 ```
 
-### 运行极简示例
+### Run Minimal Example
 
 ```bash
-# 终端 1：启动服务端
+# Terminal 1: Start server
 uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
 
-# 终端 2：运行客户端
+# Terminal 2: Run client
 uv run python examples/python/openanp_examples/minimal_client.py
 ```
 
-### 运行完整示例
+### Run Advanced Example
 
 ```bash
-# 终端 1：启动服务端
+# Terminal 1: Start server
 uvicorn examples.python.openanp_examples.advanced_server:app --port 8000
 
-# 终端 2：运行客户端
+# Terminal 2: Run client
 uv run python examples/python/openanp_examples/advanced_client.py
 ```
 
 ---
 
-## 🔧 服务端 API
+## 🔧 Server API
 
-### @anp_agent - 代理装饰器
+### @anp_agent - Agent Decorator
 
 ```python
 @anp_agent(AgentConfig(
-    name="Agent Name",           # 代理名称
-    did="did:wba:...",           # DID 标识符
-    prefix="/agent",             # 路由前缀
-    description="描述",          # 可选：描述
-    tags=["tag1"],               # 可选：标签
+    name="Agent Name",           # Agent name
+    did="did:wba:...",           # DID identifier
+    prefix="/agent",             # Route prefix
+    description="Description",   # Optional: description
+    tags=["tag1"],               # Optional: tags
 ))
 class MyAgent:
     ...
 ```
 
-### @interface - RPC 方法
+### @interface - RPC Methods
 
 ```python
-# 基础用法（content 模式，嵌入 interface.json）
+# Basic usage (content mode, embedded in interface.json)
 @interface
 async def method(self, param: str) -> dict:
     ...
 
-# Link 模式（独立 interface 文件）
+# Link mode (separate interface file)
 @interface(mode="link")
 async def method(self, param: str) -> dict:
     ...
 
-# Context 注入（获取 session、DID、request）
+# Context injection (access session, DID, request)
 @interface
 async def method(self, param: str, ctx: Context) -> dict:
     ctx.session.set("key", "value")
     return {"did": ctx.did}
 ```
 
-### Information - 信息文档
+### Information - Information Documents
 
 ```python
 class MyAgent:
-    # 静态 Information
+    # Static Information
     informations = [
         Information(type="ImageObject", description="Logo", url="https://..."),
         Information(type="Contact", mode="content", content={"phone": "123"}),
     ]
 
-    # 动态 Information（URL 模式）
+    # Dynamic Information (URL mode)
     @information(type="Product", path="/products/list.json")
     def get_products(self) -> dict:
         return {"items": [...]}
 
-    # 动态 Information（Content 模式，嵌入 ad.json）
+    # Dynamic Information (Content mode, embedded in ad.json)
     @information(type="Offer", mode="content")
     def get_offers(self) -> dict:
         return {"discount": "20%"}
@@ -138,63 +138,63 @@ class MyAgent:
 
 ---
 
-## 📡 生成的端点
+## 📡 Generated Endpoints
 
-| 端点 | 说明 |
-|------|------|
-| `GET /prefix/ad.json` | Agent Description 文档 |
-| `GET /prefix/interface.json` | OpenRPC 接口文档（content 模式方法） |
-| `GET /prefix/interface/{method}.json` | 独立接口文档（link 模式方法） |
-| `GET /prefix/{path}` | 动态 Information 端点 |
-| `POST /prefix/rpc` | JSON-RPC 2.0 端点 |
+| Endpoint | Description |
+|----------|-------------|
+| `GET /prefix/ad.json` | Agent Description document |
+| `GET /prefix/interface.json` | OpenRPC interface document (content mode methods) |
+| `GET /prefix/interface/{method}.json` | Separate interface document (link mode methods) |
+| `GET /prefix/{path}` | Dynamic Information endpoints |
+| `POST /prefix/rpc` | JSON-RPC 2.0 endpoint |
 
 ---
 
-## 🔌 客户端 API
+## 🔌 Client API
 
-### RemoteAgent - 远程代理
+### RemoteAgent - Remote Agent
 
 ```python
 from anp.openanp import RemoteAgent
 
-# 发现代理
+# Discover agent
 agent = await RemoteAgent.discover(ad_url, auth)
 
-# 代理信息
-print(agent.name)           # 代理名称
-print(agent.description)    # 描述
-print(agent.methods)        # 方法列表
+# Agent info
+print(agent.name)           # Agent name
+print(agent.description)    # Description
+print(agent.methods)        # Method list
 
-# 方法调用（两种方式）
-result = await agent.hello(name="World")              # 动态属性
-result = await agent.call("hello", name="World")      # 显式调用
+# Call methods (two ways)
+result = await agent.hello(name="World")              # Dynamic attribute
+result = await agent.call("hello", name="World")      # Explicit call
 
-# LLM 集成
-tools = agent.tools  # OpenAI Tools 格式
+# LLM Integration
+tools = agent.tools  # OpenAI Tools format
 ```
 
 ---
 
-## 🧪 手动测试
+## 🧪 Manual Testing
 
-### 测试 JSON-RPC 调用
+### Test JSON-RPC Call
 
 ```bash
-# 调用 add 方法
+# Call add method
 curl -X POST http://localhost:8000/agent/rpc \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"add","params":{"a":10,"b":20},"id":1}'
 
-# 响应: {"jsonrpc":"2.0","result":30,"id":1}
+# Response: {"jsonrpc":"2.0","result":30,"id":1}
 ```
 
-### 查看 Agent Description
+### View Agent Description
 
 ```bash
 curl http://localhost:8000/agent/ad.json | jq
 ```
 
-### 查看 OpenRPC 接口文档
+### View OpenRPC Interface Document
 
 ```bash
 curl http://localhost:8000/agent/interface.json | jq
@@ -202,7 +202,7 @@ curl http://localhost:8000/agent/interface.json | jq
 
 ---
 
-## 📖 更多资源
+## 📖 More Resources
 
-- [ANP 协议规范](https://github.com/agent-network-protocol)
-- [AgentConnect 文档](../../../docs/)
+- [ANP Protocol Specification](https://github.com/agent-network-protocol)
+- [AgentConnect Documentation](../../../docs/)

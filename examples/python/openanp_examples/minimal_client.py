@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""OpenANP 极简客户端示例。
+"""OpenANP Minimal Client Example.
 
-用最少的代码调用远程 ANP 代理。
+Call a remote ANP agent with minimal code.
 
-前提条件：
-    先启动 minimal_server.py：
+Prerequisites:
+    Start minimal_server.py first:
     uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
 
-运行命令：
+Run:
     uv run python examples/python/openanp_examples/minimal_client.py
 """
 
@@ -18,43 +18,43 @@ from anp.authentication import DIDWbaAuthHeader
 from anp.openanp import RemoteAgent
 
 
-# DID 文档和私钥路径
+# DID document and private key paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 DID_DOC = PROJECT_ROOT / "docs/did_public/public-did-doc.json"
 PRIVATE_KEY = PROJECT_ROOT / "docs/did_public/public-private-key.pem"
 
 
 async def main() -> None:
-    """极简客户端演示。"""
-    # 1. 创建认证
+    """Minimal client demo."""
+    # 1. Create authentication
     auth = DIDWbaAuthHeader(
         did_document_path=str(DID_DOC),
         private_key_path=str(PRIVATE_KEY),
     )
 
-    # 2. 发现代理
-    print("发现代理...")
+    # 2. Discover agent
+    print("Discovering agent...")
     try:
         agent = await RemoteAgent.discover(
             "http://localhost:8000/agent/ad.json",
             auth,
         )
     except Exception as e:
-        print(f"连接失败: {e}")
-        print("\n请先启动服务端:")
+        print(f"Connection failed: {e}")
+        print("\nPlease start the server first:")
         print("  uvicorn examples.python.openanp_examples.minimal_server:app --port 8000")
         return
 
-    print(f"已连接: {agent.name}")
+    print(f"Connected: {agent.name}")
 
-    # 3. 调用方法
+    # 3. Call methods
     result = await agent.add(a=10, b=20)
     print(f"10 + 20 = {result}")
 
     result = await agent.multiply(a=6, b=7)
     print(f"6 × 7 = {result}")
 
-    print("\n演示完成!")
+    print("\nDemo completed!")
 
 
 if __name__ == "__main__":

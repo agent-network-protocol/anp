@@ -1,9 +1,9 @@
-"""OpenANP SDK - 类型定义和协议
+"""OpenANP SDK - Type Definitions and Protocols.
 
-这个模块定义了所有核心类型，遵循：
-- 高内聚：所有类型定义紧密相关
-- 不可变：使用 frozen dataclass 防止意外修改
-- 类型安全：Protocol 确保接口一致性
+This module defines all core types, following:
+- High cohesion: All type definitions are closely related
+- Immutability: Use frozen dataclass to prevent accidental modification
+- Type safety: Protocol ensures interface consistency
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ T = TypeVar("T")
 
 
 # =============================================================================
-# 核心配置类型
+# Core Configuration Types
 # =============================================================================
 
 
@@ -200,10 +200,11 @@ class Information:
 
 @dataclass(frozen=True)
 class RPCMethodInfo:
-    """RPC 方法信息。
+    """RPC method information.
 
-    存储 RPC 方法的元数据，包括名称、描述、参数和返回值的 schema。
-    所有字段都是只读的，确保元数据的一致性。
+    Stores RPC method metadata, including name, description, and schemas for
+    parameters and return values. All fields are read-only to ensure metadata
+    consistency.
 
     Example:
         method = RPCMethodInfo(
@@ -220,49 +221,49 @@ class RPCMethodInfo:
             }
         )
 
-        # AP2 方法示例
+        # AP2 method example
         ap2_method = RPCMethodInfo(
             name="cart_mandate",
             description="Create cart mandate",
-            protocol="AP2/ANP",  # 标记为 AP2 协议方法
+            protocol="AP2/ANP",  # Marks as AP2 protocol method
             ...
         )
 
-        # Link 模式示例
+        # Link mode example
         link_method = RPCMethodInfo(
             name="book",
             description="Book a hotel",
-            mode="link",  # 在 ad.json 中使用 URL 而非嵌入内容
+            mode="link",  # Uses URL instead of embedded content in ad.json
             ...
         )
     """
 
     name: str
-    """RPC 方法名称 - JSON-RPC 中的 method 字段"""
+    """RPC method name - The 'method' field in JSON-RPC"""
 
     description: str
-    """方法描述 - 用于生成接口文档"""
+    """Method description - Used for generating interface documentation"""
 
     params_schema: dict[str, Any] | None = None
-    """参数 schema - 用于参数验证和文档生成"""
+    """Parameter schema - Used for parameter validation and documentation"""
 
     result_schema: dict[str, Any] | None = None
-    """返回值 schema - 用于返回值验证和文档生成"""
+    """Result schema - Used for return value validation and documentation"""
 
     handler: Callable | None = None
-    """可选：处理器函数的引用 - 用于自动调用"""
+    """Optional: Handler function reference - Used for automatic invocation"""
 
     protocol: str | None = None
-    """可选：协议类型标记 - 如 "AP2/ANP" 表示 AP2 支付协议方法，生成时会添加 x-protocol 字段"""
+    """Optional: Protocol type marker - e.g., "AP2/ANP" for AP2 payment protocol methods, adds x-protocol field when generated"""
 
     streaming: bool = False
-    """可选：标记为流式方法 - 返回 AsyncIterator，/rpc 端点会返回 SSE 流"""
+    """Optional: Marks as streaming method - Returns AsyncIterator, /rpc endpoint will return SSE stream"""
 
     mode: Literal["content", "link"] = "content"
-    """可选：接口模式 - "content" 嵌入 OpenRPC 文档，"link" 仅提供 URL 链接"""
+    """Optional: Interface mode - "content" embeds OpenRPC document, "link" provides URL only"""
 
     has_context: bool = False
-    """可选：标记方法是否需要 Context 参数注入"""
+    """Optional: Marks whether the method requires Context parameter injection"""
 
     def __post_init__(self):
         object.__setattr__(self, "name", self.name.strip())
@@ -270,16 +271,16 @@ class RPCMethodInfo:
 
 
 # =============================================================================
-# 协议定义
+# Protocol Definitions
 # =============================================================================
 
 
 @runtime_checkable
 class IRPCAgent(Protocol):
-    """RPC 代理协议。
+    """RPC agent protocol.
 
-    用户实现的代理类必须遵守这个协议。
-    这确保了所有代理都有一致的接口。
+    User-implemented agent classes must conform to this protocol.
+    This ensures all agents have a consistent interface.
 
     Example:
         class HotelAgent(IRPCAgent):
@@ -299,48 +300,50 @@ class IRPCAgent(Protocol):
     """
 
     config: AgentConfig
-    """代理配置 - 必须提供"""
+    """Agent configuration - Must be provided"""
 
     async def setup(self) -> None:
-        """初始化代理。
+        """Initialize the agent.
 
-        在代理开始处理请求之前调用。
-        用于建立数据库连接、加载配置等准备工作。
+        Called before the agent starts processing requests.
+        Used for establishing database connections, loading configurations,
+        and other preparatory work.
         """
         ...
 
     async def handle_rpc(self, request: Request, method: str, params: dict) -> Any:
-        """处理 RPC 请求。
+        """Handle RPC request.
 
-        这是 RPC 代理的核心方法，负责将 RPC 请求分派到相应的处理方法。
+        This is the core method of the RPC agent, responsible for dispatching
+        RPC requests to the corresponding handler methods.
 
         Args:
-            request: FastAPI Request 对象
-            method: RPC 方法名称
-            params: RPC 参数（字典）
+            request: FastAPI Request object
+            method: RPC method name
+            params: RPC parameters (dictionary)
 
         Returns:
-            RPC 调用的结果
+            Result of the RPC call
 
         Raises:
-            ValueError: 当 method 不存在时
-            RPCError: 当处理失败时
+            ValueError: When the method does not exist
+            RPCError: When processing fails
         """
         ...
 
 
 @runtime_checkable
 class AgentProtocol(Protocol):
-    """代理协议（更宽泛的定义）。
+    """Agent protocol (broader definition).
 
-    适用于不依赖具体实现的代理。
+    Suitable for agents that do not depend on specific implementations.
     """
 
     config: AgentConfig
-    """代理配置"""
+    """Agent configuration"""
 
     async def setup(self) -> None:
-        """初始化代理"""
+        """Initialize the agent."""
         ...
 
 
@@ -621,40 +624,40 @@ class FrozenRPCMethodCollection:
 
 
 # =============================================================================
-# 错误类型
+# Error Types
 # =============================================================================
 
 
 class OpenANPError(Exception):
-    """OpenANP 基础异常类。
+    """OpenANP base exception class.
 
-    所有 OpenANP 相关的异常都应该继承自这个类。
+    All OpenANP-related exceptions should inherit from this class.
     """
 
     pass
 
 
 class ConfigurationError(OpenANPError):
-    """配置错误。
+    """Configuration error.
 
-    当 AgentConfig 的配置不正确时抛出。
+    Raised when the AgentConfig configuration is incorrect.
     """
 
     pass
 
 
 class RPCError(OpenANPError):
-    """RPC 处理错误基类。
+    """RPC processing error base class.
 
-    当 RPC 方法执行失败时抛出。
-    支持错误链追踪和结构化错误数据。
+    Raised when an RPC method execution fails.
+    Supports error chain tracking and structured error data.
 
     Attributes:
-        code: JSON-RPC 错误码
-        message: 错误消息
-        data: 额外错误数据
-        cause: 原始异常（错误链追踪）
-        trace_id: 可选的追踪 ID
+        code: JSON-RPC error code
+        message: Error message
+        data: Additional error data
+        cause: Original exception (error chain tracking)
+        trace_id: Optional trace ID
 
     Example:
         try:
@@ -689,10 +692,10 @@ class RPCError(OpenANPError):
         super().__init__(f"RPC Error {code}: {message}")
 
     def to_dict(self) -> dict[str, Any]:
-        """转换为 JSON-RPC 错误格式。
+        """Convert to JSON-RPC error format.
 
         Returns:
-            符合 JSON-RPC 2.0 规范的错误字典
+            Error dictionary conforming to JSON-RPC 2.0 specification
         """
         error = {
             "code": self.code,
@@ -706,14 +709,14 @@ class RPCError(OpenANPError):
 
 
 # =============================================================================
-# 具体错误类型（JSON-RPC 2.0 标准错误）
+# Specific Error Types (JSON-RPC 2.0 Standard Errors)
 # =============================================================================
 
 
 class ParseError(RPCError):
-    """解析错误 (-32700)。
+    """Parse error (-32700).
 
-    当请求不是有效的 JSON 时抛出。
+    Raised when the request is not valid JSON.
     """
 
     def __init__(
@@ -726,9 +729,9 @@ class ParseError(RPCError):
 
 
 class InvalidRequestError(RPCError):
-    """无效请求错误 (-32600)。
+    """Invalid request error (-32600).
 
-    当请求不符合 JSON-RPC 2.0 规范时抛出。
+    Raised when the request does not conform to JSON-RPC 2.0 specification.
     """
 
     def __init__(
@@ -741,9 +744,9 @@ class InvalidRequestError(RPCError):
 
 
 class MethodNotFoundError(RPCError):
-    """方法未找到错误 (-32601)。
+    """Method not found error (-32601).
 
-    当请求的方法不存在时抛出。
+    Raised when the requested method does not exist.
     """
 
     def __init__(
@@ -759,9 +762,9 @@ class MethodNotFoundError(RPCError):
 
 
 class InvalidParamsError(RPCError):
-    """无效参数错误 (-32602)。
+    """Invalid params error (-32602).
 
-    当方法参数不正确时抛出。
+    Raised when method parameters are incorrect.
     """
 
     def __init__(
@@ -774,9 +777,9 @@ class InvalidParamsError(RPCError):
 
 
 class InternalError(RPCError):
-    """内部错误 (-32603)。
+    """Internal error (-32603).
 
-    当发生内部 JSON-RPC 错误时抛出。
+    Raised when an internal JSON-RPC error occurs.
     """
 
     def __init__(
@@ -796,14 +799,14 @@ class InternalError(RPCError):
 
 
 # =============================================================================
-# 自定义错误类型（-32000 到 -32099 保留给实现）
+# Custom Error Types (-32000 to -32099 reserved for implementation)
 # =============================================================================
 
 
 class AuthenticationError(RPCError):
-    """认证错误 (-32001)。
+    """Authentication error (-32001).
 
-    当认证失败时抛出。
+    Raised when authentication fails.
     """
 
     def __init__(
@@ -815,9 +818,9 @@ class AuthenticationError(RPCError):
 
 
 class AuthorizationError(RPCError):
-    """授权错误 (-32002)。
+    """Authorization error (-32002).
 
-    当用户没有权限执行操作时抛出。
+    Raised when the user does not have permission to perform the operation.
     """
 
     def __init__(
@@ -829,9 +832,9 @@ class AuthorizationError(RPCError):
 
 
 class RateLimitError(RPCError):
-    """速率限制错误 (-32003)。
+    """Rate limit error (-32003).
 
-    当请求被限流时抛出。
+    Raised when the request is rate-limited.
     """
 
     def __init__(
@@ -844,9 +847,10 @@ class RateLimitError(RPCError):
 
 
 class ValidationError(RPCError):
-    """验证错误 (-32004)。
+    """Validation error (-32004).
 
-    当业务逻辑验证失败时抛出（区别于参数格式错误）。
+    Raised when business logic validation fails (distinct from parameter
+    format errors).
     """
 
     def __init__(
@@ -859,9 +863,9 @@ class ValidationError(RPCError):
 
 
 class ResourceNotFoundError(RPCError):
-    """资源未找到错误 (-32005)。
+    """Resource not found error (-32005).
 
-    当请求的资源不存在时抛出。
+    Raised when the requested resource does not exist.
     """
 
     def __init__(
@@ -877,9 +881,9 @@ class ResourceNotFoundError(RPCError):
 
 
 class ConflictError(RPCError):
-    """冲突错误 (-32006)。
+    """Conflict error (-32006).
 
-    当操作与当前资源状态冲突时抛出。
+    Raised when an operation conflicts with the current resource state.
     """
 
     def __init__(
@@ -891,9 +895,9 @@ class ConflictError(RPCError):
 
 
 class ServiceUnavailableError(RPCError):
-    """服务不可用错误 (-32007)。
+    """Service unavailable error (-32007).
 
-    当依赖的服务不可用时抛出。
+    Raised when a dependent service is unavailable.
     """
 
     def __init__(

@@ -160,6 +160,8 @@ travel_agent = TravelAgent(auth)
 app.include_router(travel_agent.router())
 ```
 
+---
+
 ## Features
 
 ### Interface Modes
@@ -177,6 +179,39 @@ async def search(self, query: str) -> dict:
 async def book(self, hotel_id: str) -> dict:
     ...
 ```
+
+**Content Mode (default)**:
+- All content mode methods are combined into a single `interface.json`
+- Suitable for lightweight methods with simple schemas
+- Reduces HTTP requests for clients
+
+**Link Mode**:
+- Each method gets its own interface file: `/interface/{method_name}.json`
+- Suitable for complex methods or methods that change frequently
+- Allows independent versioning of interfaces
+
+**Generated ad.json structure**:
+
+```json
+{
+  "interfaces": [
+    {
+      "type": "StructuredInterface",
+      "protocol": "openrpc",
+      "url": "https://example.com/hotel/interface.json",
+      "description": "Hotel Service JSON-RPC interface"
+    },
+    {
+      "type": "StructuredInterface",
+      "protocol": "openrpc",
+      "url": "https://example.com/hotel/interface/book.json",
+      "description": "Book a hotel room"
+    }
+  ]
+}
+```
+
+---
 
 ### Context Injection
 
@@ -200,6 +235,27 @@ async def method(self, param: str, ctx: Context) -> dict:
     return {"user": ctx.did}
 ```
 
+**Context Fields**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.did` | `str` | Caller's DID (Decentralized Identifier) |
+| `ctx.session` | `Session` | Session storage isolated by DID |
+| `ctx.request` | `Request` | FastAPI Request object |
+| `ctx.auth_result` | `dict` | Authentication result from middleware |
+
+**Session Methods**:
+
+```python
+ctx.session.get("key", default_value)  # Read with default
+ctx.session.set("key", value)          # Write
+ctx.session.clear()                     # Clear all session data
+```
+
+**Important**: Context parameter (`ctx: Context`) is automatically injected and excluded from OpenRPC schemas. Clients do not pass this parameter.
+
+---
+
 ### Information Definitions
 
 Two ways to define Information (metadata for ad.json):
@@ -209,39 +265,155 @@ from anp.openanp import Information, information
 
 @anp_agent(config)
 class MyAgent:
-    # Static definitions
+    # Static definitions (class attribute)
     informations = [
-        Information(type="Product", description="...", path="/products.json", file="data/products.json"),
-        Information(type="Contact", description="...", mode="content", content={"phone": "..."}),
+        # URL mode - hosted file
+        Information(
+            type="Product",
+            description="Room catalog",
+            path="/products/rooms.json",
+            file="data/rooms.json"
+        ),
+        # URL mode - external link
+        Information(
+            type="VideoObject",
+            description="Hotel tour",
+            url="https://cdn.hotel.com/tour.mp4"
+        ),
+        # Content mode - embedded in ad.json
+        Information(
+            type="Contact",
+            description="Contact info",
+            mode="content",
+            content={"phone": "+1-234-567"}
+        ),
     ]
 
-    # Dynamic definitions via decorator
+    # Dynamic definitions via decorator (URL mode)
     @information(type="Product", description="Today's availability", path="/availability.json")
     def get_availability(self) -> dict:
         return {"available": self.db.get_available()}
 
+    # Dynamic definitions via decorator (Content mode)
     @information(type="Service", description="Specials", mode="content")
     def get_specials(self) -> dict:
         return {"specials": [...]}
 ```
 
-### Custom ad.json
+**Information Class Fields**:
 
-Use `generate_ad()` for complete customization:
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `str` | Type (Product, VideoObject, Organization, etc.) |
+| `description` | `str` | Description |
+| `mode` | `"url" \| "content"` | Output mode (default: "url") |
+| `path` | `str \| None` | Relative path for hosted content |
+| `url` | `str \| None` | External URL |
+| `file` | `str \| None` | Static file path for hosting |
+| `content` | `dict \| None` | Embedded content (Content mode) |
+
+**Generated ad.json Infomations**:
+
+```json
+{
+  "Infomations": [
+    {
+      "type": "Product",
+      "description": "Room catalog",
+      "url": "https://example.com/hotel/products/rooms.json"
+    },
+    {
+      "type": "Contact",
+      "description": "Contact info",
+      "content": {"phone": "+1-234-567"}
+    }
+  ]
+}
+```
+
+---
+
+### Custom ad.json (Override Existing Route)
+
+Use `generate_ad()` to get the base ad.json from SDK, then customize it and override the auto-generated route.
+
+**Key Steps**:
+1. Call `generate_ad()` to get the base ad.json
+2. Modify the returned dict to add custom fields
+3. Register a route with the same path to override the auto-generated one
 
 ```python
-from anp.openanp import generate_ad
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from anp.openanp import generate_ad, anp_agent, interface, AgentConfig
+from anp.openanp.decorators import extract_rpc_methods
 from anp.openanp.utils import resolve_base_url
 
-router = HotelAgent.router()
+@anp_agent(AgentConfig(name="Hotel", did="did:wba:example.com:hotel", prefix="/hotel"))
+class HotelAgent:
+    @interface
+    async def search(self, query: str) -> dict:
+        return {"results": [...]}
 
-@router.get("/hotel/ad.json")
-async def custom_ad(request: Request):
+app = FastAPI()
+
+# Create agent and include router
+agent = HotelAgent()
+app.include_router(agent.router())
+
+# Get config and methods for generate_ad()
+config = agent.config
+methods = extract_rpc_methods(agent)
+
+# Override ad.json by registering a route with the same path
+# FastAPI uses last-match for same paths, so this will override the auto-generated one
+@app.get("/hotel/ad.json")
+async def custom_ad(request: Request) -> JSONResponse:
+    # Step 1: Get base URL
     base_url = resolve_base_url(request)
-    ad = generate_ad(config, HotelAgent, base_url, methods)
-    ad["custom_field"] = "custom_value"
-    return ad
+
+    # Step 2: Generate base ad.json using SDK
+    ad = generate_ad(config, agent, base_url, methods)
+
+    # Step 3: Customize the ad.json
+    ad["custom_metadata"] = {"version": "2.0.0"}
+
+    # Add additional Informations
+    if "Infomations" not in ad:
+        ad["Infomations"] = []
+    ad["Infomations"].append({
+        "type": "FAQ",
+        "description": "FAQ",
+        "url": f"{base_url}/hotel/faq.json",
+    })
+
+    # Add custom support info
+    ad["support"] = {"email": "support@hotel.com"}
+
+    return JSONResponse(ad, media_type="application/json; charset=utf-8")
+
+# Add additional custom endpoints
+@app.get("/hotel/faq.json")
+async def get_faq() -> JSONResponse:
+    return JSONResponse({"faqs": [...]})
 ```
+
+**Extending Router with New Endpoints**:
+
+You can also add new endpoints directly to the existing app:
+
+```python
+# Add custom endpoints to the existing app
+@app.get("/hotel/stats.json")
+async def get_stats() -> JSONResponse:
+    return JSONResponse({"total_products": 100})
+
+@app.get("/hotel/health")
+async def health_check() -> JSONResponse:
+    return JSONResponse({"status": "healthy"})
+```
+
+---
 
 ## Discovery Flow
 
@@ -265,6 +437,8 @@ async def custom_ad(request: Request):
    - SSE streaming responses
    - DID-WBA authentication
 ```
+
+---
 
 ## API Reference
 
@@ -300,6 +474,9 @@ async def custom_ad(request: Request):
 | `generate_rpc_interface` | Generate OpenRPC interface |
 | `type_to_json_schema` | Convert Python type to JSON Schema |
 | `resolve_base_url` | Get base URL from request |
+| `extract_rpc_methods` | Extract RPC methods from agent class |
+
+---
 
 ## RemoteAgent
 
@@ -332,6 +509,8 @@ class RemoteAgent:
     def __getattr__(self, name: str) -> Callable
 ```
 
+---
+
 ## Error Handling
 
 Fail Fast design - exceptions raised immediately:
@@ -349,6 +528,8 @@ except RpcError as e:
 except ValueError as e:
     print(f"Discovery failed: {e}")
 ```
+
+---
 
 ## Protocol Formats
 
@@ -408,13 +589,43 @@ except ValueError as e:
 }
 ```
 
+---
+
 ## Examples
 
-See `anp/openanp/example/` for complete examples:
+See `examples/python/openanp_examples/` for complete examples:
 
-- `simple_server.py` - Full server with Context, Information, interface modes
-- `simple_client.py` - Client discovery and method calling
-- `hybrid_agent.py` - P2P agent (both server and client)
+- `minimal_server.py` - Minimal server (~30 lines)
+- `minimal_client.py` - Minimal client (~25 lines)
+- `advanced_server.py` - Full server with:
+  - Context and Session management
+  - Static and dynamic Information
+  - Content and link interface modes
+  - **Custom ad.json override example** (`create_app_with_custom_ad()`)
+- `advanced_client.py` - Full client with discovery, LLM integration, error handling
+
+**Running the custom ad.json example**:
+
+```bash
+# Standard app
+uvicorn examples.python.openanp_examples.advanced_server:app --port 8000
+
+# App with custom ad.json
+uvicorn examples.python.openanp_examples.advanced_server:app_custom --port 8000
+```
+
+---
+
+## Summary: Key Design Decisions
+
+| Feature | Design | Rationale |
+|---------|--------|-----------|
+| Interface modes | content (default) / link | Flexibility for different use cases |
+| Information modes | url / content | Support both hosted and embedded content |
+| Context injection | Parameter-based (`ctx: Context`) | Explicit, type-safe, auto-excluded from schema |
+| Session isolation | By DID | Multi-tenant support |
+| Custom ad.json | Mixed mode (override before include) | Maximum flexibility |
+| Error handling | Fail fast (exceptions) | Explicit error handling |
 
 ## License
 

@@ -16,7 +16,64 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+## 🚀 快速开始 - 30 秒构建 ANP 智能体
+
+OpenANP 是构建 ANP 智能体最简单的方式。只需几行代码即可完成：
+
+### 服务端（3 步搭建）
+
+```python
+from fastapi import FastAPI
+from anp.openanp import AgentConfig, anp_agent, interface
+
+@anp_agent(AgentConfig(
+    name="My Agent",
+    did="did:wba:example.com:agent",
+    prefix="/agent",
+))
+class MyAgent:
+    @interface
+    async def hello(self, name: str) -> str:
+        return f"Hello, {name}!"
+
+app = FastAPI()
+app.include_router(MyAgent.router())
+```
+
+运行：`uvicorn app:app --port 8000`
+
+### 客户端（3 行调用）
+
+```python
+from anp.openanp import RemoteAgent
+
+agent = await RemoteAgent.discover("http://localhost:8000/agent/ad.json", auth)
+result = await agent.hello(name="World")  # "Hello, World!"
+```
+
+### 自动生成的端点
+
+| 端点 | 说明 |
+|------|------|
+| `GET /agent/ad.json` | Agent Description 文档 |
+| `GET /agent/interface.json` | OpenRPC 接口文档 |
+| `POST /agent/rpc` | JSON-RPC 2.0 端点 |
+
+📖 **完整示例**：[OpenANP 示例](examples/python/openanp_examples/)
+
+---
+
 ## 核心模块
+
+### OpenANP（推荐 - 最简单的智能体开发方式）
+最优雅、最简洁的 ANP 智能体 SDK：
+- **装饰器驱动**：`@anp_agent` + `@interface` = 完整智能体
+- **自动生成**：ad.json、interface.json、JSON-RPC 端点
+- **Context 注入**：自动管理会话和 DID
+- **客户端 SDK**：`RemoteAgent.discover()` 调用远程智能体
+- **LLM 集成**：内置 OpenAI Tools 格式导出
+
+完整文档请参考 [OpenANP 示例](examples/python/openanp_examples/)
 
 ### Authentication（身份认证）
 基于DID-WBA（Decentralized Identifier - Web-Based Authentication）的智能体身份认证系统：
@@ -73,6 +130,30 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 ```
 
 ## 示例演示
+
+### OpenANP 智能体开发示例（推荐）
+位置：`examples/python/openanp_examples/`
+
+构建 ANP 智能体最简单的方式，非常适合入门。
+
+#### 示例文件
+| 文件 | 说明 | 复杂度 |
+|------|------|--------|
+| `minimal_server.py` | 极简服务端 (~30 行) | ⭐ |
+| `minimal_client.py` | 极简客户端 (~25 行) | ⭐ |
+| `advanced_server.py` | 完整功能 (Context、Session、Information) | ⭐⭐⭐ |
+| `advanced_client.py` | 完整客户端 (发现、LLM 集成) | ⭐⭐⭐ |
+
+#### 运行示例
+```bash
+# 终端 1：启动服务端
+uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
+
+# 终端 2：运行客户端
+uv run python examples/python/openanp_examples/minimal_client.py
+```
+
+**详细文档**：[OpenANP 示例 README](examples/python/openanp_examples/README.md)
 
 ### DID-WBA身份认证示例
 位置：`examples/python/did_wba_examples/`

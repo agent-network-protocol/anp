@@ -1,26 +1,26 @@
-"""OpenANP SDK - 自动生成路由
+"""OpenANP SDK - Auto-generated Routes
 
-这个模块提供自动生成 FastAPI 路由的功能。
-用户可以选择使用这个模块来自动生成路由，或者自己实现。
+This module provides automatic FastAPI route generation.
+Users can choose to use this module or implement their own.
 
-设计原则：
-- 辅助性：不是必需的，用户可以自己实现
-- 透明性：生成的路由是标准的 FastAPI 路由
-- 可定制：用户可以自定义部分或全部路由
-- JSON-RPC 2.0：完整支持单个和批量请求
-- Streamable HTTP：所有 /rpc 响应使用 SSE 格式（对齐 MCP）
-- Context 注入：自动注入 Context 参数到 handler
+Design Principles:
+- Optional: Not required, users can implement their own
+- Transparent: Generated routes are standard FastAPI routes
+- Customizable: Users can customize part or all routes
+- JSON-RPC 2.0: Full support for single and batch requests
+- Streamable HTTP: All /rpc responses use SSE format (aligned with MCP)
+- Context Injection: Automatic Context parameter injection to handlers
 
-传输方式（对齐 MCP Streamable HTTP）：
-- 所有 /rpc 响应使用 SSE (Server-Sent Events) 格式
-- 单个请求：message event + done event
-- 批量请求：多个 message events + done event
-- 断点续传：支持 Last-Event-ID 头部
+Transport (aligned with MCP Streamable HTTP):
+- All /rpc responses use SSE (Server-Sent Events) format
+- Single request: message event + done event
+- Batch request: multiple message events + done event
+- Resume: Supports Last-Event-ID header
 
-使用方式：
-1. 使用 @anp_agent 装饰器自动生成（最简单）
-2. 手动调用 create_agent_router() 函数
-3. 完全自己实现（最灵活）
+Usage:
+1. Use @anp_agent decorator for auto-generation (simplest)
+2. Manually call create_agent_router() function
+3. Fully implement yourself (most flexible)
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from typing import (
     get_type_hints,
 )
 
-# 导入 Request 和 JSONResponse 以供运行时使用
+# Import Request and JSONResponse for runtime use
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -57,7 +57,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    pass  # 所有类型已在上方导入
+    pass  # All types imported above
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ __all__ = [
 
 
 # =============================================================================
-# 全局 Session 管理器
+# Global Session Manager
 # =============================================================================
 
 _session_manager = SessionManager()
@@ -83,7 +83,7 @@ def get_session_manager() -> SessionManager:
 
 
 # =============================================================================
-# 参数类型强制转换
+# Parameter Type Coercion
 # =============================================================================
 
 
@@ -118,8 +118,8 @@ def coerce_params(handler: Callable, params: dict[str, Any]) -> dict[str, Any]:
             # criteria is automatically converted from dict to HotelSearchCriteria
             ...
 
-        # Before: {"criteria": {"city": "杭州"}}
-        # After:  {"criteria": HotelSearchCriteria(city="杭州")}
+        # Before: {"criteria": {"city": "Tokyo"}}
+        # After:  {"criteria": HotelSearchCriteria(city="Tokyo")}
     """
     if not params:
         return params
@@ -153,7 +153,7 @@ def coerce_params(handler: Callable, params: dict[str, Any]) -> dict[str, Any]:
 
 
 # =============================================================================
-# Context 注入
+# Context Injection
 # =============================================================================
 
 
@@ -215,7 +215,7 @@ def _inject_context(
 
 
 # =============================================================================
-# JSON-RPC 2.0 批量请求处理
+# JSON-RPC 2.0 Batch Request Processing
 # =============================================================================
 
 
@@ -225,16 +225,16 @@ async def process_single_rpc_request(
     request: Request | None = None,
     method_info_map: dict[str, RPCMethodInfo] | None = None,
 ) -> dict[str, Any]:
-    """处理单个 JSON-RPC 2.0 请求。
+    """Process a single JSON-RPC 2.0 request.
 
     Args:
-        body: 请求体字典
-        handlers: 方法处理器映射
-        request: FastAPI Request 对象（用于 Context 注入）
-        method_info_map: 方法信息映射（用于检查 has_context）
+        body: Request body dictionary
+        handlers: Method handler mapping
+        request: FastAPI Request object (for Context injection)
+        method_info_map: Method info mapping (for has_context check)
 
     Returns:
-        JSON-RPC 2.0 响应字典
+        JSON-RPC 2.0 response dictionary
     """
     try:
         method_name, params, req_id = validate_rpc_request(body)
@@ -259,7 +259,7 @@ async def process_single_rpc_request(
                 handler, coerced_params, request, has_context
             )
 
-        # 调用处理器（绑定方法或未绑定方法）
+        # Call handler (bound or unbound method)
         if inspect.iscoroutinefunction(handler):
             result = await handler(**coerced_params)
         else:
@@ -274,7 +274,7 @@ async def process_single_rpc_request(
             body.get("id"),
         )
     except TypeError as e:
-        # 参数类型错误
+        # Parameter type error
         return create_rpc_error(
             RPCErrorCodes.INVALID_PARAMS,
             str(e),
@@ -295,33 +295,33 @@ async def process_batch_rpc_request(
     request: Request | None = None,
     method_info_map: dict[str, RPCMethodInfo] | None = None,
 ) -> list[dict[str, Any]]:
-    """处理批量 JSON-RPC 2.0 请求。
+    """Process batch JSON-RPC 2.0 requests.
 
-    根据 JSON-RPC 2.0 规范，批量请求中的每个请求应该独立处理。
-    通知（没有 id 的请求）不应返回响应。
+    According to JSON-RPC 2.0 spec, each request in batch should be processed independently.
+    Notifications (requests without id) should not return responses.
 
     Args:
-        batch: 请求列表
-        handlers: 方法处理器映射
-        max_concurrent: 最大并发数，None 表示无限制
-        request: FastAPI Request 对象（用于 Context 注入）
-        method_info_map: 方法信息映射（用于检查 has_context）
+        batch: Request list
+        handlers: Method handler mapping
+        max_concurrent: Max concurrent requests, None for unlimited
+        request: FastAPI Request object (for Context injection)
+        method_info_map: Method info mapping (for has_context check)
 
     Returns:
-        响应列表（不包含通知的响应）
+        Response list (excluding notification responses)
     """
     if not batch:
         return []
 
-    # 创建任务
+    # Create tasks
     tasks = [
         process_single_rpc_request(req, handlers, request, method_info_map)
         for req in batch
     ]
 
-    # 并发执行（可选限制）
+    # Concurrent execution (with optional limit)
     if max_concurrent is not None and max_concurrent > 0:
-        # 使用信号量限制并发
+        # Use semaphore to limit concurrency
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def limited_task(task: Any) -> dict[str, Any]:
@@ -332,10 +332,10 @@ async def process_batch_rpc_request(
     else:
         results = await asyncio.gather(*tasks)
 
-    # 过滤通知响应（通知请求没有 id，不应返回响应）
+    # Filter notification responses (notifications have no id, should not return response)
     responses = []
     for req, resp in zip(batch, results):
-        # 如果原始请求有 id（不是通知），则包含响应
+        # Include response if original request has id (not a notification)
         if "id" in req:
             responses.append(resp)
 
@@ -346,7 +346,7 @@ async def process_batch_rpc_request(
 # Streamable HTTP / SSE 响应处理
 # =============================================================================
 
-# SSE Event Types (对齐 MCP Streamable HTTP)
+# SSE Event Types (aligned with MCP Streamable HTTP)
 SSE_EVENT_MESSAGE = "message"
 SSE_EVENT_ERROR = "error"
 SSE_EVENT_DONE = "done"
@@ -397,7 +397,7 @@ async def _stream_rpc_response(
     For non-streaming methods: single message event + done event
     For streaming methods: multiple message events + done event
 
-    SSE Event Format (对齐 MCP):
+    SSE Event Format (aligned with MCP):
         event: message
         id: <event_id>
         data: {"jsonrpc": "2.0", "result": {...}, "id": 1}
@@ -513,7 +513,7 @@ async def _stream_batch_rpc_response(
     """Generate SSE stream for batch JSON-RPC requests with concurrent execution.
 
     All requests in the batch are executed concurrently using asyncio.gather.
-    Responses are yielded as they complete (乱序返回，客户端通过 id 匹配).
+    Responses are yielded as they complete (out of order, client matches by id).
     Notification requests (no id) are skipped in responses.
 
     Args:
@@ -546,7 +546,7 @@ async def _stream_batch_rpc_response(
 
     logger.debug(f"[SSE] Batch: starting {len(tasks)} concurrent tasks")
 
-    # Yield responses as they complete (乱序返回)
+    # Yield responses as they complete (out of order)
     event_counter = 0
     for coro in asyncio.as_completed(tasks):
         index, response = await coro
@@ -567,7 +567,7 @@ async def _stream_batch_rpc_response(
 
 
 # =============================================================================
-# Information 提取
+# Information Extraction
 # =============================================================================
 
 
@@ -644,7 +644,7 @@ def _extract_informations(instance: Any) -> list[Information]:
 
 
 # =============================================================================
-# AD 文档生成
+# AD Document Generation
 # =============================================================================
 
 
@@ -723,7 +723,7 @@ def generate_ad(
 
 
 # =============================================================================
-# 路由生成器
+# Route Generator
 # =============================================================================
 
 
