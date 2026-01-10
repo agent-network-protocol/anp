@@ -27,6 +27,31 @@ todos:
     content: 更新文档：README.md, QUICKSTART.md, IMPLEMENTATION.md
     status: pending
   - id: 52ef693f-eef4-4ad4-9794-7025b2ab2a50
+  - id: 3115a90d-863e-415b-891e-709697c52680
+    content: 重构 FastANP 主类：接受 FastAPI 实例，添加 get_common_header() 方法，添加 interfaces 字典属性，移除自动路由注册
+    status: pending
+  - id: 4c64c8df-b42d-4c21-ae79-07879085771f
+    content: 实现 Context 注入机制：创建 Context、Session、SessionManager 类
+    status: pending
+  - id: af27c519-878c-4ea8-9243-4b039f5611e4
+    content: 重构 Interface 管理器：支持 path 参数，自动注册 OpenRPC 文档路由，实现 InterfaceProxy，添加函数名唯一性检查
+    status: pending
+  - id: e1d33399-fd05-4d71-9f3a-5169467891ef
+    content: 实现 JSON-RPC 自动端点和请求分发：注册统一 /rpc 端点，支持 Context 自动注入
+    status: pending
+  - id: 9db8b52a-70bb-4b04-8801-5e0c0d66a5f5
+    content: 简化 AD Generator：仅生成公共头部，移除自动合并逻辑
+    status: pending
+  - id: ba97ba4d-52b9-4afb-996e-87b5df565054
+    content: 重构中间件：转换为 FastAPI 中间件类，提供 auth_middleware 属性
+    status: pending
+  - id: b5e8bde8-05cc-43a6-bc68-f0868b391901
+    content: 更新示例代码：重写 simple_agent.py 和 hotel_booking_agent.py
+    status: pending
+  - id: d1c78fbc-b29b-4d75-a4ec-a09b450080f4
+    content: 更新文档：README.md, QUICKSTART.md, IMPLEMENTATION.md
+    status: pending
+  - id: c145f9d6-69c3-467f-8e3e-03705a560d64
     content: 更新单元测试：适配新接口，添加 Context、Session、InterfaceProxy 测试
     status: pending
 ---

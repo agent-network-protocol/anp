@@ -8,29 +8,43 @@ AP2 is a protocol built on top of ANP (Agent Negotiation Protocol) for secure pa
 
 ## Examples
 
-### ES256K Example
+### Complete Flow (single process)
 
-**File**: `es256k_example.py`
+**File**: `ap2_complete_flow.py`
 
-Demonstrates how to use ES256K (ECDSA with secp256k1 curve) algorithm for signing CartMandate and PaymentMandate. This is particularly useful for blockchain and cryptocurrency applications.
+Runs the merchant server and shopper client inside a single asyncio program. This is the quickest way to review the full AP2 handshake from mandate creation to receipt issuance.
 
 **Run**:
 ```bash
-uv run python examples/python/ap2_examples/es256k_example.py
+uv run python examples/python/ap2_examples/ap2_complete_flow.py
 ```
 
-**Features**:
-- Generate ES256K (secp256k1) key pairs
-- Build CartMandate with ES256K signatures
-- Verify CartMandate with ES256K
-- Build PaymentMandate with ES256K signatures
-- Verify PaymentMandate with ES256K
+### Standalone merchant & shopper (two processes)
 
-**Use Cases**:
-- Blockchain-based payment systems
-- Cryptocurrency transactions
-- Integration with Bitcoin/Ethereum ecosystems
-- Applications requiring smaller signature sizes
+**Files**: `merchant_server.py`, `shopper_client.py`
+
+These scripts replicate the complete flow but split the responsibilities into two separate processes so you can inspect the HTTP APIs individually or run them on different machines.
+
+**Run**:
+1. Terminal A – start the merchant server (binds to your local IP by default):
+   ```bash
+   uv run python examples/python/ap2_examples/merchant_server.py
+   ```
+   Optional flags: `--host 0.0.0.0`, `--port 8889`
+
+2. Terminal B – run the shopper client and point it at the merchant URL:
+   ```bash
+   uv run python examples/python/ap2_examples/shopper_client.py \
+     --merchant-url http://<merchant-host>:<port> \
+     --merchant-did did:wba:didhost.cc:public
+   ```
+   Both arguments default to the demo DID/document shipped in `docs/did_public/`, so you can usually omit them when testing locally.
+
+### Agent building blocks
+
+**Files**: `merchant_agent.py`, `shopper_agent.py`
+
+Reusable helpers that focus on the mandate builders/verifiers without spinning up HTTP servers. Import these when embedding AP2 flows inside larger applications or tests.
 
 ## Supported Algorithms
 

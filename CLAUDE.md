@@ -46,6 +46,9 @@ uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
 uv run python examples/python/anp_crawler_examples/simple_amap_example.py
 uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 
+# AP2 Payment Protocol example
+uv run python examples/python/ap2_examples/ap2_complete_flow.py
+
 # DID document generation tool
 uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
 ```
@@ -85,6 +88,12 @@ AgentConnect implements the Agent Network Protocol (ANP) through a three-layer a
   - `utils.py`: Utility functions for URL normalization and type conversion
   - `middleware.py`: Authentication middleware for FastAPI integration
 
+- `ap2/`: Agent Payment Protocol v2 implementation
+  - `models.py`: Pydantic models for CartMandate and PaymentMandate
+  - `cart_mandate.py`: Shopping cart authorization and verification
+  - `payment_mandate.py`: Payment authorization and verification
+  - ES256K (ECDSA secp256k1) signature support for mandate integrity
+
 - `utils/`: Shared cryptographic and utility functions
   - `crypto_tool.py`: Low-level cryptographic primitives
   - `llm/`: LLM integration abstractions
@@ -122,6 +131,18 @@ AgentConnect implements the Agent Network Protocol (ANP) through a three-layer a
 - **Session management**: Based on DID (not DID + token), shared across requests from same agent
 - **User-controlled routing**: User explicitly defines all routes including `/ad.json`
 - **Built-in authentication middleware**: DID WBA verification with wildcard path exemptions (`*/ad.json`, `/info/*`)
+
+**AP2 Payment Protocol:**
+- Secure payment authorization protocol built on DID WBA authentication
+- **CartMandate**: Merchant-signed shopping cart authorization with item details, pricing, and expiry
+- **PaymentMandate**: User-signed payment authorization referencing cart hash
+- **ES256K Signatures**: Uses ECDSA secp256k1 for cryptographic integrity
+- **Hash Verification**: Cart and payment data integrity through canonical JSON hashing
+- **Two-phase Flow**:
+  1. Merchant creates CartMandate with signature
+  2. User verifies CartMandate, creates and signs PaymentMandate
+  3. Merchant verifies PaymentMandate and completes transaction
+- Full specification: `docs/ap2/ap2-flow.md`
 
 ## Configuration
 
@@ -198,7 +219,16 @@ Follow Google Python Style Guide:
 - Use `list_available_tools()` to see discovered methods
 - Use `execute_tool_call(tool_name, arguments)` to invoke remote methods
 
+**AP2 Payment Protocol Development:**
+- CartMandate and PaymentMandate use ES256K (ECDSA secp256k1) for signing
+- Cart hash is computed using canonical JSON serialization before signing
+- PaymentMandate must reference cart hash for integrity verification
+- Merchant verifies both DID WBA authentication and mandate signatures
+- Example keys and flow demonstration in `examples/python/ap2_examples/`
+- Client-server mode: merchant agent runs on local IP, shopper connects remotely
+
 **Project-Specific Paths:**
 - Test DID documents: `docs/did_public/public-did-doc.json`
 - Test private keys: `docs/did_public/public-private-key.pem`
-- Examples are structured by feature: `examples/python/{did_wba_examples,fastanp_examples,anp_crawler_examples,negotiation_mode}`
+- Examples are structured by feature: `examples/python/{did_wba_examples,fastanp_examples,anp_crawler_examples,ap2_examples,negotiation_mode}`
+- AP2 protocol specification: `docs/ap2/ap2-flow.md`

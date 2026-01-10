@@ -136,12 +136,13 @@ class DidWbaVerifier:
                 "Invalid authorization header format", status_code=401
             )
 
-        # Unpack order: (did, nonce, timestamp, verification_method, signature)
-        did, nonce, timestamp, verification_method, signature = header_parts
+        # Unpack order: (did, nonce, timestamp, verification_method, signature, version)
+        did, nonce, timestamp, verification_method, signature, version = header_parts
         logger.info(
-            "Processing DID WBA authentication - DID: %s, Verification Method: %s",
+            "Processing DID WBA authentication - DID: %s, Verification Method: %s, Version: %s",
             did,
             verification_method,
+            version,
         )
 
         # Verify timestamp
