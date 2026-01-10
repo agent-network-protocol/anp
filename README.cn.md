@@ -1,5 +1,5 @@
 <div align="center">
-  
+
 [English](README.md) | [中文](README.cn.md)
 
 </div>
@@ -16,11 +16,11 @@ AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**�
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
-## 🚀 快速开始 - 30 秒构建 ANP 智能体
+## 🚀 快速开始 - 30秒构建ANP智能体
 
-OpenANP 是构建 ANP 智能体最简单的方式。只需几行代码即可完成：
+OpenANP是构建ANP智能体最简单的方式。只需几行代码即可完成：
 
-### 服务端（3 步搭建）
+### 服务端（3步搭建）
 
 ```python
 from fastapi import FastAPI
@@ -42,7 +42,7 @@ app.include_router(MyAgent.router())
 
 运行：`uvicorn app:app --port 8000`
 
-### 客户端（3 行调用）
+### 客户端（3行调用）
 
 ```python
 from anp.openanp import RemoteAgent
@@ -63,53 +63,97 @@ result = await agent.hello(name="World")  # "Hello, World!"
 
 ---
 
-## 核心模块
+## 两种使用ANP SDK的方式
 
-### OpenANP（推荐 - 最简单的智能体开发方式）
-最优雅、最简洁的 ANP 智能体 SDK：
+### 🔧 方式一：OpenANP（推荐 - 构建智能体）
+
+最优雅、最简洁的ANP智能体SDK：
+
+```python
+from anp.openanp import anp_agent, interface, RemoteAgent
+
+# 服务端：构建你的智能体
+@anp_agent(AgentConfig(name="Hotel", did="did:wba:...", prefix="/hotel"))
+class HotelAgent:
+    @interface
+    async def search(self, query: str) -> dict:
+        return {"results": [...]}
+
+# 客户端：调用远程智能体
+agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
+result = await agent.search(query="Tokyo")
+```
+
+**特性：**
 - **装饰器驱动**：`@anp_agent` + `@interface` = 完整智能体
 - **自动生成**：ad.json、interface.json、JSON-RPC 端点
 - **Context 注入**：自动管理会话和 DID
-- **客户端 SDK**：`RemoteAgent.discover()` 调用远程智能体
 - **LLM 集成**：内置 OpenAI Tools 格式导出
 
-完整文档请参考 [OpenANP 示例](examples/python/openanp_examples/)
+📖 **完整文档**：[OpenANP README](anp/openanp/README.cn.md)
 
-### Authentication（身份认证）
-基于DID-WBA（Decentralized Identifier - Web-Based Authentication）的智能体身份认证系统：
-- **身份管理**：创建和管理智能体DID文档
-- **身份验证**：提供端到端的身份认证和授权
-- **安全通信**：确保智能体间通信的安全性和可信度
+---
 
-### ANP Crawler（智能体发现与交互）
-智能体网络的发现和交互工具：
-- **智能体发现**：自动发现和解析智能体描述文档
-- **接口解析**：解析JSON-RPC接口并转换为可调用的工具
-- **协议交互**：支持与符合ANP协议的智能体进行通信
-- **直接JSON-RPC**：无需接口发现，直接执行JSON-RPC请求
+### 🔍 方式二：ANP Crawler（文档爬取）
 
-### FastANP（快速开发框架）
-基于FastAPI构建ANP智能体的插件化框架：
-- **插件架构**：FastAPI作为主框架，FastANP作为辅助插件
-- **自动OpenRPC**：从Python函数自动生成OpenRPC文档
-- **Context 注入**：自动会话和 Request 对象注入
-- **DID WBA 认证**：内置认证中间件，支持通配符路径排除
-- **灵活路由**：完全控制所有路由包括 ad.json
-- **会话管理**：基于 DID 的内置会话管理
+爬虫风格的SDK，用于爬取和解析ANP文档（类似于ANP的网络爬虫）：
 
-完整文档请参考 [FastANP README](anp/fastanp/README.md)
+```python
+from anp.anp_crawler import ANPCrawler
 
-### AP2（智能体支付协议 v2）
-安全的智能体交易支付授权协议：
-- **CartMandate（购物车授权）**：带商户签名的购物车授权
-- **PaymentMandate（支付授权）**：带用户签名的支付授权
-- **ES256K 签名**：支持 ECDSA secp256k1 签名
-- **哈希完整性**：购物车和支付数据完整性验证
-- **DID WBA 集成**：与基于 DID 的身份认证无缝集成
+# 使用DID认证初始化爬虫
+crawler = ANPCrawler(
+    did_document_path="path/to/did.json",
+    private_key_path="path/to/key.pem"
+)
 
-**规范文档**：[AP2 协议规范](docs/ap2/ap2-flow.md)
+# 爬取智能体描述并获取OpenAI Tools格式
+content, tools = await crawler.fetch_text("https://example.com/ad.json")
 
-## 使用方式
+# 执行发现的工具
+result = await crawler.execute_tool_call("search_poi", {"query": "北京"})
+
+# 或直接调用JSON-RPC
+result = await crawler.execute_json_rpc(
+    endpoint="https://example.com/rpc",
+    method="search",
+    params={"query": "hotel"}
+)
+```
+
+**特性：**
+- **爬虫风格**：像网络爬虫一样爬取和解析ANP文档
+- **OpenAI Tools格式**：转换接口用于LLM集成
+- **直接JSON-RPC**：无需接口发现即可调用方法
+- **无需LLM**：确定性的数据收集
+
+📖 **完整文档**：[ANP Crawler README](anp/anp_crawler/README.cn.md)
+
+---
+
+### RemoteAgent vs ANPCrawler
+
+| 特性 | RemoteAgent | ANPCrawler |
+|------|-------------|------------|
+| **风格** | 代理对象（像本地方法） | 爬虫（爬取文档） |
+| **用法** | `agent.search(query="Tokyo")` | `crawler.execute_tool_call("search", {...})` |
+| **类型安全** | 完整类型提示，异常驱动 | 基于字典的返回 |
+| **适用场景** | 代码中的智能体间调用 | LLM工具集成，数据收集 |
+
+```python
+# RemoteAgent：方法调用像本地方法一样
+agent = await RemoteAgent.discover(url, auth)
+result = await agent.search(query="Tokyo")  # 像调用本地方法
+
+# ANPCrawler：爬虫风格的文档爬取
+crawler = ANPCrawler(did_path, key_path)
+content, tools = await crawler.fetch_text(url)  # 爬取和解析文档
+result = await crawler.execute_tool_call("search", {"query": "Tokyo"})
+```
+
+---
+
+## 安装
 
 ### 方式一：通过pip安装
 ```bash
@@ -117,55 +161,71 @@ pip install anp
 ```
 
 ### 方式二：源码安装（推荐开发者使用）
+
 ```bash
-# 下载源码
+# 克隆仓库
 git clone https://github.com/agent-network-protocol/AgentConnect.git
 cd AgentConnect
 
 # 使用UV配置环境
 uv sync
 
+# 安装可选依赖
+uv sync --extra api      # FastAPI/OpenAI 集成
+uv sync --extra dev      # 开发工具
+
 # 运行示例
 uv run python examples/python/did_wba_examples/create_did_document.py
 ```
 
-## 示例演示
+---
 
-### OpenANP 智能体开发示例（推荐）
+## 所有核心模块
+
+| 模块 | 说明 | 文档 |
+|------|------|------|
+| **OpenANP** | 装饰器驱动的智能体开发（推荐） | [README](anp/openanp/README.cn.md) |
+| **ANP Crawler** | 轻量级发现与交互SDK | [README](anp/anp_crawler/README.cn.md) |
+| **FastANP** | FastAPI插件框架 | [README](anp/fastanp/README.cn.md) |
+| **AP2** | 智能体支付协议v2 | [README](anp/ap2/README.cn.md) |
+| **Authentication** | DID-WBA身份认证 | [示例](examples/python/did_wba_examples/) |
+
+---
+
+## 按模块分类的示例
+
+### OpenANP示例（推荐入门）
 位置：`examples/python/openanp_examples/`
 
-构建 ANP 智能体最简单的方式，非常适合入门。
-
-#### 示例文件
 | 文件 | 说明 | 复杂度 |
 |------|------|--------|
-| `minimal_server.py` | 极简服务端 (~30 行) | ⭐ |
-| `minimal_client.py` | 极简客户端 (~25 行) | ⭐ |
-| `advanced_server.py` | 完整功能 (Context、Session、Information) | ⭐⭐⭐ |
-| `advanced_client.py` | 完整客户端 (发现、LLM 集成) | ⭐⭐⭐ |
+| `minimal_server.py` | 极简服务端（约30行） | ⭐ |
+| `minimal_client.py` | 极简客户端（约25行） | ⭐ |
+| `advanced_server.py` | 完整功能（Context、Session、Information） | ⭐⭐⭐ |
+| `advanced_client.py` | 完整客户端（发现、LLM集成） | ⭐⭐⭐ |
 
-#### 运行示例
 ```bash
-# 终端 1：启动服务端
+# 终端1：启动服务端
 uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
 
-# 终端 2：运行客户端
+# 终端2：运行客户端
 uv run python examples/python/openanp_examples/minimal_client.py
 ```
 
-**详细文档**：[OpenANP 示例 README](examples/python/openanp_examples/README.md)
+### ANP Crawler示例
+位置：`examples/python/anp_crawler_examples/`
+
+```bash
+# 快速入门
+uv run python examples/python/anp_crawler_examples/simple_amap_example.py
+
+# 完整演示
+uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
+```
 
 ### DID-WBA身份认证示例
 位置：`examples/python/did_wba_examples/`
 
-#### 主要示例
-- **创建DID文档** (`create_did_document.py`)  
-  演示如何生成智能体的DID身份文档和密钥对
-  
-- **身份认证验证** (`authenticate_and_verify.py`)  
-  展示完整的DID-WBA身份认证和验证流程
-
-#### 运行示例
 ```bash
 # 创建DID文档
 uv run python examples/python/did_wba_examples/create_did_document.py
@@ -174,113 +234,45 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 uv run python examples/python/did_wba_examples/authenticate_and_verify.py
 ```
 
-**详细文档**： [DID-WBA示例说明](examples/python/did_wba_examples/README.cn.md)
-
-### ANP Crawler智能体交互示例
-位置：`examples/python/anp_crawler_examples/`
-
-#### 主要示例
-- **简单示例** (`simple_amap_example.py`)  
-  快速入门：连接AMAP服务并调用地图搜索接口
-  
-- **完整示例** (`amap_crawler_example.py`)  
-  完整演示：智能体发现、接口解析、工具调用的全流程
-
-#### 运行示例
-```bash
-# 快速体验
-uv run python examples/python/anp_crawler_examples/simple_amap_example.py
-
-# 完整功能演示
-uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
-```
-
-**详细文档**：[ANP Crawler示例说明](examples/python/anp_crawler_examples/README.cn.md)
-
-### FastANP智能体开发示例
+### FastANP示例
 位置：`examples/python/fastanp_examples/`
 
-#### 主要示例
-- **简单智能体** (`simple_agent.py`)
-  最小化FastANP设置，包含单个接口方法
-
-- **酒店预订智能体** (`hotel_booking_agent.py`)
-  完整示例，包含多个接口、Pydantic模型和会话管理
-
-#### 运行示例
 ```bash
 # 简单智能体
 uv run python examples/python/fastanp_examples/simple_agent.py
 
-# 酒店预订智能体
+# 酒店预订智能体（完整示例）
 uv run python examples/python/fastanp_examples/hotel_booking_agent.py
 ```
 
-#### 测试示例
-```bash
-# 使用Python客户端测试
-uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
-
-# 或使用curl手动测试
-# 获取智能体描述
-curl http://localhost:8000/ad.json | jq
-
-# 调用JSON-RPC方法
-curl -X POST http://localhost:8000/rpc \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "search_rooms", "params": {"query": {"check_in_date": "2025-01-01", "check_out_date": "2025-01-05", "guest_count": 2, "room_type": "deluxe"}}}'
-```
-
-**详细文档**：[FastANP示例说明](examples/python/fastanp_examples/README.md)
-
-### AP2 支付协议示例
+### AP2支付协议示例
 位置：`examples/python/ap2_examples/`
 
-#### 主要示例
-- **完整流程** (`ap2_complete_flow.py`)
-  完整演示 AP2 支付协议，包括商户和购物者智能体
-
-#### 功能特性
-- **商户智能体**：处理购物车创建和支付验证
-- **购物者智能体**：创建购物车并授权支付
-- **Mandate 验证**：CartMandate 和 PaymentMandate 双重验证
-- **本地 IP 通信**：两个智能体在本地网络上通信
-- **ES256K 签名**：所有 mandate 使用 ECDSA secp256k1 签名
-
-#### 运行示例
 ```bash
-# 运行完整的 AP2 流程
+# 完整AP2流程（商户+购物者）
 uv run python examples/python/ap2_examples/ap2_complete_flow.py
 ```
 
-#### 流程概览
-1. 商户智能体在本地 IP 上启动
-2. 购物者发送 `create_cart_mandate` 请求
-3. 商户验证 DID WBA 认证，创建并签名 CartMandate
-4. 购物者验证 CartMandate 签名
-5. 购物者创建并签名 PaymentMandate
-6. 购物者发送 PaymentMandate 给商户
-7. 商户验证 PaymentMandate 并确认支付
+---
 
-详细的协议规范请参阅 [AP2 协议文档](docs/ap2/ap2-flow.md)
+## 工具
 
-## 工具推荐
-
-### ANP网络探索工具
-通过网页界面使用自然语言探索智能体网络：[ANP 网络探索工具](https://service.agent-network-protocol.com/anp-explorer/)
+### ANP网络探索器
+使用自然语言探索智能体网络：[ANP网络探索器](https://service.agent-network-protocol.com/anp-explorer/)
 
 ### DID文档生成工具
-命令行工具快速生成DID文档：
 ```bash
 uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
 ```
 
+---
+
 ## 联系我们
 
-- **作者**：常高伟  
-- **邮箱**：chgaowei@gmail.com  
-- **官网**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)  
-- **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)  
+- **作者**：常高伟
+- **邮箱**：chgaowei@gmail.com
+- **官网**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)
+- **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
 - **GitHub**：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
 - **微信**：flow10240
 

@@ -307,7 +307,9 @@ class MyAgent:
 
 ### 5. RemoteAgent - 客户端 SDK
 
-调用远程智能体的高级客户端。
+**RemoteAgent 将远端智能体的所有方法下载到本地，并转化成本地方法来调用。** 它创建一个代理对象，让调用远程智能体就像调用本地方法一样。
+
+> **RemoteAgent vs ANPCrawler**：RemoteAgent 是代理风格的客户端（方法调用像本地方法），而 ANPCrawler 是爬虫风格的客户端（爬取和解析文档）。在代码中进行智能体间通信使用 RemoteAgent；在 LLM 工具集成或数据收集场景使用 ANPCrawler。
 
 ```python
 from anp.openanp import RemoteAgent

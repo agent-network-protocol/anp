@@ -1,5 +1,5 @@
 <div align="center">
-  
+
 [English](README.md) | [中文](README.cn.md)
 
 </div>
@@ -63,53 +63,97 @@ result = await agent.hello(name="World")  # "Hello, World!"
 
 ---
 
-## Core Modules
+## Two Ways to Use ANP SDK
 
-### OpenANP (Recommended - Simplest Way to Build ANP Agents)
+### 🔧 Option 1: OpenANP (Recommended - Building Agents)
+
 The most elegant and minimal SDK for building ANP agents:
+
+```python
+from anp.openanp import anp_agent, interface, RemoteAgent
+
+# Server: Build your agent
+@anp_agent(AgentConfig(name="Hotel", did="did:wba:...", prefix="/hotel"))
+class HotelAgent:
+    @interface
+    async def search(self, query: str) -> dict:
+        return {"results": [...]}
+
+# Client: Call remote agents
+agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
+result = await agent.search(query="Tokyo")
+```
+
+**Features:**
 - **Decorator-based**: `@anp_agent` + `@interface` = complete agent
 - **Auto-generated**: ad.json, interface.json, JSON-RPC endpoint
 - **Context Injection**: Automatic session and DID management
-- **Client SDK**: `RemoteAgent.discover()` for calling remote agents
 - **LLM Integration**: Built-in OpenAI Tools format export
 
-For complete documentation, see [OpenANP Examples](examples/python/openanp_examples/)
+📖 **Full Documentation**: [OpenANP README](anp/openanp/README.md)
 
-### Authentication
-Agent identity authentication system based on DID-WBA (Decentralized Identifier - Web-Based Authentication):
-- **Identity Management**: Create and manage agent DID documents
-- **Identity Verification**: Provide end-to-end identity authentication and authorization
-- **Secure Communication**: Ensure security and trustworthiness of inter-agent communication
+---
 
-### ANP Crawler (Agent Discovery & Interaction)
-Discovery and interaction tools for the agent network:
-- **Agent Discovery**: Automatically discover and parse agent description documents
-- **Interface Parsing**: Parse JSON-RPC interfaces and convert them to callable tools
-- **Protocol Interaction**: Support communication with agents that comply with ANP protocol
-- **Direct JSON-RPC**: Execute JSON-RPC requests directly without interface discovery
+### 🔍 Option 2: ANP Crawler (Document Fetching)
 
-### FastANP (Fast Development Framework)
-Plugin-based framework for building ANP agents with FastAPI:
-- **Plugin Architecture**: FastAPI as main framework, FastANP as helper plugin
-- **Automatic OpenRPC**: Generate OpenRPC documents from Python functions
-- **Context Injection**: Automatic session and Request object injection
-- **DID WBA Authentication**: Built-in authentication middleware with wildcard path exemption
-- **Flexible Routing**: Full control over all routes including ad.json
-- **Session Management**: Built-in session management based on DID
+Crawler-style SDK for fetching and parsing ANP documents (like a web crawler for ANP):
 
-For complete documentation, see [FastANP README](anp/fastanp/README.md)
+```python
+from anp.anp_crawler import ANPCrawler
 
-### AP2 (Agent Payment Protocol v2)
-Secure payment authorization protocol for agent transactions:
-- **CartMandate**: Shopping cart authorization with merchant signature
-- **PaymentMandate**: Payment authorization with user signature
-- **ES256K Signing**: Support for ECDSA secp256k1 signatures
-- **Hash Integrity**: Cart and payment data integrity verification
-- **DID WBA Integration**: Seamless integration with DID-based authentication
+# Initialize crawler with DID authentication
+crawler = ANPCrawler(
+    did_document_path="path/to/did.json",
+    private_key_path="path/to/key.pem"
+)
 
-**Specification Document**: [AP2 Protocol Specification](docs/ap2/ap2-flow.md)
+# Crawl agent description and get OpenAI Tools format
+content, tools = await crawler.fetch_text("https://example.com/ad.json")
 
-## Usage
+# Execute discovered tools
+result = await crawler.execute_tool_call("search_poi", {"query": "Beijing"})
+
+# Or call JSON-RPC directly
+result = await crawler.execute_json_rpc(
+    endpoint="https://example.com/rpc",
+    method="search",
+    params={"query": "hotel"}
+)
+```
+
+**Features:**
+- **Crawler Style**: Fetch and parse ANP documents like a web crawler
+- **OpenAI Tools Format**: Converts interfaces for LLM integration
+- **Direct JSON-RPC**: Call methods without interface discovery
+- **No LLM Required**: Deterministic data collection
+
+📖 **Full Documentation**: [ANP Crawler README](anp/anp_crawler/README.md)
+
+---
+
+### RemoteAgent vs ANPCrawler
+
+| Feature | RemoteAgent | ANPCrawler |
+|---------|-------------|------------|
+| **Style** | Proxy object (like local methods) | Crawler (fetch documents) |
+| **Usage** | `agent.search(query="Tokyo")` | `crawler.execute_tool_call("search", {...})` |
+| **Type Safety** | Full type hints, exceptions | Dict-based returns |
+| **Best For** | Agent-to-agent calls in code | LLM tool integration, data collection |
+
+```python
+# RemoteAgent: Methods feel like local calls
+agent = await RemoteAgent.discover(url, auth)
+result = await agent.search(query="Tokyo")  # Like calling a local method
+
+# ANPCrawler: Crawler-style document fetching
+crawler = ANPCrawler(did_path, key_path)
+content, tools = await crawler.fetch_text(url)  # Fetch and parse documents
+result = await crawler.execute_tool_call("search", {"query": "Tokyo"})
+```
+
+---
+
+## Installation
 
 ### Option 1: Install via pip
 ```bash
@@ -119,25 +163,40 @@ pip install anp
 ### Option 2: Source Installation (Recommended for Developers)
 
 ```bash
-# 下载源码
+# Clone the repository
 git clone https://github.com/agent-network-protocol/AgentConnect.git
 cd AgentConnect
 
-# 使用UV配置环境
+# Setup environment with UV
 uv sync
 
-# 运行示例
+# Install with optional dependencies
+uv sync --extra api      # FastAPI/OpenAI integration
+uv sync --extra dev      # Development tools
+
+# Run examples
 uv run python examples/python/did_wba_examples/create_did_document.py
 ```
 
-## Example Demonstration
+---
 
-### OpenANP Agent Development Example (Recommended)
+## All Core Modules
+
+| Module | Description | Documentation |
+|--------|-------------|---------------|
+| **OpenANP** | Decorator-driven agent development (recommended) | [README](anp/openanp/README.md) |
+| **ANP Crawler** | Lightweight discovery & interaction SDK | [README](anp/anp_crawler/README.md) |
+| **FastANP** | FastAPI plugin framework | [README](anp/fastanp/README.md) |
+| **AP2** | Agent Payment Protocol v2 | [README](anp/ap2/README.md) |
+| **Authentication** | DID-WBA identity authentication | [Examples](examples/python/did_wba_examples/) |
+
+---
+
+## Examples by Module
+
+### OpenANP Examples (Recommended Starting Point)
 Location: `examples/python/openanp_examples/`
 
-The simplest way to build ANP agents. Perfect for getting started.
-
-#### Example Files
 | File | Description | Complexity |
 |------|-------------|------------|
 | `minimal_server.py` | Minimal server (~30 lines) | ⭐ |
@@ -145,7 +204,6 @@ The simplest way to build ANP agents. Perfect for getting started.
 | `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
 | `advanced_client.py` | Full client (discovery, LLM integration) | ⭐⭐⭐ |
 
-#### Running Examples
 ```bash
 # Terminal 1: Start server
 uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
@@ -154,140 +212,73 @@ uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
 uv run python examples/python/openanp_examples/minimal_client.py
 ```
 
-**Detailed Documentation**: [OpenANP Examples README](examples/python/openanp_examples/README.md)
-
-### DID-WBA Authentication Example
-Location: `examples/python/did_wba_examples/`
-
-#### Main Examples
-- **Create DID Document** (`create_did_document.py`)  
-  Demonstrate how to generate DID documents and key pairs for agents
-  
-- **Authenticate and Verify** (`authenticate_and_verify.py`)  
-  Demonstrate the complete DID-WBA authentication and verification process
-
-#### Running Examples
-```bash
-# Create DID Document
-uv run python examples/python/did_wba_examples/create_did_document.py
-
-# Authentication Demonstration
-uv run python examples/python/did_wba_examples/authenticate_and_verify.py
-```
-
-**Detailed Documentation**: [DID-WBA Example](examples/python/did_wba_examples/README.md)
-
-### ANP Crawler Agent Interaction Example
+### ANP Crawler Examples
 Location: `examples/python/anp_crawler_examples/`
 
-#### Main Examples
-- **Simple Example** (`simple_amap_example.py`)  
-  Quick Start: Connect to AMAP service and call the map search interface
-  
-- **Complete Example** (`amap_crawler_example.py`)  
-  Complete Demonstration: Agent discovery, interface parsing, and tool calling
-
-#### Running Examples
 ```bash
-# Quick Experience
+# Quick start
 uv run python examples/python/anp_crawler_examples/simple_amap_example.py
 
-# Complete Function Demonstration
+# Complete demonstration
 uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 ```
 
-**Detailed Documentation**: [ANP Crawler Example](examples/python/anp_crawler_examples/README.md)
+### DID-WBA Authentication Examples
+Location: `examples/python/did_wba_examples/`
 
-### FastANP Agent Development Example
+```bash
+# Create DID document
+uv run python examples/python/did_wba_examples/create_did_document.py
+
+# Authentication demonstration
+uv run python examples/python/did_wba_examples/authenticate_and_verify.py
+```
+
+### FastANP Examples
 Location: `examples/python/fastanp_examples/`
 
-#### Main Examples
-- **Simple Agent** (`simple_agent.py`)
-  Minimal FastANP setup with single interface method
-
-- **Hotel Booking Agent** (`hotel_booking_agent.py`)
-  Complete example with multiple interfaces, Pydantic models, and session management
-
-#### Running Examples
 ```bash
-# Simple Agent
+# Simple agent
 uv run python examples/python/fastanp_examples/simple_agent.py
 
-# Hotel Booking Agent
+# Hotel booking agent (full example)
 uv run python examples/python/fastanp_examples/hotel_booking_agent.py
 ```
 
-#### Testing Examples
-```bash
-# Test with Python client
-uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
-
-# Or test manually with curl
-# Get Agent Description
-curl http://localhost:8000/ad.json | jq
-
-# Call JSON-RPC method
-curl -X POST http://localhost:8000/rpc \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "search_rooms", "params": {"query": {"check_in_date": "2025-01-01", "check_out_date": "2025-01-05", "guest_count": 2, "room_type": "deluxe"}}}'
-```
-
-**Detailed Documentation**: [FastANP Examples](examples/python/fastanp_examples/README.md)
-
-### AP2 Payment Protocol Example
+### AP2 Payment Protocol Examples
 Location: `examples/python/ap2_examples/`
 
-#### Main Examples
-- **Complete Flow** (`ap2_complete_flow.py`)
-  Full demonstration of AP2 payment protocol including merchant and shopper agents
-
-#### Features
-- **Merchant Agent**: Handles cart creation and payment verification
-- **Shopper Agent**: Creates shopping cart and authorizes payment
-- **Mandate Verification**: Both CartMandate and PaymentMandate verification
-- **Local IP Communication**: Two agents communicate over local network
-- **ES256K Signatures**: Uses ECDSA secp256k1 for all mandate signatures
-
-#### Running Example
 ```bash
-# Run complete AP2 flow
+# Complete AP2 flow (merchant + shopper)
 uv run python examples/python/ap2_examples/ap2_complete_flow.py
 ```
 
-#### Flow Overview
-1. Merchant agent starts on local IP
-2. Shopper sends `create_cart_mandate` request
-3. Merchant verifies DID WBA auth, creates and signs CartMandate
-4. Shopper verifies CartMandate signature
-5. Shopper creates and signs PaymentMandate
-6. Shopper sends PaymentMandate to merchant
-7. Merchant verifies PaymentMandate and confirms payment
+---
 
-For detailed protocol specification, see [AP2 Protocol Documentation](docs/ap2/ap2-flow.md)
+## Tools
 
-## Tool Recommendations
+### ANP Network Explorer
+Explore the agent network using natural language: [ANP Network Explorer](https://service.agent-network-protocol.com/anp-explorer/)
 
-### ANP Network Explorer Tool
-Use the web interface to explore the agent network using natural language: [ANP Network Explorer Tool](https://service.agent-network-protocol.com/anp-explorer/)
-
-### DID Document Generator Tool
-Command line tool to quickly generate DID documents:
+### DID Document Generator
 ```bash
 uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
 ```
 
+---
+
 ## Contact Us
 
-- **Author**：GaoWei Chang  
-- **Email**：chgaowei@gmail.com  
-- **Website**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)  
-- **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)  
-- **GitHub**：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
-- **WeChat**：flow10240
+- **Author**: GaoWei Chang
+- **Email**: chgaowei@gmail.com
+- **Website**: [https://agent-network-protocol.com/](https://agent-network-protocol.com/)
+- **Discord**: [https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
+- **GitHub**: [https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
+- **WeChat**: flow10240
 
 ## License
 
-This project is open-sourced under the MIT License. Detailed information please refer to [LICENSE](LICENSE) file.
+This project is open-sourced under the MIT License. See [LICENSE](LICENSE) file for details.
 
 ---
 

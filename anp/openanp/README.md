@@ -1,3 +1,9 @@
+<div align="center">
+
+[English](README.md) | [中文](README.cn.md)
+
+</div>
+
 # OpenANP SDK
 
 Modern ANP (Agent Network Protocol) SDK for Python.
@@ -475,6 +481,10 @@ async def health_check() -> JSONResponse:
 ---
 
 ## RemoteAgent
+
+**RemoteAgent downloads all methods from a remote agent and transforms them into local method calls.** It creates a proxy object that makes calling remote agents feel like calling local methods.
+
+> **RemoteAgent vs ANPCrawler**: RemoteAgent is a proxy-style client (methods feel like local calls), while ANPCrawler is a crawler-style client (fetch and parse documents). Use RemoteAgent for agent-to-agent communication in code; use ANPCrawler for LLM tool integration or data collection.
 
 Immutable handle to a discovered remote agent.
 
