@@ -19,14 +19,68 @@ Example:
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 from ...authentication import DIDWbaAuthHeader
 from ...anp_crawler.anp_client import ANPClient
 from ...anp_crawler.anp_interface import ANPInterfaceConverter
 from .openrpc import convert_to_openai_tool, parse_agent_document, parse_openrpc
+
+
+def _parse_sse_response(text: str) -> dict[str, Any]:
+    """Parse SSE response and extract JSON-RPC result.
+
+    SSE format:
+        id: xxx
+        event: message
+        data: {"jsonrpc": "2.0", "result": ..., "id": ...}
+
+        event: done
+        data: {}
+
+    Args:
+        text: Raw SSE response text
+
+    Returns:
+        Parsed JSON-RPC response dict
+
+    Raises:
+        ValueError: If no valid message event found
+        RpcError: If response contains error
+    """
+    result_data = None
+    error_data = None
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("data:"):
+            data_str = line[5:].strip()
+            if data_str and data_str != "{}":
+                try:
+                    data = json.loads(data_str)
+                    if "error" in data:
+                        error_data = data["error"]
+                    elif "result" in data:
+                        result_data = data
+                except json.JSONDecodeError:
+                    continue
+
+    if error_data:
+        raise RpcError(
+            code=error_data.get("code", -1),
+            message=error_data.get("message", "Unknown error"),
+            data=error_data.get("data"),
+        )
+
+    if result_data is None:
+        raise ValueError("No valid message event found in SSE response")
+
+    return result_data
 
 
 def _require_non_empty_str(value: Any, *, field: str) -> str:
@@ -142,15 +196,16 @@ class RemoteAgent:
                 try:
                     interface_response = await client.fetch(interface_url)
                     if not interface_response.get("success"):
-                        raise ValueError(
-                            f"Failed to fetch interface: {interface_response.get('error')}"
+                        errors.append(
+                            f"{interface_url}: Failed to fetch: {interface_response.get('error')}"
                         )
+                        continue
                     interface_data = interface_response.get("data", {})
                     if not _is_openrpc(interface_data):
-                        raise ValueError(f"Invalid OpenRPC document at {interface_url}")
+                        errors.append(f"{interface_url}: Invalid OpenRPC document")
+                        continue
                     raw_methods.extend(parse_openrpc(interface_data))
-                    break
-                except Exception as exc:  # surface all failures if none succeed
+                except Exception as exc:
                     errors.append(f"{interface_url}: {type(exc).__name__}: {exc}")
 
             if not raw_methods:
@@ -215,26 +270,74 @@ class RemoteAgent:
         raise KeyError(f"Method not found: {name}")
 
     async def call(self, method: str, **params: Any) -> Any:
-        """Call method using ANPClient. Raises KeyError if method not found."""
+        """Call method with SSE response support.
+
+        OpenANP servers return SSE (Server-Sent Events) format responses.
+        This method handles both SSE and plain JSON responses.
+
+        Args:
+            method: Method name to call
+            **params: Method parameters
+
+        Returns:
+            The result from the JSON-RPC response
+
+        Raises:
+            KeyError: If method not found
+            RpcError: On JSON-RPC error
+            HttpError: On HTTP errors
+        """
         m = self.get_method(method)
 
-        # Create ANPClient for this call
-        client = ANPClient(
-            did_document_path=self._auth.did_document_path,
-            private_key_path=self._auth.private_key_path,
-        )
+        # Build JSON-RPC request
+        request_id = str(uuid.uuid4())
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
 
-        response = await client.call_jsonrpc(m.rpc_url, method, params)
+        # Get auth headers
+        auth_headers = self._auth.get_auth_header(m.rpc_url)
 
-        if not response.get("success"):
-            error = response.get("error", {})
-            raise RpcError(
-                code=error.get("code", -1),
-                message=error.get("message", "Unknown error"),
-                data=error.get("data"),
+        # trust_env=False to ignore system proxy settings
+        async with httpx.AsyncClient(trust_env=False) as client:
+            response = await client.post(
+                m.rpc_url,
+                json=rpc_request,
+                headers={
+                    "Content-Type": "application/json",
+                    **auth_headers,
+                },
+                timeout=30.0,
             )
 
-        return response.get("result")
+            if response.status_code != 200:
+                raise HttpError(
+                    response.status_code,
+                    response.text,
+                    m.rpc_url,
+                )
+
+            # Check content type for SSE vs plain JSON
+            content_type = response.headers.get("content-type", "")
+
+            if "text/event-stream" in content_type:
+                # Parse SSE response
+                parsed = _parse_sse_response(response.text)
+                return parsed.get("result")
+            else:
+                # Plain JSON response (fallback)
+                data = response.json()
+                if "error" in data:
+                    error = data["error"]
+                    raise RpcError(
+                        code=error.get("code", -1),
+                        message=error.get("message", "Unknown error"),
+                        data=error.get("data"),
+                    )
+                return data.get("result")
 
     async def call_stream(
         self, method: str, **params: Any

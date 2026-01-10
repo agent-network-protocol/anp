@@ -16,7 +16,64 @@ The goal of Agent Network Protocol (ANP) is to become the **HTTP of the Intellig
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+## 🚀 Quick Start - Build an ANP Agent in 30 Seconds
+
+OpenANP is the simplest way to build ANP agents. Here's a complete server in just a few lines:
+
+### Server (3 Steps)
+
+```python
+from fastapi import FastAPI
+from anp.openanp import AgentConfig, anp_agent, interface
+
+@anp_agent(AgentConfig(
+    name="My Agent",
+    did="did:wba:example.com:agent",
+    prefix="/agent",
+))
+class MyAgent:
+    @interface
+    async def hello(self, name: str) -> str:
+        return f"Hello, {name}!"
+
+app = FastAPI()
+app.include_router(MyAgent.router())
+```
+
+Run: `uvicorn app:app --port 8000`
+
+### Client (3 Lines)
+
+```python
+from anp.openanp import RemoteAgent
+
+agent = await RemoteAgent.discover("http://localhost:8000/agent/ad.json", auth)
+result = await agent.hello(name="World")  # "Hello, World!"
+```
+
+### Generated Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /agent/ad.json` | Agent Description document |
+| `GET /agent/interface.json` | OpenRPC interface document |
+| `POST /agent/rpc` | JSON-RPC 2.0 endpoint |
+
+📖 **Full examples**: [OpenANP Examples](examples/python/openanp_examples/)
+
+---
+
 ## Core Modules
+
+### OpenANP (Recommended - Simplest Way to Build ANP Agents)
+The most elegant and minimal SDK for building ANP agents:
+- **Decorator-based**: `@anp_agent` + `@interface` = complete agent
+- **Auto-generated**: ad.json, interface.json, JSON-RPC endpoint
+- **Context Injection**: Automatic session and DID management
+- **Client SDK**: `RemoteAgent.discover()` for calling remote agents
+- **LLM Integration**: Built-in OpenAI Tools format export
+
+For complete documentation, see [OpenANP Examples](examples/python/openanp_examples/)
 
 ### Authentication
 Agent identity authentication system based on DID-WBA (Decentralized Identifier - Web-Based Authentication):
@@ -74,6 +131,30 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 ```
 
 ## Example Demonstration
+
+### OpenANP Agent Development Example (Recommended)
+Location: `examples/python/openanp_examples/`
+
+The simplest way to build ANP agents. Perfect for getting started.
+
+#### Example Files
+| File | Description | Complexity |
+|------|-------------|------------|
+| `minimal_server.py` | Minimal server (~30 lines) | ⭐ |
+| `minimal_client.py` | Minimal client (~25 lines) | ⭐ |
+| `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
+| `advanced_client.py` | Full client (discovery, LLM integration) | ⭐⭐⭐ |
+
+#### Running Examples
+```bash
+# Terminal 1: Start server
+uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
+
+# Terminal 2: Run client
+uv run python examples/python/openanp_examples/minimal_client.py
+```
+
+**Detailed Documentation**: [OpenANP Examples README](examples/python/openanp_examples/README.md)
 
 ### DID-WBA Authentication Example
 Location: `examples/python/did_wba_examples/`
