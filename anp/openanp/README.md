@@ -436,7 +436,6 @@ async def health_check() -> JSONResponse:
    - Schema validation
    ↓
 5. Call methods via JSON-RPC 2.0
-   - SSE streaming responses
    - DID-WBA authentication
 ```
 

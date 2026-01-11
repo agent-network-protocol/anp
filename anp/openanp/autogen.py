@@ -8,14 +8,7 @@ Design Principles:
 - Transparent: Generated routes are standard FastAPI routes
 - Customizable: Users can customize part or all routes
 - JSON-RPC 2.0: Full support for single and batch requests
-- Streamable HTTP: All /rpc responses use SSE format (aligned with MCP)
 - Context Injection: Automatic Context parameter injection to handlers
-
-Transport (aligned with MCP Streamable HTTP):
-- All /rpc responses use SSE (Server-Sent Events) format
-- Single request: message event + done event
-- Batch request: multiple message events + done event
-- Resume: Supports Last-Event-ID header
 
 Usage:
 1. Use @anp_agent decorator for auto-generation (simplest)
@@ -29,7 +22,6 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import AsyncIterator
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -42,7 +34,7 @@ from typing import (
 
 # Import Request and JSONResponse for runtime use
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from .context import Context, SessionManager
 from .types import AgentConfig, Information, RPCMethodInfo
@@ -343,230 +335,6 @@ async def process_batch_rpc_request(
 
 
 # =============================================================================
-# Streamable HTTP / SSE 响应处理
-# =============================================================================
-
-# SSE Event Types (aligned with MCP Streamable HTTP)
-SSE_EVENT_MESSAGE = "message"
-SSE_EVENT_ERROR = "error"
-SSE_EVENT_DONE = "done"
-
-
-def _sse_headers() -> dict[str, str]:
-    """Return standard SSE response headers."""
-    return {
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-        "Connection": "keep-alive",
-    }
-
-
-def _format_sse_event(
-    event_type: str,
-    data: dict[str, Any],
-    event_id: str | None = None,
-) -> str:
-    """Format a single SSE event.
-
-    Args:
-        event_type: Event type (message, error, done)
-        data: JSON data payload
-        event_id: Optional event ID for reconnection
-
-    Returns:
-        SSE formatted string
-    """
-    lines = []
-    if event_id:
-        lines.append(f"id: {event_id}")
-    lines.append(f"event: {event_type}")
-    lines.append(f"data: {json.dumps(data, ensure_ascii=False)}")
-    lines.append("")  # Empty line marks end of event
-    return "\n".join(lines) + "\n"
-
-
-async def _stream_rpc_response(
-    body: dict[str, Any],
-    handlers: dict[str, Callable],
-    is_streaming_method: bool = False,
-    request: Request | None = None,
-    method_info_map: dict[str, RPCMethodInfo] | None = None,
-) -> AsyncIterator[str]:
-    """Generate Streamable HTTP response wrapping results in SSE events.
-
-    For non-streaming methods: single message event + done event
-    For streaming methods: multiple message events + done event
-
-    SSE Event Format (aligned with MCP):
-        event: message
-        id: <event_id>
-        data: {"jsonrpc": "2.0", "result": {...}, "id": 1}
-
-        event: done
-        data: {}
-
-    Args:
-        body: JSON-RPC request body
-        handlers: Method handlers mapping
-        is_streaming_method: Whether this is a streaming method
-        request: FastAPI Request object (for Context injection)
-        method_info_map: Method info mapping (for checking has_context)
-
-    Yields:
-        SSE formatted events with JSON-RPC responses
-    """
-    req_id = body.get("id")
-    event_counter = 0
-
-    try:
-        method_name, params, req_id = validate_rpc_request(body)
-        logger.debug(f"[SSE] Method: {method_name}, streaming: {is_streaming_method}")
-
-        if method_name not in handlers:
-            error = create_rpc_error(
-                RPCErrorCodes.METHOD_NOT_FOUND,
-                f"Method not found: {method_name}",
-                req_id,
-            )
-            yield _format_sse_event(SSE_EVENT_ERROR, error)
-            return
-
-        handler = handlers[method_name]
-        coerced_params = coerce_params(handler, params)
-
-        # Inject Context if needed
-        if request is not None and method_info_map is not None:
-            method_info = method_info_map.get(method_name)
-            has_context = method_info.has_context if method_info else False
-            coerced_params = _inject_context(
-                handler, coerced_params, request, has_context
-            )
-
-        if is_streaming_method:
-            # Streaming method: yield multiple message events
-            async for chunk in handler(**coerced_params):
-                event_counter += 1
-                response = create_rpc_response(chunk, req_id)
-                yield _format_sse_event(
-                    SSE_EVENT_MESSAGE,
-                    response,
-                    event_id=f"{req_id}-{event_counter}",
-                )
-        else:
-            # Non-streaming method: single message event
-            if inspect.iscoroutinefunction(handler):
-                result = await handler(**coerced_params)
-            else:
-                result = handler(**coerced_params)
-
-            event_counter = 1
-            response = create_rpc_response(result, req_id)
-            yield _format_sse_event(
-                SSE_EVENT_MESSAGE,
-                response,
-                event_id=f"{req_id}-{event_counter}",
-            )
-
-        # Always send done event
-        yield _format_sse_event(SSE_EVENT_DONE, {})
-        logger.debug(f"[SSE] Completed, events: {event_counter}")
-
-    except ValueError as e:
-        logger.error(f"[SSE] ValueError: {e}")
-        error = create_rpc_error(RPCErrorCodes.INVALID_REQUEST, str(e), req_id)
-        yield _format_sse_event(SSE_EVENT_ERROR, error)
-    except TypeError as e:
-        logger.error(f"[SSE] TypeError: {e}")
-        error = create_rpc_error(RPCErrorCodes.INVALID_PARAMS, str(e), req_id)
-        yield _format_sse_event(SSE_EVENT_ERROR, error)
-    except Exception as e:
-        logger.exception(f"[SSE] Unexpected error: {e}")
-        error = create_rpc_error(RPCErrorCodes.INTERNAL_ERROR, str(e), req_id)
-        yield _format_sse_event(SSE_EVENT_ERROR, error)
-
-
-async def _error_sse_response(
-    code: int,
-    message: str,
-    request_id: Any,
-) -> AsyncIterator[str]:
-    """Generate SSE error response.
-
-    Args:
-        code: RPC error code
-        message: Error message
-        request_id: Request ID
-
-    Yields:
-        SSE error event
-    """
-    error = create_rpc_error(code, message, request_id)
-    yield _format_sse_event(SSE_EVENT_ERROR, error)
-
-
-async def _stream_batch_rpc_response(
-    batch: list[dict[str, Any]],
-    handlers: dict[str, Callable],
-    request: Request | None = None,
-    method_info_map: dict[str, RPCMethodInfo] | None = None,
-) -> AsyncIterator[str]:
-    """Generate SSE stream for batch JSON-RPC requests with concurrent execution.
-
-    All requests in the batch are executed concurrently using asyncio.gather.
-    Responses are yielded as they complete (out of order, client matches by id).
-    Notification requests (no id) are skipped in responses.
-
-    Args:
-        batch: List of JSON-RPC request bodies
-        handlers: Method handlers mapping
-        request: FastAPI Request object (for Context injection)
-        method_info_map: Method info mapping (for checking has_context)
-
-    Yields:
-        SSE events for each batch response + done event
-    """
-    # Filter out notifications (requests without id)
-    requests_with_id = [(i, req) for i, req in enumerate(batch) if "id" in req]
-
-    if not requests_with_id:
-        # No requests with id, just send done
-        yield _format_sse_event(SSE_EVENT_DONE, {})
-        return
-
-    # Create concurrent tasks for all requests
-    async def process_with_index(index: int, req: dict) -> tuple[int, dict]:
-        response = await process_single_rpc_request(
-            req, handlers, request, method_info_map
-        )
-        return index, response
-
-    tasks = [
-        asyncio.create_task(process_with_index(i, req)) for i, req in requests_with_id
-    ]
-
-    logger.debug(f"[SSE] Batch: starting {len(tasks)} concurrent tasks")
-
-    # Yield responses as they complete (out of order)
-    event_counter = 0
-    for coro in asyncio.as_completed(tasks):
-        index, response = await coro
-        event_counter += 1
-
-        # Use original request id for event id
-        req_id = requests_with_id[index][1].get("id", f"batch-{index}")
-
-        yield _format_sse_event(
-            SSE_EVENT_MESSAGE,
-            response,
-            event_id=f"{req_id}",
-        )
-
-    # Always send done event
-    yield _format_sse_event(SSE_EVENT_DONE, {})
-    logger.debug(f"[SSE] Batch completed, {event_counter} events (concurrent)")
-
-
-# =============================================================================
 # Information Extraction
 # =============================================================================
 
@@ -723,6 +491,233 @@ def generate_ad(
 
 
 # =============================================================================
+# Route Registration Helpers
+# =============================================================================
+
+
+def _register_ad_route(
+    router: APIRouter,
+    config: AgentConfig,
+    instance: Any,
+    methods: list[RPCMethodInfo],
+) -> None:
+    """Register GET /ad.json route.
+
+    Args:
+        router: FastAPI router to register route on
+        config: Agent configuration
+        instance: Agent instance for customize_ad hook
+        methods: RPC method list for interface generation
+    """
+
+    @router.get("/ad.json")
+    async def get_ad(request: Request) -> JSONResponse:
+        """Generate and return ad.json document."""
+        base_url = resolve_base_url(request)
+        doc = generate_ad(config, instance, base_url, methods)
+
+        # Call customize_ad hook if exists
+        if instance is not None and hasattr(instance, "customize_ad"):
+            customize_fn = getattr(instance, "customize_ad")
+            if inspect.iscoroutinefunction(customize_fn):
+                doc = await customize_fn(doc, base_url)
+            else:
+                doc = customize_fn(doc, base_url)
+
+        return JSONResponse(doc, media_type="application/json; charset=utf-8")
+
+
+def _register_interface_routes(
+    router: APIRouter,
+    config: AgentConfig,
+    content_methods: list[RPCMethodInfo],
+    link_methods: list[RPCMethodInfo],
+) -> None:
+    """Register interface routes (content mode and link mode).
+
+    Args:
+        router: FastAPI router to register routes on
+        config: Agent configuration
+        content_methods: Methods with mode="content"
+        link_methods: Methods with mode="link"
+    """
+    # GET /interface.json - Content mode methods (all in one document)
+    if content_methods:
+
+        @router.get("/interface.json")
+        async def get_interface(request: Request) -> JSONResponse:
+            """Generate interface.json for content mode methods."""
+            base_url = resolve_base_url(request)
+            doc = generate_rpc_interface(config, base_url, content_methods)
+            return JSONResponse(doc, media_type="application/json; charset=utf-8")
+
+    # GET /interface/{method}.json - Link mode methods (individual documents)
+    for method_info in link_methods:
+
+        def make_method_interface_handler(m: RPCMethodInfo) -> Callable:
+            async def get_method_interface(request: Request) -> JSONResponse:
+                """Generate individual method interface document."""
+                base_url = resolve_base_url(request)
+                doc = generate_rpc_interface(config, base_url, [m])
+                return JSONResponse(doc, media_type="application/json; charset=utf-8")
+
+            return get_method_interface
+
+        router.add_api_route(
+            f"/interface/{method_info.name}.json",
+            make_method_interface_handler(method_info),
+            methods=["GET"],
+            name=f"get_interface_{method_info.name}",
+        )
+
+
+def _register_information_routes(
+    router: APIRouter,
+    instance: Any,
+) -> None:
+    """Register information endpoints (static and dynamic).
+
+    Args:
+        router: FastAPI router to register routes on
+        instance: Agent instance for extracting information definitions
+    """
+    if instance is None:
+        return
+
+    info_list = _extract_informations(instance)
+    cls = instance if isinstance(instance, type) else type(instance)
+    info_method_names: tuple[str, ...] = getattr(cls, "_anp_info_method_names", ())
+
+    # Register URL mode static information endpoints
+    for info in info_list:
+        if info.mode == "url" and info.path:
+
+            def make_static_info_handler(i: Information) -> Callable:
+                async def get_static_info() -> JSONResponse:
+                    """Serve static information content."""
+                    if i.file:
+                        try:
+                            import aiofiles
+
+                            async with aiofiles.open(i.file, "r") as f:
+                                content = await f.read()
+                            return JSONResponse(
+                                json.loads(content),
+                                media_type="application/json; charset=utf-8",
+                            )
+                        except ImportError:
+                            with open(i.file, "r") as f:
+                                content = f.read()
+                            return JSONResponse(
+                                json.loads(content),
+                                media_type="application/json; charset=utf-8",
+                            )
+                    elif i.content:
+                        return JSONResponse(
+                            i.content,
+                            media_type="application/json; charset=utf-8",
+                        )
+                    else:
+                        return JSONResponse(
+                            {"error": "No content available"},
+                            status_code=404,
+                        )
+
+                return get_static_info
+
+            router.add_api_route(
+                info.path,
+                make_static_info_handler(info),
+                methods=["GET"],
+                name=f"get_info_{info.path.replace('/', '_')}",
+            )
+
+    # Register dynamic @information method endpoints
+    for method_name in info_method_names:
+        method = getattr(instance, method_name, None)
+        if method is None:
+            continue
+
+        info_path = getattr(method, "_info_path", None)
+        info_mode = getattr(method, "_info_mode", "url")
+
+        if info_mode == "url" and info_path:
+
+            def make_dynamic_info_handler(m: Callable) -> Callable:
+                async def get_dynamic_info() -> JSONResponse:
+                    """Serve dynamic information content."""
+                    if inspect.iscoroutinefunction(m):
+                        result = await m()
+                    else:
+                        result = m()
+                    return JSONResponse(
+                        result,
+                        media_type="application/json; charset=utf-8",
+                    )
+
+                return get_dynamic_info
+
+            router.add_api_route(
+                info_path,
+                make_dynamic_info_handler(method),
+                methods=["GET"],
+                name=f"get_info_{method_name}",
+            )
+
+
+def _register_rpc_route(
+    router: APIRouter,
+    handlers: dict[str, Callable],
+    method_info_map: dict[str, RPCMethodInfo],
+) -> None:
+    """Register POST /rpc JSON-RPC 2.0 endpoint.
+
+    Args:
+        router: FastAPI router to register route on
+        handlers: Method name to handler function mapping
+        method_info_map: Method name to RPCMethodInfo mapping
+    """
+    if not handlers:
+        return
+
+    @router.post("/rpc", response_model=None)
+    async def rpc_endpoint(request: Request) -> JSONResponse:
+        """Handle JSON-RPC 2.0 requests with standard JSON response.
+
+        Supports both single and batch requests per JSON-RPC 2.0 specification.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                create_rpc_error(
+                    RPCErrorCodes.PARSE_ERROR,
+                    "Parse error: Invalid JSON",
+                    None,
+                )
+            )
+
+        if isinstance(body, list):
+            if not body:
+                return JSONResponse(
+                    create_rpc_error(
+                        RPCErrorCodes.INVALID_REQUEST,
+                        "Invalid Request: Empty batch",
+                        None,
+                    )
+                )
+            responses = await process_batch_rpc_request(
+                body, handlers, request=request, method_info_map=method_info_map
+            )
+            return JSONResponse(responses)
+        else:
+            response = await process_single_rpc_request(
+                body, handlers, request, method_info_map
+            )
+            return JSONResponse(response)
+
+
+# =============================================================================
 # Route Generator
 # =============================================================================
 
@@ -744,10 +739,6 @@ def create_agent_router(
     Context Injection:
     - Methods with ctx: Context parameter get Context automatically injected
     - Context contains session (based on DID), did, request, and auth_result
-
-    Middleware:
-    - If config.auth_config is set, authentication middleware is applied
-    - Use middleware.py for custom middleware configuration
 
     Note:
         OpenANP focuses on ANP protocol, not infrastructure.
@@ -776,232 +767,14 @@ def create_agent_router(
             handlers[method_info.name] = method_info.handler
             method_info_map[method_info.name] = method_info
 
-    # Track streaming and link mode methods
-    streaming_methods: set[str] = {m.name for m in methods if m.streaming}
+    # Separate content and link mode methods
     content_methods = [m for m in methods if m.mode == "content"]
     link_methods = [m for m in methods if m.mode == "link"]
 
-    # =========================================================================
-    # GET /ad.json - Agent Description
-    # =========================================================================
-
-    @router.get("/ad.json")
-    async def get_ad(request: Request) -> JSONResponse:
-        """Generate and return ad.json document.
-
-        If the agent instance has a `customize_ad` method, it will be called
-        to allow customization of the ad.json content.
-        """
-        base_url = resolve_base_url(request)
-        doc = generate_ad(config, instance, base_url, methods)
-
-        # Call customize_ad hook if exists
-        if instance is not None and hasattr(instance, "customize_ad"):
-            customize_fn = getattr(instance, "customize_ad")
-            if inspect.iscoroutinefunction(customize_fn):
-                doc = await customize_fn(doc, base_url)
-            else:
-                doc = customize_fn(doc, base_url)
-
-        return JSONResponse(doc, media_type="application/json; charset=utf-8")
-
-    # =========================================================================
-    # GET /interface.json - Content mode methods
-    # =========================================================================
-
-    if content_methods:
-
-        @router.get("/interface.json")
-        async def get_interface(request: Request) -> JSONResponse:
-            """Generate and return interface.json document for content mode methods."""
-            base_url = resolve_base_url(request)
-            doc = generate_rpc_interface(config, base_url, content_methods)
-            return JSONResponse(doc, media_type="application/json; charset=utf-8")
-
-    # =========================================================================
-    # GET /interface/{method}.json - Link mode methods
-    # =========================================================================
-
-    for method_info in link_methods:
-
-        def make_method_interface_handler(m: RPCMethodInfo) -> Callable:
-            async def get_method_interface(request: Request) -> JSONResponse:
-                """Generate individual method interface document."""
-                base_url = resolve_base_url(request)
-                doc = generate_rpc_interface(config, base_url, [m])
-                return JSONResponse(doc, media_type="application/json; charset=utf-8")
-
-            return get_method_interface
-
-        router.add_api_route(
-            f"/interface/{method_info.name}.json",
-            make_method_interface_handler(method_info),
-            methods=["GET"],
-            name=f"get_interface_{method_info.name}",
-        )
-
-    # =========================================================================
-    # Information endpoints
-    # =========================================================================
-
-    if instance is not None:
-        info_list = _extract_informations(instance)
-        cls = instance if isinstance(instance, type) else type(instance)
-        info_method_names: tuple[str, ...] = getattr(cls, "_anp_info_method_names", ())
-
-        # Register URL mode information endpoints
-        for info in info_list:
-            if info.mode == "url" and info.path:
-
-                def make_static_info_handler(i: Information) -> Callable:
-                    async def get_static_info() -> JSONResponse:
-                        """Serve static information content."""
-                        if i.file:
-                            # Read from file
-                            try:
-                                import aiofiles
-
-                                async with aiofiles.open(i.file, "r") as f:
-                                    content = await f.read()
-                                return JSONResponse(
-                                    json.loads(content),
-                                    media_type="application/json; charset=utf-8",
-                                )
-                            except ImportError:
-                                # Fallback to sync
-                                with open(i.file, "r") as f:
-                                    content = f.read()
-                                return JSONResponse(
-                                    json.loads(content),
-                                    media_type="application/json; charset=utf-8",
-                                )
-                        elif i.content:
-                            return JSONResponse(
-                                i.content,
-                                media_type="application/json; charset=utf-8",
-                            )
-                        else:
-                            return JSONResponse(
-                                {"error": "No content available"},
-                                status_code=404,
-                            )
-
-                    return get_static_info
-
-                router.add_api_route(
-                    info.path,
-                    make_static_info_handler(info),
-                    methods=["GET"],
-                    name=f"get_info_{info.path.replace('/', '_')}",
-                )
-
-        # Register dynamic @information method endpoints
-        for method_name in info_method_names:
-            method = getattr(instance, method_name, None)
-            if method is None:
-                continue
-
-            info_path = getattr(method, "_info_path", None)
-            info_mode = getattr(method, "_info_mode", "url")
-
-            if info_mode == "url" and info_path:
-
-                def make_dynamic_info_handler(m: Callable) -> Callable:
-                    async def get_dynamic_info() -> JSONResponse:
-                        """Serve dynamic information content."""
-                        if inspect.iscoroutinefunction(m):
-                            result = await m()
-                        else:
-                            result = m()
-                        return JSONResponse(
-                            result,
-                            media_type="application/json; charset=utf-8",
-                        )
-
-                    return get_dynamic_info
-
-                router.add_api_route(
-                    info_path,
-                    make_dynamic_info_handler(method),
-                    methods=["GET"],
-                    name=f"get_info_{method_name}",
-                )
-
-    # =========================================================================
-    # POST /rpc - JSON-RPC 2.0 endpoint
-    # =========================================================================
-
-    if methods:
-
-        @router.post("/rpc", response_model=None)
-        async def rpc_endpoint(request: Request):
-            """Handle JSON-RPC 2.0 requests with Streamable HTTP (SSE only).
-
-            All responses use Server-Sent Events (SSE) format:
-            - Single request: SSE stream with message + done events
-            - Batch request: SSE stream with multiple message events + done event
-
-            Context Injection:
-            - Methods with ctx: Context parameter get Context automatically injected
-            - Context contains session, did, request, and auth_result
-
-            SSE Event Format:
-                event: message
-                id: <request_id>-<n>
-                data: {"jsonrpc": "2.0", "result": {...}, "id": 1}
-
-                event: done
-                data: {}
-            """
-            try:
-                body = await request.json()
-            except Exception:
-                # Parse error: return SSE error event
-                return StreamingResponse(
-                    _error_sse_response(
-                        RPCErrorCodes.PARSE_ERROR,
-                        "Parse error: Invalid JSON",
-                        None,
-                    ),
-                    media_type="text/event-stream",
-                    headers=_sse_headers(),
-                )
-
-            if isinstance(body, list):
-                # Batch request: SSE with multiple message events
-                if not body:
-                    return StreamingResponse(
-                        _error_sse_response(
-                            RPCErrorCodes.INVALID_REQUEST,
-                            "Invalid Request: Empty batch",
-                            None,
-                        ),
-                        media_type="text/event-stream",
-                        headers=_sse_headers(),
-                    )
-
-                return StreamingResponse(
-                    _stream_batch_rpc_response(
-                        body, handlers, request, method_info_map
-                    ),
-                    media_type="text/event-stream",
-                    headers=_sse_headers(),
-                )
-            else:
-                # Single request: SSE stream
-                method_name = body.get("method")
-                is_streaming = method_name in streaming_methods
-
-                return StreamingResponse(
-                    _stream_rpc_response(
-                        body,
-                        handlers,
-                        is_streaming_method=is_streaming,
-                        request=request,
-                        method_info_map=method_info_map,
-                    ),
-                    media_type="text/event-stream",
-                    headers=_sse_headers(),
-                )
+    # Register all routes
+    _register_ad_route(router, config, instance, methods)
+    _register_interface_routes(router, config, content_methods, link_methods)
+    _register_information_routes(router, instance)
+    _register_rpc_route(router, handlers, method_info_map)
 
     return router

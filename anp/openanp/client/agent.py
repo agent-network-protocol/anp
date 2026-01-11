@@ -18,69 +18,12 @@ Example:
 
 from __future__ import annotations
 
-import json
-import uuid
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
 from ...authentication import DIDWbaAuthHeader
 from ...anp_crawler.anp_client import ANPClient
-from ...anp_crawler.anp_interface import ANPInterfaceConverter
 from .openrpc import convert_to_openai_tool, parse_agent_document, parse_openrpc
-
-
-def _parse_sse_response(text: str) -> dict[str, Any]:
-    """Parse SSE response and extract JSON-RPC result.
-
-    SSE format:
-        id: xxx
-        event: message
-        data: {"jsonrpc": "2.0", "result": ..., "id": ...}
-
-        event: done
-        data: {}
-
-    Args:
-        text: Raw SSE response text
-
-    Returns:
-        Parsed JSON-RPC response dict
-
-    Raises:
-        ValueError: If no valid message event found
-        RpcError: If response contains error
-    """
-    result_data = None
-    error_data = None
-
-    for line in text.split("\n"):
-        line = line.strip()
-        if line.startswith("data:"):
-            data_str = line[5:].strip()
-            if data_str and data_str != "{}":
-                try:
-                    data = json.loads(data_str)
-                    if "error" in data:
-                        error_data = data["error"]
-                    elif "result" in data:
-                        result_data = data
-                except json.JSONDecodeError:
-                    continue
-
-    if error_data:
-        raise RpcError(
-            code=error_data.get("code", -1),
-            message=error_data.get("message", "Unknown error"),
-            data=error_data.get("data"),
-        )
-
-    if result_data is None:
-        raise ValueError("No valid message event found in SSE response")
-
-    return result_data
 
 
 def _require_non_empty_str(value: Any, *, field: str) -> str:
@@ -127,7 +70,6 @@ class Method:
     description: str
     params: tuple[dict[str, Any], ...]
     rpc_url: str
-    streaming: bool = False
 
 
 @dataclass(frozen=True)
@@ -270,10 +212,9 @@ class RemoteAgent:
         raise KeyError(f"Method not found: {name}")
 
     async def call(self, method: str, **params: Any) -> Any:
-        """Call method with SSE response support.
+        """Call method with standard JSON-RPC.
 
-        OpenANP servers return SSE (Server-Sent Events) format responses.
-        This method handles both SSE and plain JSON responses.
+        Uses anp_crawler.ANPClient for authenticated HTTP requests.
 
         Args:
             method: Method name to call
@@ -289,84 +230,34 @@ class RemoteAgent:
         """
         m = self.get_method(method)
 
-        # Build JSON-RPC request
-        request_id = str(uuid.uuid4())
-        rpc_request = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }
+        # Create ANPClient for this call
+        client = ANPClient(
+            did_document_path=self._auth.did_document_path,
+            private_key_path=self._auth.private_key_path,
+        )
 
-        # Get auth headers
-        auth_headers = self._auth.get_auth_header(m.rpc_url)
+        # Use ANPClient's call_jsonrpc method
+        response = await client.call_jsonrpc(
+            server_url=m.rpc_url,
+            method=method,
+            params=params,
+        )
 
-        # trust_env=False to ignore system proxy settings
-        async with httpx.AsyncClient(trust_env=False) as client:
-            response = await client.post(
-                m.rpc_url,
-                json=rpc_request,
-                headers={
-                    "Content-Type": "application/json",
-                    **auth_headers,
-                },
-                timeout=30.0,
-            )
-
-            if response.status_code != 200:
-                raise HttpError(
-                    response.status_code,
-                    response.text,
-                    m.rpc_url,
+        if not response.get("success"):
+            error = response.get("error", {})
+            if isinstance(error, dict):
+                raise RpcError(
+                    code=error.get("code", -1),
+                    message=error.get("message", "Unknown error"),
+                    data=error.get("data"),
+                )
+            else:
+                raise RpcError(
+                    code=-1,
+                    message=str(error),
                 )
 
-            # Check content type for SSE vs plain JSON
-            content_type = response.headers.get("content-type", "")
-
-            if "text/event-stream" in content_type:
-                # Parse SSE response
-                parsed = _parse_sse_response(response.text)
-                return parsed.get("result")
-            else:
-                # Plain JSON response (fallback)
-                data = response.json()
-                if "error" in data:
-                    error = data["error"]
-                    raise RpcError(
-                        code=error.get("code", -1),
-                        message=error.get("message", "Unknown error"),
-                        data=error.get("data"),
-                    )
-                return data.get("result")
-
-    async def call_stream(
-        self, method: str, **params: Any
-    ) -> AsyncIterator[dict[str, Any]]:
-        """
-        Call streaming method. Returns async iterator of chunks.
-
-        Use this for methods marked with @interface(streaming=True).
-        Each yielded chunk is the result field from JSON-RPC response.
-
-        Note: ANPClient doesn't support SSE streaming yet, so this
-        degrades to a single-result iterator.
-
-        Args:
-            method: Method name
-            **params: Method parameters
-
-        Yields:
-            Result chunks from the SSE stream
-
-        Raises:
-            KeyError: If method not found
-            RpcError: On JSON-RPC error in stream
-        """
-        result = await self.call(method, **params)
-        if isinstance(result, dict):
-            yield result
-        else:
-            yield {"result": result}
+        return response.get("result")
 
     def __getattr__(self, name: str) -> Any:
         """Dynamic method access: agent.search(query="...")"""

@@ -216,15 +216,6 @@ class TestRPCMethodInfo:
         )
         assert method.has_context is True
 
-    def test_streaming(self):
-        """测试 streaming 字段."""
-        method = RPCMethodInfo(
-            name="stream",
-            description="Stream data",
-            streaming=True,
-        )
-        assert method.streaming is True
-
 
 # =============================================================================
 # context.py 测试
@@ -354,16 +345,6 @@ class TestInterfaceDecorator:
             return {}
 
         assert book._mode == "link"
-
-    def test_interface_streaming(self):
-        """测试流式标记."""
-
-        @interface(streaming=True)
-        async def stream_data(query: str):
-            """Stream data."""
-            yield {}
-
-        assert stream_data._streaming is True
 
     def test_interface_with_context(self):
         """测试带 Context 参数."""

@@ -102,7 +102,6 @@ def interface(
     name: str | None = None,
     description: str | None = None,
     protocol: str | None = None,
-    streaming: bool = False,
     mode: Literal["content", "link"] = "content",
     params_schema: dict[str, Any] | None = None,
     result_schema: dict[str, Any] | None = None,
@@ -117,8 +116,6 @@ def interface(
         name: Interface name, defaults to the function name.
         description: Method description, defaults to the first line of the docstring.
         protocol: Protocol type, e.g., "AP2/ANP" for AP2 payment protocol methods.
-        streaming: Mark as a streaming method that returns AsyncIterator; the /rpc
-            endpoint will return an SSE stream.
         mode: Interface mode, "content" embeds OpenRPC document, "link" provides
             URL reference only.
         params_schema: Custom parameters schema.
@@ -142,12 +139,6 @@ def interface(
             @interface(protocol="AP2/ANP")
             async def cart_mandate(self, cart_mandate_id: str, items: list) -> dict:
                 return {"cart_mandate_id": cart_mandate_id, "status": "CREATED"}
-
-        Streaming method (SSE):
-            @interface(streaming=True)
-            async def ask_stream(self, content: str) -> AsyncIterator[dict]:
-                async for chunk in upstream.stream(content):
-                    yield chunk
     """
     # If decorator is called directly (without arguments)
     if func is not None:
@@ -160,7 +151,6 @@ def interface(
             name=resolved_name,
             description=resolved_description,
             protocol=protocol,
-            streaming=streaming,
             mode=mode,
             params_schema=params_schema,
             result_schema=result_schema,
@@ -177,7 +167,6 @@ def interface(
             name=resolved_name,
             description=resolved_description,
             protocol=protocol,
-            streaming=streaming,
             mode=mode,
             params_schema=params_schema,
             result_schema=result_schema,
@@ -191,7 +180,6 @@ def _rpc_decorator(
     name: str,
     description: str,
     protocol: str | None = None,
-    streaming: bool = False,
     mode: Literal["content", "link"] = "content",
     params_schema: dict[str, Any] | None = None,
     result_schema: dict[str, Any] | None = None,
@@ -203,7 +191,6 @@ def _rpc_decorator(
         name: Method name.
         description: Method description.
         protocol: Protocol type (e.g., "AP2/ANP").
-        streaming: Mark as a streaming method.
         mode: Interface mode.
         params_schema: Parameters schema.
         result_schema: Return value schema.
@@ -232,7 +219,6 @@ def _rpc_decorator(
     object.__setattr__(func, "_rpc_name", name)
     object.__setattr__(func, "_rpc_description", description)
     object.__setattr__(func, "_protocol", protocol)
-    object.__setattr__(func, "_streaming", streaming)
     object.__setattr__(func, "_mode", mode)
     object.__setattr__(func, "_has_context", has_context)
     object.__setattr__(func, "_rpc_params_schema", params_schema)
@@ -443,7 +429,6 @@ def extract_rpc_methods(obj: object) -> list[RPCMethodInfo]:
                 result_schema=attr._rpc_result_schema,
                 handler=attr,
                 protocol=getattr(attr, "_protocol", None),
-                streaming=getattr(attr, "_streaming", False),
                 mode=getattr(attr, "_mode", "content"),
                 has_context=getattr(attr, "_has_context", False),
             )
@@ -513,7 +498,6 @@ def _extract_unbound_methods(cls: type) -> list[RPCMethodInfo]:
                     result_schema=attr._rpc_result_schema,
                     handler=attr,
                     protocol=getattr(attr, "_protocol", None),
-                    streaming=getattr(attr, "_streaming", False),
                     mode=getattr(attr, "_mode", "content"),
                     has_context=getattr(attr, "_has_context", False),
                 )
@@ -539,7 +523,6 @@ def _extract_bound_methods(instance: Any) -> list[RPCMethodInfo]:
                     result_schema=attr._rpc_result_schema,
                     handler=attr,  # Bound method
                     protocol=getattr(attr, "_protocol", None),
-                    streaming=getattr(attr, "_streaming", False),
                     mode=getattr(attr, "_mode", "content"),
                     has_context=getattr(attr, "_has_context", False),
                 )
@@ -585,7 +568,6 @@ def get_rpc_method_info(func: Callable) -> RPCMethodInfo | None:
         result_schema=f._rpc_result_schema,
         handler=func,
         protocol=getattr(f, "_protocol", None),
-        streaming=getattr(f, "_streaming", False),
         mode=getattr(f, "_mode", "content"),
         has_context=getattr(f, "_has_context", False),
     )

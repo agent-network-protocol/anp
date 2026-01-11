@@ -256,9 +256,6 @@ class RPCMethodInfo:
     protocol: str | None = None
     """Optional: Protocol type marker - e.g., "AP2/ANP" for AP2 payment protocol methods, adds x-protocol field when generated"""
 
-    streaming: bool = False
-    """Optional: Marks as streaming method - Returns AsyncIterator, /rpc endpoint will return SSE stream"""
-
     mode: Literal["content", "link"] = "content"
     """Optional: Interface mode - "content" embeds OpenRPC document, "link" provides URL only"""
 
