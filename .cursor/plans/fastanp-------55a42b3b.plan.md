@@ -2,6 +2,31 @@
 name: FastANP 插件化重构方案
 overview: ""
 todos:
+  - id: ce002381-8c70-4ca7-9b63-13c874b6e852
+    content: 重构 FastANP 主类：接受 FastAPI 实例，添加 get_common_header() 方法，添加 interfaces 字典属性，移除自动路由注册
+    status: pending
+  - id: c59e43e6-4d28-4ce6-af87-dded0af8914b
+    content: 实现 Context 注入机制：创建 Context、Session、SessionManager 类
+    status: pending
+  - id: eb6f2a6a-bcae-4fe5-8def-549a6486a963
+    content: 重构 Interface 管理器：支持 path 参数，自动注册 OpenRPC 文档路由，实现 InterfaceProxy，添加函数名唯一性检查
+    status: pending
+  - id: dea0dbf5-22f4-4dea-9434-d8c374265309
+    content: 实现 JSON-RPC 自动端点和请求分发：注册统一 /rpc 端点，支持 Context 自动注入
+    status: pending
+  - id: 607ef5c9-8003-4527-8f16-eac8374db5bf
+    content: 简化 AD Generator：仅生成公共头部，移除自动合并逻辑
+    status: pending
+  - id: a38122a4-fcac-47ee-88dc-9271c34d5ccc
+    content: 重构中间件：转换为 FastAPI 中间件类，提供 auth_middleware 属性
+    status: pending
+  - id: 5844224a-2ec5-452b-91f8-cfda63e13080
+    content: 更新示例代码：重写 simple_agent.py 和 hotel_booking_agent.py
+    status: pending
+  - id: bb36219c-6e40-4564-a8de-0db5c054daa0
+    content: 更新文档：README.md, QUICKSTART.md, IMPLEMENTATION.md
+    status: pending
+  - id: 52ef693f-eef4-4ad4-9794-7025b2ab2a50
   - id: 3115a90d-863e-415b-891e-709697c52680
     content: 重构 FastANP 主类：接受 FastAPI 实例，添加 get_common_header() 方法，添加 interfaces 字典属性，移除自动路由注册
     status: pending
