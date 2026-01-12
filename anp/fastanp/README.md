@@ -1,51 +1,57 @@
+<div align="center">
+
+[English](README.md) | [中文](README.cn.md)
+
+</div>
+
 # FastANP - Fast Agent Network Protocol Framework
 
-FastANP 是一个基于 FastAPI 的插件框架，用于快速构建符合 ANP（Agent Network Protocol）规范的智能体。它以插件方式增强 FastAPI，提供自动 OpenRPC 生成、JSON-RPC 端点处理、Context 注入和 DID WBA 认证等功能。
+FastANP is a plugin framework based on FastAPI for rapidly building ANP (Agent Network Protocol) compliant agents. It enhances FastAPI as a plugin, providing automatic OpenRPC generation, JSON-RPC endpoint handling, Context injection, and DID WBA authentication.
 
-## 核心特性
+## Core Features
 
-- 🔌 **插件化设计**：FastAPI 作为主框架，FastANP 提供辅助工具
-- 📄 **自动 OpenRPC 生成**：Python 函数自动转换为 OpenRPC 文档
-- 🚀 **JSON-RPC 自动分发**：统一的 `/rpc` 端点自动路由到对应函数
-- 🎯 **Context 自动注入**：基于 DID + Access Token 的 Session 管理
-- 🔐 **内置 DID WBA 认证**：集成身份验证和 JWT token 管理
-- 🛠️ **完全可控**：用户完全控制路由和 ad.json 生成
+- 🔌 **Plugin Design**: FastAPI as main framework, FastANP as helper plugin
+- 📄 **Automatic OpenRPC Generation**: Python functions auto-converted to OpenRPC documents
+- 🚀 **JSON-RPC Auto-dispatch**: Unified `/rpc` endpoint auto-routes to corresponding functions
+- 🎯 **Context Auto-injection**: Session management based on DID + Access Token
+- 🔐 **Built-in DID WBA Auth**: Integrated identity verification and JWT token management
+- 🛠️ **Full Control**: User has complete control over routing and ad.json generation
 
-## 安装
+## Installation
 
-确保已安装 `anp` 包及其可选依赖：
+Ensure the `anp` package with optional dependencies is installed:
 
 ```bash
-# 使用 uv
+# Using uv
 uv sync --extra api
 
-# 或使用 pip
+# Or using pip
 pip install -e ".[api]"
 ```
 
-## 快速开始
+## Quick Start
 
-### 最小示例
+### Minimal Example
 
 ```python
 from fastapi import FastAPI
 from anp.fastanp import FastANP, Context
 from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 
-# 初始化 FastAPI
+# Initialize FastAPI
 app = FastAPI()
 
-# 初始化 FastANP 插件（不启用认证）
+# Initialize FastANP plugin (without auth)
 anp = FastANP(
     app=app,
     name="Simple Agent",
     description="A simple ANP agent",
     base_url="https://example.com",
     did="did:wba:example.com:agent:simple",
-    enable_auth_middleware=False  # 关闭认证用于演示
+    enable_auth_middleware=False  # Disable auth for demo
 )
 
-# 定义 ad.json 路由（用户完全控制）
+# Define ad.json route (user has full control)
 @app.get("/ad.json")
 def get_agent_description():
     ad = anp.get_common_header()
@@ -54,29 +60,29 @@ def get_agent_description():
     ]
     return ad
 
-# 注册接口方法
+# Register interface method
 @anp.interface("/info/hello.json", description="Say hello")
 def hello(name: str) -> dict:
     """
     Greet someone by name.
-    
+
     Args:
         name: The name to greet
     """
     return {"message": f"Hello, {name}!"}
 
-# 运行服务器
+# Run server
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
-运行后访问：
+After running, access:
 - Agent Description: `http://localhost:8000/ad.json`
-- OpenRPC 文档: `http://localhost:8000/info/hello.json`
+- OpenRPC Document: `http://localhost:8000/info/hello.json`
 - JSON-RPC endpoint: `POST http://localhost:8000/rpc`
 
-### 调用示例
+### Call Example
 
 ```bash
 curl -X POST http://localhost:8000/rpc \
@@ -89,7 +95,7 @@ curl -X POST http://localhost:8000/rpc \
   }'
 ```
 
-响应：
+Response:
 ```json
 {
   "jsonrpc": "2.0",
@@ -100,31 +106,31 @@ curl -X POST http://localhost:8000/rpc \
 }
 ```
 
-## 核心概念
+## Core Concepts
 
-### 1. 插件化设计
+### 1. Plugin Design
 
-FastANP 不再是一个独立框架，而是 FastAPI 的增强插件：
+FastANP is no longer a standalone framework, but an enhancement plugin for FastAPI:
 
 ```python
-# FastAPI 是主框架
+# FastAPI is the main framework
 app = FastAPI()
 
-# FastANP 作为插件注入
+# FastANP is injected as a plugin
 anp = FastANP(app=app, ...)
 ```
 
-### 2. 用户控制路由
+### 2. User-Controlled Routing
 
-用户完全控制所有路由，包括 `ad.json`：
+Users have full control over all routes, including `ad.json`:
 
 ```python
 @app.get("/ad.json")
 def get_agent_description():
-    # 获取公共头部
+    # Get common header
     ad = anp.get_common_header()
-    
-    # 添加 Information（用户自定义）
+
+    # Add Information (user-defined)
     ad["Infomations"] = [
         {
             "type": "Product",
@@ -132,26 +138,26 @@ def get_agent_description():
             "url": f"{anp.base_url}/products.json"
         }
     ]
-    
-    # 添加 Interface（通过 FastANP 辅助）
+
+    # Add Interface (via FastANP helper)
     ad["interfaces"] = [
-        anp.interfaces[my_func].link_summary,  # URL 引用模式
-        anp.interfaces[another_func].content,   # 嵌入模式
+        anp.interfaces[my_func].link_summary,  # URL reference mode
+        anp.interfaces[another_func].content,   # Embedded mode
     ]
-    
+
     return ad
 ```
 
-### 3. Interface 装饰器
+### 3. Interface Decorator
 
-使用 `@anp.interface(path)` 装饰器注册接口：
+Use the `@anp.interface(path)` decorator to register interfaces:
 
 ```python
 @anp.interface("/info/search.json", description="Search items")
 def search(query: str, limit: int = 10) -> dict:
     """
     Search for items.
-    
+
     Args:
         query: Search query
         limit: Maximum results
@@ -159,25 +165,23 @@ def search(query: str, limit: int = 10) -> dict:
     return {"results": [...]}
 ```
 
-FastANP 自动：
-1. 生成 OpenRPC 文档
-2. 注册 `GET /info/search.json` 返回 OpenRPC 文档
-3. 将函数添加到 JSON-RPC 分发器
+FastANP automatically:
+1. Generates OpenRPC document
+2. Registers `GET /info/search.json` to return OpenRPC document
+3. Adds function to JSON-RPC dispatcher
 
-### 4. Interface 访问方式
+### 4. Interface Access
 
-通过 `anp.interfaces[function]` 访问接口元数据：
+Access interface metadata via `anp.interfaces[function]`:
 
 ```python
-# 访问方式
-anp.interfaces[my_func].link_summary   # URL 引用格式
-anp.interfaces[my_func].content        # 嵌入格式
-anp.interfaces[my_func].openrpc_doc    # 原始 OpenRPC 文档
+# Access methods
+anp.interfaces[my_func].link_summary   # URL reference format
+anp.interfaces[my_func].content        # Embedded format
+anp.interfaces[my_func].openrpc_doc    # Raw OpenRPC document
 ```
 
-**link_summary 示例**：
-
-使用独立的jsonrpc文件：
+**link_summary example** (separate jsonrpc file):
 
 ```python
 {
@@ -188,9 +192,7 @@ anp.interfaces[my_func].openrpc_doc    # 原始 OpenRPC 文档
 }
 ```
 
-**content 示例**：
-
-在文档内部放置jsonrpc接口。
+**content example** (embedded in document):
 
 ```python
 {
@@ -205,9 +207,9 @@ anp.interfaces[my_func].openrpc_doc    # 原始 OpenRPC 文档
 }
 ```
 
-### 5. Context 自动注入
+### 5. Context Auto-injection
 
-FastANP 支持自动 Context 注入，提供 Session 管理：
+FastANP supports automatic Context injection for Session management:
 
 ```python
 from anp.fastanp import Context
@@ -216,16 +218,16 @@ from anp.fastanp import Context
 def echo(message: str, ctx: Context) -> dict:
     """
     Echo with context.
-    
+
     Args:
         message: Message to echo
         ctx: Automatically injected context
     """
-    # 访问 Session（基于 DID + Access Token）
+    # Access Session (based on DID + Access Token)
     visit_count = ctx.session.get("visit_count", 0)
     visit_count += 1
     ctx.session.set("visit_count", visit_count)
-    
+
     return {
         "message": message,
         "session_id": ctx.session.id,
@@ -234,23 +236,23 @@ def echo(message: str, ctx: Context) -> dict:
     }
 ```
 
-**Context 对象包含**：
-- `ctx.session` - Session 对象（持久化会话数据）
-- `ctx.did` - 请求方 DID
-- `ctx.request` - FastAPI Request 对象
-- `ctx.auth_result` - 认证结果字典
+**Context object contains**:
+- `ctx.session` - Session object (persistent session data)
+- `ctx.did` - Requester's DID
+- `ctx.request` - FastAPI Request object
+- `ctx.auth_result` - Authentication result dictionary
 
-**Session 方法**：
-- `session.id` - Session ID（基于 DID 生成）
-- `session.get(key, default)` - 获取会话数据
-- `session.set(key, value)` - 设置会话数据
-- `session.clear()` - 清空会话数据
+**Session methods**:
+- `session.id` - Session ID (generated from DID)
+- `session.get(key, default)` - Get session data
+- `session.set(key, value)` - Set session data
+- `session.clear()` - Clear session data
 
-**注意**：Session 的唯一标识基于 DID，而不是 DID + Access Token，这意味着同一个 DID 的多个请求会共享同一个 Session
+**Note**: Session ID is based on DID only (not DID + Access Token), meaning multiple requests from the same DID share the same Session.
 
-### 6. Request 自动注入
+### 6. Request Auto-injection
 
-FastANP 支持自动 Request 注入，提供 Request 对象：
+FastANP supports automatic Request injection:
 
 ```python
 from fastapi import Request
@@ -264,30 +266,30 @@ def info(req: Request) -> dict:
     }
 ```
 
-## API 参考
+## API Reference
 
-### FastANP 初始化参数
+### FastANP Constructor Parameters
 
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `app` | FastAPI | ✓ | FastAPI 应用实例 |
-| `name` | str | ✓ | 智能体名称 |
-| `description` | str | ✓ | 智能体描述 |
-| `base_url` | str | ✓ | 基础 URL（如 `https://example.com`） |
-| `did` | str | ✓ | DID 标识符 |
-| `owner` | dict | - | 所有者信息 |
-| `jsonrpc_server_url` | str | - | JSON-RPC 端点路径（默认 `/rpc`） |
-| `jsonrpc_server_name` | str | - | JSON-RPC 服务器名称 |
-| `jsonrpc_server_description` | str | - | JSON-RPC 服务器描述 |
-| `enable_auth_middleware` | bool | - | 是否启用认证中间件（默认 True） |
-| `auth_config` | DidWbaVerifierConfig | - | 认证配置对象（启用认证时必需） |
-| `api_version` | str | - | API 版本（默认 "1.0.0"） |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `app` | FastAPI | ✓ | FastAPI application instance |
+| `name` | str | ✓ | Agent name |
+| `description` | str | ✓ | Agent description |
+| `base_url` | str | ✓ | Base URL (e.g., `https://example.com`) |
+| `did` | str | ✓ | DID identifier |
+| `owner` | dict | - | Owner information |
+| `jsonrpc_server_url` | str | - | JSON-RPC endpoint path (default `/rpc`) |
+| `jsonrpc_server_name` | str | - | JSON-RPC server name |
+| `jsonrpc_server_description` | str | - | JSON-RPC server description |
+| `enable_auth_middleware` | bool | - | Enable auth middleware (default True) |
+| `auth_config` | DidWbaVerifierConfig | - | Auth config (required when auth enabled) |
+| `api_version` | str | - | API version (default "1.0.0") |
 
-### 方法说明
+### Methods
 
 #### `get_common_header(ad_url=None)`
 
-获取 Agent Description 的公共头部字段。
+Get common header fields for Agent Description.
 
 ```python
 ad = anp.get_common_header()
@@ -296,53 +298,44 @@ ad = anp.get_common_header()
 
 #### `@anp.interface(path, description=None, humanAuthorization=False)`
 
-装饰器，将 Python 函数注册为 Interface。
+Decorator to register a Python function as an Interface.
 
-**参数**：
-- `path`: OpenRPC 文档 URL 路径（如 `/info/search.json`）
-- `description`: 方法描述（可选，默认使用 docstring）
-- `humanAuthorization`: 是否需要人工授权（可选）
+**Parameters**:
+- `path`: OpenRPC document URL path (e.g., `/info/search.json`)
+- `description`: Method description (optional, defaults to docstring)
+- `humanAuthorization`: Whether human authorization is required (optional)
 
-**自动行为**：
-1. 注册函数到 JSON-RPC 分发器
-2. 自动注册 `GET {path}` 路由返回 OpenRPC 文档
-3. 检查函数名全局唯一性（重复则抛出异常）
-4. 支持 Context 参数自动注入
+**Automatic behaviors**:
+1. Registers function to JSON-RPC dispatcher
+2. Auto-registers `GET {path}` route returning OpenRPC document
+3. Checks function name global uniqueness (throws exception if duplicate)
+4. Supports Context parameter auto-injection
 
-#### `interfaces` 属性
+#### `interfaces` Property
 
-字典对象，key 为函数，value 为 InterfaceProxy。
-
-```python
-anp.interfaces[my_func].link_summary   # 获取 URL 引用格式
-anp.interfaces[my_func].content        # 获取嵌入格式
-anp.interfaces[my_func].openrpc_doc    # 获取原始 OpenRPC 文档
-```
-
-#### `auth_middleware` 属性
-
-认证中间件，可选添加到 FastAPI：
+Dictionary object, key is function, value is InterfaceProxy.
 
 ```python
-if anp.auth_middleware:
-    app.add_middleware(anp.auth_middleware)
+anp.interfaces[my_func].link_summary   # Get URL reference format
+anp.interfaces[my_func].content        # Get embedded format
+anp.interfaces[my_func].openrpc_doc    # Get raw OpenRPC document
 ```
 
-## 完整示例
+## Complete Examples
 
-查看 `examples/python/fastanp_examples/` 目录获取完整示例：
+See `examples/python/fastanp_examples/` directory for complete examples:
 
-- **simple_agent.py** - 最小示例
-- **hotel_booking_agent.py** - 完整的酒店预订智能体，包含：
-  - 多个 Interface
-  - Pydantic 数据模型
-  - Context 注入
-  - 自定义 ad.json 路由
-  - 静态 Information 路由
+- **simple_agent.py** - Minimal example
+- **hotel_booking_agent.py** - Complete hotel booking agent with:
+  - Multiple Interfaces
+  - Pydantic data models
+  - Context injection
+  - Custom ad.json route
+  - Static Information routes
 
-## 高级用法
+## Advanced Usage
 
-### 1. 使用 Pydantic 模型
+### 1. Using Pydantic Models
 
 ```python
 from pydantic import BaseModel
@@ -358,28 +351,28 @@ def search(request: SearchRequest) -> dict:
     return {"results": [...], "total": 100}
 ```
 
-FastANP 自动将 Pydantic 模型转换为 JSON Schema。
+FastANP automatically converts Pydantic models to JSON Schema.
 
-### 2. 自定义 ad.json 路由
+### 2. Custom ad.json Route
 
-支持路径参数和其他自定义逻辑：
+Supports path parameters and other custom logic:
 
 ```python
 @app.get("/{agent_id}/ad.json")
 def get_agent_description(agent_id: str):
     """Get AD for specific agent."""
     ad = anp.get_common_header()
-    
-    # 根据 agent_id 自定义内容
+
+    # Customize content based on agent_id
     if agent_id == "premium":
         ad["interfaces"] = [anp.interfaces[premium_search].content]
     else:
         ad["interfaces"] = [anp.interfaces[basic_search].link_summary]
-    
+
     return ad
 ```
 
-### 3. 异步函数支持
+### 3. Async Function Support
 
 ```python
 @anp.interface("/info/async_search.json")
@@ -389,26 +382,26 @@ async def async_search(query: str) -> dict:
     return {"result": result}
 ```
 
-### 4. 添加认证中间件
+### 4. Adding Auth Middleware
 
 ```python
 from anp.authentication.did_wba_verifier import DidWbaVerifierConfig
 
-# 读取 JWT 密钥
+# Read JWT keys
 with open("jwt_private_key.pem", 'r') as f:
     jwt_private_key = f.read()
 with open("jwt_public_key.pem", 'r') as f:
     jwt_public_key = f.read()
 
-# 创建认证配置
+# Create auth config
 auth_config = DidWbaVerifierConfig(
     jwt_private_key=jwt_private_key,
     jwt_public_key=jwt_public_key,
     jwt_algorithm="RS256",
-    allowed_domains=["example.com", "localhost"]  # 可选：域名白名单
+    allowed_domains=["example.com", "localhost"]  # Optional: domain whitelist
 )
 
-# 初始化 FastANP（自动启用认证中间件）
+# Initialize FastANP (auto-enables auth middleware)
 anp = FastANP(
     app=app,
     ...,
@@ -417,83 +410,43 @@ anp = FastANP(
 )
 ```
 
-**认证排除路径**：
+**Auth exempt paths**:
 
-中间件自动排除以下路径（支持通配符）：
+Middleware auto-exempts the following paths (supports wildcards):
 - `/favicon.ico`
 - `/health`
 - `/docs`
-- `*/ad.json` - 所有以 `/ad.json` 结尾的路径
-- `/info/*` - 所有 OpenRPC 文档路径
+- `*/ad.json` - All paths ending with `/ad.json`
+- `/info/*` - All OpenRPC document paths
 
-其他所有路径都需要 DID WBA 认证
+All other paths require DID WBA authentication.
 
-## 从旧版本迁移
+## Generated Endpoints
 
-### 旧版本（框架模式）
+FastANP automatically generates the following endpoints:
 
-```python
-from anp.fastanp import FastANP
+### 1. JSON-RPC Unified Endpoint
+- **URL**: `POST /rpc` (configurable)
+- **Description**: JSON-RPC 2.0 unified entry point
+- **Auth**: Depends on `enable_auth_middleware` parameter
 
-app = FastANP(name="...", ...)  # FastANP 是框架
+### 2. OpenRPC Document Endpoints
+- **URL**: `GET {path}` (one per interface)
+- **Description**: Returns interface's OpenRPC document
+- **Auth**: Auto-exempt (public access, matches `/info/*`)
 
-@app.interface()
-def hello(name: str) -> dict:
-    return {"message": f"Hello, {name}!"}
+### 3. Agent Description Endpoint
+- **URL**: User-defined (e.g., `/ad.json` or `/{agent_id}/ad.json`)
+- **Description**: Agent description document
+- **Auth**: Auto-exempt (public access, matches `*/ad.json`)
 
-app.run()  # FastANP 控制运行
-```
+### 4. User-Defined Endpoints
+- **Information routes**: User has full control (e.g., `/products/*.json`)
+- **Auth**: Requires auth by default (unless path matches exempt pattern)
 
-### 新版本（插件模式）
+## Function Name Uniqueness
 
-```python
-from fastapi import FastAPI
-from anp.fastanp import FastANP
-
-app = FastAPI()  # FastAPI 是框架
-anp = FastANP(app=app, name="...", ...)  # FastANP 是插件
-
-@app.get("/ad.json")
-def get_ad():
-    ad = anp.get_common_header()
-    ad["interfaces"] = [anp.interfaces[hello].link_summary]
-    return ad
-
-@anp.interface("/info/hello.json")
-def hello(name: str) -> dict:
-    return {"message": f"Hello, {name}!"}
-
-# 用 FastAPI/Uvicorn 运行
-import uvicorn
-uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-## 生成的端点
-
-FastANP 自动生成以下端点：
-
-### 1. JSON-RPC 统一端点
-- **URL**: `POST /rpc`（可配置）
-- **描述**: JSON-RPC 2.0 统一入口
-- **认证**: 根据 `enable_auth_middleware` 参数决定
-
-### 2. OpenRPC 文档端点
-- **URL**: `GET {path}`（每个接口一个）
-- **描述**: 返回该接口的 OpenRPC 文档
-- **认证**: 自动排除（公开访问，匹配 `/info/*`）
-
-### 3. Agent Description 端点
-- **URL**: 用户自定义（如 `/ad.json` 或 `/{agent_id}/ad.json`）
-- **描述**: 智能体描述文档
-- **认证**: 自动排除（公开访问，匹配 `*/ad.json`）
-
-### 4. 用户定义端点
-- **Information 路由**: 用户完全控制（如 `/products/*.json`）
-- **认证**: 默认需要认证（除非路径匹配排除模式）
-
-## 函数名唯一性
-
-FastANP 要求所有注册的函数名全局唯一：
+FastANP requires all registered function names to be globally unique:
 
 ```python
 @anp.interface("/info/search1.json")
@@ -501,11 +454,11 @@ def search(query: str) -> dict:
     pass
 
 @anp.interface("/info/search2.json")
-def search(query: str) -> dict:  # ❌ 错误！函数名重复
+def search(query: str) -> dict:  # ❌ Error! Duplicate function name
     pass
 ```
 
-解决方案：使用不同的函数名
+Solution: Use different function names
 
 ```python
 @anp.interface("/info/search_products.json")
@@ -517,6 +470,12 @@ def search_users(query: str) -> dict:
     pass
 ```
 
-## 许可证
+## Related Documentation
 
-本项目采用 MIT 许可证开源。详见 [LICENSE](../../LICENSE) 文件。
+- [OpenANP README](../openanp/README.md) - Decorator-driven agent development
+- [ANP Crawler README](../anp_crawler/README.md) - Lightweight discovery SDK
+- [Project README](../../README.md) - Overview
+
+## License
+
+This project is open-sourced under the MIT License. See [LICENSE](../../LICENSE) file.

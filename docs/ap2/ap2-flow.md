@@ -44,7 +44,6 @@ AP2Role = "merchant" | "shopper" | "credentials-provider" | "payment-processor"
 ```json
     {
       "type": "StructuredInterface",
-      "type": "StructuredInterface",
       "protocol": "AP2/ANP",
       "version": "0.0.1",
       "description": "An implementation of the AP2 protocol based on the ANP protocol, used for payment and transactions between agents."
