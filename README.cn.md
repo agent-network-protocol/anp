@@ -121,6 +121,8 @@ result = await crawler.execute_json_rpc(
 )
 ```
 
+你可以将crawler的接口封装为LLM的tools，这样可以作为ANP客户端与ANP server进行交互。
+
 **特性：**
 - **爬虫风格**：像网络爬虫一样爬取和解析ANP文档
 - **OpenAI Tools格式**：转换接口用于LLM集成
@@ -138,7 +140,7 @@ result = await crawler.execute_json_rpc(
 | **风格** | 代理对象（像本地方法） | 爬虫（爬取文档） |
 | **用法** | `agent.search(query="Tokyo")` | `crawler.execute_tool_call("search", {...})` |
 | **类型安全** | 完整类型提示，异常驱动 | 基于字典的返回 |
-| **适用场景** | 代码中的智能体间调用 | LLM工具集成，数据收集 |
+| **适用场景** | 使用代码访问固定的智能体，构建ANP的Skills | 使用LLM驱动的方式，访问远程的ANP智能体，并且与智能体进行交互 |
 
 ```python
 # RemoteAgent：方法调用像本地方法一样
