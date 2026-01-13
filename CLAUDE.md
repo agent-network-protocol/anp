@@ -20,6 +20,9 @@ uv run pytest --cov=anp                    # Run tests with coverage
 uv run pytest anp/unittest/                # Run core unit tests only
 uv run pytest anp/anp_crawler/test/        # Run ANP crawler tests only
 uv run pytest anp/fastanp/                 # Run FastANP tests only
+uv run python run_all_tests.py             # Run all unit tests (unified script)
+uv run python run_all_tests.py -v          # Run all tests with verbose output
+uv run python run_all_tests.py --cov=anp   # Run all tests with coverage
 ```
 
 **Build and Distribution:**

@@ -27,7 +27,7 @@ async def simple_amap_example():
     )
 
     # 2. 目标URL
-    url = "https://agent-connect.ai/agents/travel/mcp/agents/amap/ad.json"
+    url = "https://agent-connect.ai/mcp/agents/amap/ad.json"
 
     print("步骤1: 获取AMAP代理描述文档")
     print("-" * 40)
