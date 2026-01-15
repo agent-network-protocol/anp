@@ -1,0 +1,15 @@
+{
+  "name": "encrypted-communication-example",
+  "version": "1.0.0",
+  "description": "End-to-end encrypted communication example",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@anp/typescript-sdk": "file:../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}

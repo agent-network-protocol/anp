@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'ts_sdk/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'ts_sdk/**'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: ts_sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ts_sdk
+        run: npm ci
+
+      - name: Run type check
+        working-directory: ts_sdk
+        run: npm run typecheck
+
+      - name: Run linter
+        working-directory: ts_sdk
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: ts_sdk
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./ts_sdk/coverage/lcov.info
+          flags: typescript-sdk
+          name: ts-sdk-coverage
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+          cache-dependency-path: ts_sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ts_sdk
+        run: npm ci
+
+      - name: Build package
+        working-directory: ts_sdk
+        run: npm run build
+
+      - name: Check build outputs
+        working-directory: ts_sdk
+        run: |
+          test -f dist/index.js || exit 1
+          test -f dist/index.cjs || exit 1
+          test -f dist/index.d.ts || exit 1
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: ts_sdk/dist/
