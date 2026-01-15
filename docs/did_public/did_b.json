@@ -13,8 +13,8 @@
       "publicKeyJwk": {
         "kty": "EC",
         "crv": "secp256k1",
-        "x": "qRsTuVwXyZaBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgH",
-        "y": "Z9Y8X7W6V5U4T3S2R1Q0P9O8N7M6L5K4J3H2G1F0E9D8",
+        "x": "3QhHtIA9OrPys7Ih-C7ypn_wo0hURSJsftiO0InGX3Y",
+        "y": "AM3LVa-IHswIJdMq6-qXYE649545VNTAvzan6DM_jCM",
         "kid": "chatb-main-key-2026"
       }
     }

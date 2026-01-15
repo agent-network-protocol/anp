@@ -1,3 +1,28 @@
+#!/usr/bin/env python3
+"""OpenANP Chat Agent A Example.
+
+Demonstrates peer-to-peer LLM-powered agent communication:
+1. Agent discovery and P2P connection
+2. Automatic peer-to-peer message exchange
+3. LLM-powered conversation with OpenAI
+4. Session management with DID authentication
+5. Automatic peer discovery and chat initiation
+6. Conversation state management and turn tracking
+
+Prerequisites:
+    OpenAI API key configured (optional, falls back to default responses):
+    export OPENAI_KEY=your_api_key
+    export OPENAI_API_BASE=your_api_base (optional for custom endpoints)
+
+Run:
+    Start both agents - open two terminals:
+    Terminal 1: uv run python examples/python/openanp_examples/chat_a.py
+    Terminal 2: uv run python examples/python/openanp_examples/chat_b.py
+    
+    Agents will auto-discover each other and start chatting!
+    View status: http://localhost:8000
+"""
+
 import time
 import asyncio
 import uuid
@@ -49,6 +74,7 @@ def _get_client():
 
 try:
     from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader as _LibDIDWbaAuthHeader
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
     def _load_private_key_compat(self):
         key_path = self.private_key_path
@@ -58,23 +84,34 @@ try:
         try:
             return serialization.load_pem_private_key(private_key_data, password=None)
         except Exception:
-            return serialization.load_ssh_private_key(private_key_data, password=None)
+            try:
+                return serialization.load_ssh_private_key(private_key_data, password=None)
+            except Exception:
+                # Try loading as PEM with password if available
+                return serialization.load_pem_private_key(private_key_data, password=None)
 
     def _sign_callback_compat(self, content: bytes, method_fragment: str) -> bytes:
         private_key = self._load_private_key()
         if isinstance(private_key, Ed25519PrivateKey):
             return private_key.sign(content)
-        return private_key.sign(content, ec.ECDSA(hashes.SHA256()))
+        elif isinstance(private_key, RSAPrivateKey):
+            from cryptography.hazmat.primitives.asymmetric import padding
+            return private_key.sign(content, padding.PKCS1v15(), hashes.SHA256())
+        elif isinstance(private_key, ec.EllipticCurvePrivateKey):
+            return private_key.sign(content, ec.ECDSA(hashes.SHA256()))
+        else:
+            # Fallback
+            return private_key.sign(content, ec.ECDSA(hashes.SHA256()))
 
     _LibDIDWbaAuthHeader._load_private_key = _load_private_key_compat
     _LibDIDWbaAuthHeader._sign_callback = _sign_callback_compat
-except Exception:
-    pass
-
+except Exception as e:
+    import sys
+    print(f"Warning: Failed to patch DIDWbaAuthHeader: {e}", file=sys.stderr)
 
 auth = DIDWbaAuthHeader(
-    did_document_path="./did_a.json",
-    private_key_path="./private_a.pem"
+    did_document_path=os.getenv("CHAT_DID_A_PATH", "docs/did_public/did_a.json"),
+    private_key_path=os.getenv("CHAT_PRIVATE_A_PATH", "docs/did_public/private_a.pem")
 )
 
 @anp_agent(AgentConfig(
@@ -95,7 +132,7 @@ class ChatAgentA:
         self._active_session_id: Optional[str] = None
         self._chat_task: Optional[asyncio.Task] = None
         self._auto_start_attempted = False
-        print("Intialized ChatAgentA")
+        print("Initialized ChatAgentA")
 
     def _log_connected_once(self, agent_name: str) -> None:
         name = (agent_name or "").strip() or "Unknown"
@@ -104,11 +141,11 @@ class ChatAgentA:
         if name in self.connected_agents:
             return
         self.connected_agents.add(name)
-        print(f"\nChatA: 成功连接 {name}")
+        print(f"\nChatA: Successfully connected to {name}")
 
     @interface
     async def notify_connected(self, agent: str) -> dict:
-        """ANP Interface: 由对端在 discover/连接后主动通知，用于日志展示"""
+        """ANP Interface: Notify when peer agent connects or discovers this agent"""
         agent_name = (agent or "").strip() or "Unknown"
         self._log_connected_once(agent_name)
         if agent_name and agent_name != "Unknown":
@@ -117,12 +154,12 @@ class ChatAgentA:
 
     def _llm_generate(self, prompt: str) -> str:
         if not API_KEY:
-            return "你好，我们开始聊天吧。"
+            return "Hello, let's start chatting."
 
         system_prompt = (
-            "你是智能体 ChatA。你的任务是与对端智能体进行简短对话。"
-            "每次只输出一句要发给对端的中文消息，简洁自然。"
-            "不要输出解释、不要带前缀。"
+            "You are agent ChatA. Your task is to have a brief conversation with the peer agent. "
+            "Output only one sentence message to send to the peer each time, concise and natural. "
+            "Do not output explanations or prefixes."
         )
 
         resp = _get_client().chat.completions.create(
@@ -134,14 +171,14 @@ class ChatAgentA:
             temperature=0.8,
         )
         content = resp.choices[0].message.content
-        return (content or "").strip() or "（空消息）"
+        return (content or "").strip() or "(Empty message)"
 
     async def _run_chat_as_initiator(self, turns: int):
         if self.peer is None:
             return
         peer_label = self.peer_name or getattr(self.peer, "name", None) or "Peer"
         remaining_turns = int(turns)
-        next_message = self._llm_generate("请你主动向对端打个招呼并开启对话。")
+        next_message = self._llm_generate("Please proactively greet the peer agent and start the conversation.")
 
         while remaining_turns > 0:
             print(f"\nChatA -> {peer_label}: {next_message}")
@@ -150,25 +187,25 @@ class ChatAgentA:
             try:
                 response = await self.peer.receive_message(message=next_message, remaining_turns=remaining_turns)
             except Exception as e:
-                print(f"ChatA: 调用对端失败: {str(e)}")
+                print(f"ChatA: Failed to call peer: {str(e)}")
                 return
 
             peer_reply = (response or {}).get("reply", "")
             if peer_reply:
                 print(f"{peer_label} -> ChatA: {peer_reply}")
             else:
-                print(f"ChatA: 未收到对端 reply，原始响应: {response}")
+                print(f"ChatA: No reply received from peer, original response: {response}")
 
             remaining_turns = int((response or {}).get("remaining_turns", 0))
             if remaining_turns <= 0:
-                print("\nChatA: 对话结束")
+                print("\nChatA: Conversation ended")
                 return
 
-            next_message = self._llm_generate(f"对端说：{peer_reply}\n你回复对端一句话。")
+            next_message = self._llm_generate(f"Peer said: {peer_reply}\nReply to peer with one sentence.")
 
     @interface
     async def propose_chat(self, initiator_did: str, initiator_discover_ts: float, session_id: str, turns: int = 4) -> dict:
-        """ANP Interface: 对端请求由其发起聊天。"""
+        """ANP Interface: Peer requests to initiate chat"""
         initiator = (initiator_did or "").strip()
         sid = (session_id or "").strip()
         if not initiator or not sid:
@@ -182,10 +219,10 @@ class ChatAgentA:
             if local_ts is not None:
                 diff = float(initiator_discover_ts) - float(local_ts)
                 if diff > DISCOVER_TIE_TOLERANCE_SEC:
-                    # 我方明显更早 discover：拒绝，让我方发起
+                    # We discovered first: reject and let us initiate
                     return {"accepted": False, "reason": "i_discovered_first", "winner": AGENT_A_DID}
                 if abs(diff) <= DISCOVER_TIE_TOLERANCE_SEC:
-                    # 近似同时：用 DID 做确定性裁决
+                    # Approximately simultaneous: use DID for deterministic tie-break
                     if AGENT_A_DID < initiator:
                         return {"accepted": False, "reason": "tie_break", "winner": AGENT_A_DID}
 
@@ -214,7 +251,7 @@ class ChatAgentA:
                 turns=int(turns),
             )
         except Exception as e:
-            print(f"ChatA: 向 {peer_label} 发起聊天失败: {str(e)}")
+            print(f"ChatA: Failed to initiate chat with {peer_label}: {str(e)}")
             return
 
         if not (resp or {}).get("accepted"):
@@ -227,7 +264,7 @@ class ChatAgentA:
                 self._chat_task = asyncio.create_task(self._run_chat_as_initiator(turns=int(turns)))
 
     async def ensure_peer_connection(self, peer_ad_url: Optional[str] = None) -> bool:
-        """discover 对端（ChatB）并缓存 RemoteAgent"""
+        """Discover peer (ChatB) and cache RemoteAgent"""
         if self.peer is not None:
             return True
 
@@ -241,21 +278,21 @@ class ChatAgentA:
             try:
                 await self.peer.notify_connected(agent=AGENT_A_NAME)
             except Exception as e:
-                print(f" ChatA: 已连接但通知对端失败: {str(e)}")
+                print(f" ChatA: Connected but failed to notify peer: {str(e)}")
             return True
         except Exception as e:
-            print(f" ChatA: discover 对端失败: {str(e)}")
+            print(f" ChatA: Failed to discover peer: {str(e)}")
             self.peer = None
             return False
 
     def _llm_reply(self, user_message: str) -> str:
         if not API_KEY:
-            return "（ChatA 未配置 OPENAI_KEY，无法调用模型）"
+            return "(ChatA is not configured with OPENAI_KEY, cannot call model)"
 
         system_prompt = (
-            "你是一个通过 ANP 接口对话的智能体 ChatA。"
-            "你需要用中文、简洁、自然地回复对方的消息。"
-            "不要输出多余的元信息。"
+            "You are agent ChatA communicating through ANP interface. "
+            "Reply to the peer's message in a concise and natural way. "
+            "Do not output extra metadata."
         )
 
         resp = _get_client().chat.completions.create(
@@ -267,10 +304,11 @@ class ChatAgentA:
             temperature=0.7,
         )
         content = resp.choices[0].message.content
-        return (content or "").strip() or "（空回复）"
+        return (content or "").strip() or "(Empty reply)"
 
     @interface
     async def status(self) -> dict:
+        """ANP Interface: Get agent status"""
         return {
             "agent": "ChatA",
             "did": AGENT_A_DID,
@@ -282,7 +320,7 @@ class ChatAgentA:
 
     @interface
     async def receive_message(self, message: str, remaining_turns: int) -> dict:
-        """ANP Interface: 接收消息并用模型回复"""
+        """ANP Interface: Receive message and reply using model"""
         self.message_count += 1
         sender = self.peer_name or getattr(self.peer, "name", None) or "Peer"
         print(f"\n{sender} -> ChatA: {message}")
@@ -290,13 +328,13 @@ class ChatAgentA:
         try:
             reply = self._llm_reply(message)
         except Exception as e:
-            reply = f"（ChatA 调用模型失败：{str(e)}）"
+            reply = f"(ChatA failed to call model: {str(e)})"
 
         print(f"ChatA -> ChatB: {reply}")
 
         new_remaining_turns = max(0, int(remaining_turns) - 1)
         if new_remaining_turns <= 0:
-            print("\nChatA: 对话结束")
+            print("\nChatA: Conversation ended")
 
         return {
             "agent": "ChatA",
@@ -305,7 +343,7 @@ class ChatAgentA:
         }
 
     async def send_message(self, message: str, remaining_turns: int = 4, peer_ad_url: Optional[str] = None) -> dict:
-        """主动向对端发送消息"""
+        """Actively send message to peer"""
         ok = await self.ensure_peer_connection(peer_ad_url=peer_ad_url)
         if not ok or self.peer is None:
             return {"ok": False, "error": "peer_not_connected"}
@@ -320,12 +358,12 @@ class ChatAgentA:
 async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
     print("\n" + "=" * 60)
-    print("启动 Chat Agent A (端口 8000)")
-    print("   • 访问 http://localhost:8000 查看状态")
-    print("   • 访问 http://localhost:8000/a/ad.json 查看广告")
-    print("   • 访问 http://localhost:8000/health 进行健康检查")
-    print("   • 访问 http://localhost:8000/p2p/discover 进行 P2P discover")
-    print("   • 访问 http://localhost:8000/p2p/send 主动发送消息")
+    print("Starting Chat Agent A (port 8000)")
+    print("   • Visit http://localhost:8000 to view status")
+    print("   • Visit http://localhost:8000/a/ad.json to view advertisement")
+    print("   • Visit http://localhost:8000/health for health check")
+    print("   • Visit http://localhost:8000/p2p/discover for P2P discovery")
+    print("   • Visit http://localhost:8000/p2p/send to send message")
     print("=" * 60 + "\n")
 
     if AUTO_DISCOVER:
@@ -343,7 +381,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ChatAgentA", description="Chat Agent A - 端口 8000", lifespan=lifespan)
+app = FastAPI(title="ChatAgentA", description="Chat Agent A - port 8000", lifespan=lifespan)
 
 chat_agent_a = ChatAgentA(auth)
 app.include_router(chat_agent_a.router())

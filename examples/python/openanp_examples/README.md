@@ -45,7 +45,8 @@ result = await agent.hello(name="World")  # "Hello, World!"
 | `minimal_client.py` | Minimal client | ⭐ |
 | `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
 | `advanced_client.py` | Full client (discovery, error handling, LLM integration) | ⭐⭐⭐ |
-
+| `chat_a.py` | Chat Agent A (discovery, receive message, LLM integration) | ⭐⭐⭐ |
+| `chat_b.py` | Chat Agent B (discovery, receive message, LLM integration) | ⭐⭐⭐ |
 ---
 
 ## 🏃 Running Examples
@@ -199,6 +200,85 @@ curl http://localhost:8000/agent/ad.json | jq
 ```bash
 curl http://localhost:8000/agent/interface.json | jq
 ```
+## 💬 Chat Example
+
+The Chat Example demonstrates peer-to-peer LLM-powered agent communication with automatic discovery and conversation management.
+
+### Features
+
+- **Automatic Discovery**: Agents discover each other via ANP advertisement documents
+- **P2P Communication**: Direct agent-to-agent message passing
+- **LLM Integration**: Powered by OpenAI (with fallback for testing)
+- **Session Management**: DID-based authentication and context tracking
+- **Conversation Management**: Turn-based conversation with state tracking
+- **Tie-Breaking**: Deterministic resolution when both agents discover simultaneously
+
+### Run Chat Example
+
+```bash
+# Terminal 1: Start Chat Agent A
+uv run python examples/python/openanp_examples/chat_a.py
+
+# Terminal 2: Start Chat Agent B (in another terminal)
+uv run python examples/python/openanp_examples/chat_b.py
+```
+
+Both agents will automatically discover each other and start chatting!
+
+### Endpoints
+
+**Agent A** (Port 8000)
+- Status: `http://localhost:8000`
+- Advertisement: `http://localhost:8000/a/ad.json`
+- Health: `http://localhost:8000/health`
+
+**Agent B** (Port 8001)
+- Status: `http://localhost:8001`
+- Advertisement: `http://localhost:8001/b/ad.json`
+- Health: `http://localhost:8001/health`
+
+### Configuration
+
+```bash
+# OpenAI Configuration (optional)
+export OPENAI_KEY=your_api_key
+export OPENAI_API_BASE=https://api.openai.com/v1  # optional for custom endpoints
+
+# Chat Behavior
+export CHAT_AUTO_DISCOVER=1              # Auto-discover peer (default: 1)
+export CHAT_AUTO_DISCOVER_MAX_TRIES=30   # Max discovery attempts (default: 30)
+export CHAT_AUTO_DISCOVER_INTERVAL_SEC=1 # Discovery retry interval (default: 1)
+export CHAT_AUTO_START=1                 # Auto-start chat after discovery (default: 1)
+export CHAT_AUTO_TURNS=4                 # Number of conversation turns (default: 4)
+export CHAT_DISCOVER_TIE_TOLERANCE_SEC=0.5  # Tie-break tolerance (default: 0.5)
+
+# Paths (optional)
+export CHAT_DID_A_PATH=docs/did_public/did_a.json
+export CHAT_PRIVATE_A_PATH=docs/did_public/private_a.pem
+export CHAT_DID_B_PATH=docs/did_public/did_b.json
+export CHAT_PRIVATE_B_PATH=docs/did_public/private_b.pem
+export CHAT_PEER_AD_URL=http://localhost:8001/b/ad.json  # For Agent A
+```
+
+### Expected Output
+
+```
+Starting Chat Agent A (port 8000)
+   • Visit http://localhost:8000 to view status
+   • Visit http://localhost:8000/a/ad.json to view advertisement
+   • Visit http://localhost:8000/health for health check
+   • Visit http://localhost:8000/p2p/discover for P2P discovery
+   • Visit http://localhost:8000/p2p/send to send message
+
+ChatA: Successfully connected to ChatB
+
+ChatA -> ChatB: Hello! How are you today?
+ChatB -> ChatA: I'm doing great, thanks for asking!
+ChatA -> ChatB: That's wonderful! What have you been up to?
+ChatB -> ChatA: Just learning about ANP protocol. It's fascinating!
+
+ChatA: Conversation ended
+```
 
 ---
 
@@ -206,3 +286,5 @@ curl http://localhost:8000/agent/interface.json | jq
 
 - [ANP Protocol Specification](https://github.com/agent-network-protocol)
 - [AgentConnect Documentation](../../../docs/)
+
+---

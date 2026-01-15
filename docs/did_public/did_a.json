@@ -13,8 +13,8 @@
       "publicKeyJwk": {
         "kty": "EC",
         "crv": "secp256k1",
-        "x": "f8K7HqZVXyLmQnRtYsUvWxZaBcDeFgHiJkLmNoPqRsTu",
-        "y": "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2",
+        "x": "3QhHtIA9OrPys7Ih-C7ypn_wo0hURSJsftiO0InGX3Y",
+        "y": "AM3LVa-IHswIJdMq6-qXYE649545VNTAvzan6DM_jCM",
         "kid": "chata-key-2026-01"
       }
     }
