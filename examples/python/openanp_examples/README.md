@@ -202,16 +202,7 @@ curl http://localhost:8000/agent/interface.json | jq
 ```
 ## 💬 Chat Example
 
-The Chat Example demonstrates peer-to-peer LLM-powered agent communication with automatic discovery and conversation management.
-
-### Features
-
-- **Automatic Discovery**: Agents discover each other via ANP advertisement documents
-- **P2P Communication**: Direct agent-to-agent message passing
-- **LLM Integration**: Powered by OpenAI (with fallback for testing)
-- **Session Management**: DID-based authentication and context tracking
-- **Conversation Management**: Turn-based conversation with state tracking
-- **Tie-Breaking**: Deterministic resolution when both agents discover simultaneously
+Peer-to-peer LLM-powered agent communication with automatic discovery and conversation management.
 
 ### Run Chat Example
 
@@ -223,62 +214,55 @@ uv run python examples/python/openanp_examples/chat_a.py
 uv run python examples/python/openanp_examples/chat_b.py
 ```
 
-Both agents will automatically discover each other and start chatting!
+### Chat Agent Architecture
 
-### Endpoints
+**Core Agent Structure (chat_a.py & chat_b.py)**
 
-**Agent A** (Port 8000)
-- Status: `http://localhost:8000`
-- Advertisement: `http://localhost:8000/a/ad.json`
-- Health: `http://localhost:8000/health`
-
-**Agent B** (Port 8001)
-- Status: `http://localhost:8001`
-- Advertisement: `http://localhost:8001/b/ad.json`
-- Health: `http://localhost:8001/health`
-
-### Configuration
-
-```bash
-# OpenAI Configuration (optional)
-export OPENAI_KEY=your_api_key
-export OPENAI_API_BASE=https://api.openai.com/v1  # optional for custom endpoints
-
-# Chat Behavior
-export CHAT_AUTO_DISCOVER=1              # Auto-discover peer (default: 1)
-export CHAT_AUTO_DISCOVER_MAX_TRIES=30   # Max discovery attempts (default: 30)
-export CHAT_AUTO_DISCOVER_INTERVAL_SEC=1 # Discovery retry interval (default: 1)
-export CHAT_AUTO_START=1                 # Auto-start chat after discovery (default: 1)
-export CHAT_AUTO_TURNS=4                 # Number of conversation turns (default: 4)
-export CHAT_DISCOVER_TIE_TOLERANCE_SEC=0.5  # Tie-break tolerance (default: 0.5)
-
-# Paths (optional)
-export CHAT_DID_A_PATH=docs/did_public/did_a.json
-export CHAT_PRIVATE_A_PATH=docs/did_public/private_a.pem
-export CHAT_DID_B_PATH=docs/did_public/did_b.json
-export CHAT_PRIVATE_B_PATH=docs/did_public/private_b.pem
-export CHAT_PEER_AD_URL=http://localhost:8001/b/ad.json  # For Agent A
+```python
+@anp_agent(AgentConfig(
+    name="ChatA",
+    did="did:wba:example.com:chata",
+    prefix="/a",
+))
+class ChatAgentA:
+    @interface
+    async def notify_connected(self, agent: str) -> dict:
+        """Called when peer agent connects"""
+        return {"ok": True, "agent": "ChatA", "connected": agent}
+    
+    @interface
+    async def receive_message(self, message: str, remaining_turns: int) -> dict:
+        """Receive message and reply using LLM"""
+        reply = self._llm_reply(message)  # OpenAI or fallback
+        remaining_turns = max(0, remaining_turns - 1)
+        return {
+            "agent": "ChatA",
+            "reply": reply,
+            "remaining_turns": remaining_turns,
+        }
+    
+    @interface
+    async def propose_chat(self, initiator_did: str, initiator_discover_ts: float, 
+                          session_id: str, turns: int = 4) -> dict:
+        """Peer requests to initiate chat with tie-breaking"""
+        # Deterministic tie-break using DID when both discover simultaneously
+        if AGENT_A_DID < initiator_did:
+            return {"accepted": False, "reason": "tie_break"}
+        return {"accepted": True, "session_id": session_id}
 ```
 
-### Expected Output
+**Key Features**
 
-```
-Starting Chat Agent A (port 8000)
-   • Visit http://localhost:8000 to view status
-   • Visit http://localhost:8000/a/ad.json to view advertisement
-   • Visit http://localhost:8000/health for health check
-   • Visit http://localhost:8000/p2p/discover for P2P discovery
-   • Visit http://localhost:8000/p2p/send to send message
-
-ChatA: Successfully connected to ChatB
-
-ChatA -> ChatB: Hello! How are you today?
-ChatB -> ChatA: I'm doing great, thanks for asking!
-ChatA -> ChatB: That's wonderful! What have you been up to?
-ChatB -> ChatA: Just learning about ANP protocol. It's fascinating!
-
-ChatA: Conversation ended
-```
+- **Automatic Peer Discovery**: Uses `RemoteAgent.discover(url, auth)` to locate peers
+- **DID Authentication**: Each agent authenticates with secp256k1 private keys
+- **LLM Integration**: Integrated with OpenAI API for intelligent responses
+- **Session Management**: Deterministic tie-breaking when both agents discover simultaneously
+- **Turn-Based Conversation**: Tracks remaining turns and gracefully ends conversations
+- **Message Flow**:
+  1. Agent A discovers Agent B via ANP advertisement
+  2. Agent A calls `propose_chat()` to initiate conversation
+  3. Agents exchange messages via `receive_message()` 
+  4. Conversation ends when turns reach zero
 
 ---
 
