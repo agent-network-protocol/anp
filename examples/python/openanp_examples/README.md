@@ -251,18 +251,18 @@ class ChatAgentA:
         return {"accepted": True, "session_id": session_id}
 ```
 
-**Key Features**
+### Endpoints
 
-- **Automatic Peer Discovery**: Uses `RemoteAgent.discover(url, auth)` to locate peers
-- **DID Authentication**: Each agent authenticates with secp256k1 private keys
-- **LLM Integration**: Integrated with OpenAI API for intelligent responses
-- **Session Management**: Deterministic tie-breaking when both agents discover simultaneously
-- **Turn-Based Conversation**: Tracks remaining turns and gracefully ends conversations
-- **Message Flow**:
-  1. Agent A discovers Agent B via ANP advertisement
-  2. Agent A calls `propose_chat()` to initiate conversation
-  3. Agents exchange messages via `receive_message()` 
-  4. Conversation ends when turns reach zero
+**Agent A** (Port 8000)
+- Status: `http://localhost:8000`
+- Advertisement: `http://localhost:8000/a/ad.json`
+- Health: `http://localhost:8000/health`
+
+**Agent B** (Port 8001)
+- Status: `http://localhost:8001`
+- Advertisement: `http://localhost:8001/b/ad.json`
+- Health: `http://localhost:8001/health`
+
 
 ---
 
