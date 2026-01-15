@@ -95,6 +95,12 @@ class ChatAgentB:
                     self.auth
                 )
                 print(f" ChatB: 成功连接: {self.chat_a.name}")
+
+                # 让 ChatA 也输出“成功连接 ChatB”的日志（只做日志展示，不影响主流程）
+                try:
+                    await self.chat_a.notify_connected(agent="ChatB")
+                except Exception as e:
+                    print(f" ChatB: 已连接但通知 ChatA 失败: {str(e)}")
                 return True
             except Exception as e:
                 print(f" ChatB: 连接失败: {str(e)}")

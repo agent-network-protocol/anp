@@ -58,7 +58,17 @@ class ChatAgentA:
     def __init__(self, auth: DIDWbaAuthHeader):
         self.auth = auth
         self.message_count = 0
+        self.connected_agents = set()
         print("Intialized ChatAgentA")
+
+    @interface
+    async def notify_connected(self, agent: str) -> dict:
+        """ANP Interface: 由对端在 discover/连接后主动通知，用于日志展示"""
+        agent_name = (agent or "").strip() or "Unknown"
+        if agent_name not in self.connected_agents:
+            self.connected_agents.add(agent_name)
+            print(f"\nChatA: 成功连接 {agent_name}")
+        return {"ok": True, "agent": "ChatA", "connected": agent_name}
 
     def _llm_reply(self, user_message: str) -> str:
         if not API_KEY:
@@ -94,10 +104,14 @@ class ChatAgentA:
 
         print(f"ChatA -> ChatB: {reply}")
 
+        new_remaining_turns = max(0, int(remaining_turns) - 1)
+        if new_remaining_turns <= 0:
+            print("\nChatA: 对话结束")
+
         return {
             "agent": "ChatA",
             "reply": reply,
-            "remaining_turns": max(0, int(remaining_turns) - 1),
+            "remaining_turns": new_remaining_turns,
         }
 
 # 创建应用
