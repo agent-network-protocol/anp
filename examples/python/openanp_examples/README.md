@@ -201,9 +201,6 @@ curl http://localhost:8000/agent/ad.json | jq
 curl http://localhost:8000/agent/interface.json | jq
 ```
 ## 💬 Chat Example
-
-Peer-to-peer LLM-powered agent communication with automatic discovery and conversation management.
-
 ### Run Chat Example
 
 ```bash
@@ -250,19 +247,14 @@ class ChatAgentA:
             return {"accepted": False, "reason": "tie_break"}
         return {"accepted": True, "session_id": session_id}
 ```
+### Generated Endpoints
 
-### Endpoints
-
-**Agent A** (Port 8000)
-- Status: `http://localhost:8000`
-- Advertisement: `http://localhost:8000/a/ad.json`
-- Health: `http://localhost:8000/health`
-
-**Agent B** (Port 8001)
-- Status: `http://localhost:8001`
-- Advertisement: `http://localhost:8001/b/ad.json`
-- Health: `http://localhost:8001/health`
-
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | status |
+| `GET /health` | health check |
+| `POST /p2p/discover` | trigger discovery and cache the peer connection |
+| `POST /p2p/send` | send a message to the peer (internally calls peer `receive_message`) |
 
 ---
 
