@@ -1,0 +1,18 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/ed25519-2018/v1"
+  ],
+  "id": "did:wba:example.com:chatb",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com:chatb#key-1",
+      "type": "Ed25519VerificationKey2018",
+      "controller": "did:wba:example.com:chatb",
+      "publicKeyBase58": "GkDh4hYcYm6nZ8vJ3fY9eF7XhYqR5tZ7yK3WnX6Jf2qP"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com:chatb#key-1"
+  ]
+}
