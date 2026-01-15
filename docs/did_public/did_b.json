@@ -1,0 +1,25 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1",
+    "https://w3id.org/security/suites/secp256k1-2019/v1"
+  ],
+  "id": "did:wba:didhost.cc:chatb",
+  "verificationMethod": [
+    {
+      "id": "did:wba:didhost.cc:chatb#key-1",
+      "type": "EcdsaSecp256k1VerificationKey2019",
+      "controller": "did:wba:didhost.cc:chatb",
+      "publicKeyJwk": {
+        "kty": "EC",
+        "crv": "secp256k1",
+        "x": "3QhHtIA9OrPys7Ih-C7ypn_wo0hURSJsftiO0InGX3Y",
+        "y": "AM3LVa-IHswIJdMq6-qXYE649545VNTAvzan6DM_jCM",
+        "kid": "chatb-main-key-2026"
+      }
+    }
+  ],
+  "authentication": [
+    "did:wba:didhost.cc:chatb#key-1"
+  ]
+}

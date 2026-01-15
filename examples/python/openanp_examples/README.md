@@ -45,7 +45,8 @@ result = await agent.hello(name="World")  # "Hello, World!"
 | `minimal_client.py` | Minimal client | ⭐ |
 | `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
 | `advanced_client.py` | Full client (discovery, error handling, LLM integration) | ⭐⭐⭐ |
-
+| `chat_a.py` | Chat Agent A (discovery, receive message, LLM integration) | ⭐⭐⭐ |
+| `chat_b.py` | Chat Agent B (discovery, receive message, LLM integration) | ⭐⭐⭐ |
 ---
 
 ## 🏃 Running Examples
@@ -199,6 +200,61 @@ curl http://localhost:8000/agent/ad.json | jq
 ```bash
 curl http://localhost:8000/agent/interface.json | jq
 ```
+## 💬 Chat Example
+### Run Chat Example
+
+```bash
+# Terminal 1: Start Chat Agent A
+uv run python examples/python/openanp_examples/chat_a.py
+
+# Terminal 2: Start Chat Agent B (in another terminal)
+uv run python examples/python/openanp_examples/chat_b.py
+```
+
+### Chat Agent Architecture
+
+**Core Agent Structure (chat_a.py & chat_b.py)**
+
+```python
+@anp_agent(AgentConfig(
+    name="ChatA",
+    did="did:wba:example.com:chata",
+    prefix="/a",
+))
+class ChatAgentA:
+    @interface
+    async def notify_connected(self, agent: str) -> dict:
+        """Called when peer agent connects"""
+        return {"ok": True, "agent": "ChatA", "connected": agent}
+    
+    @interface
+    async def receive_message(self, message: str, remaining_turns: int) -> dict:
+        """Receive message and reply using LLM"""
+        reply = self._llm_reply(message)  # OpenAI or fallback
+        remaining_turns = max(0, remaining_turns - 1)
+        return {
+            "agent": "ChatA",
+            "reply": reply,
+            "remaining_turns": remaining_turns,
+        }
+    
+    @interface
+    async def propose_chat(self, initiator_did: str, initiator_discover_ts: float, 
+                          session_id: str, turns: int = 4) -> dict:
+        """Peer requests to initiate chat with tie-breaking"""
+        # Deterministic tie-break using DID when both discover simultaneously
+        if AGENT_A_DID < initiator_did:
+            return {"accepted": False, "reason": "tie_break"}
+        return {"accepted": True, "session_id": session_id}
+```
+### Generated Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | status |
+| `GET /health` | health check |
+| `POST /p2p/discover` | trigger discovery and cache the peer connection |
+| `POST /p2p/send` | send a message to the peer (internally calls peer `receive_message`) |
 
 ---
 
@@ -206,3 +262,5 @@ curl http://localhost:8000/agent/interface.json | jq
 
 - [ANP Protocol Specification](https://github.com/agent-network-protocol)
 - [AgentConnect Documentation](../../../docs/)
+
+---
