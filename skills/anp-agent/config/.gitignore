@@ -1,0 +1,9 @@
+# 私钥文件 - 绝对不要提交！
+*.pem
+private-key.pem
+
+# 身份配置（包含敏感信息）
+identity.json
+
+# DID 文档（包含公钥，可选择性提交）
+# did.json
