@@ -1,0 +1,30 @@
+{
+  "description": "已注册的 ANP Agent 列表，添加新 Agent 只需要填写 ad_url",
+  "agents": [
+    {
+      "id": "amap",
+      "name": "高德地图",
+      "ad_url": "https://agent-connect.ai/mcp/agents/amap/ad.json"
+    },
+    {
+      "id": "kuaidi", 
+      "name": "快递查询",
+      "ad_url": "https://agent-connect.ai/mcp/agents/kuaidi/ad.json"
+    },
+    {
+      "id": "hotel",
+      "name": "酒店预订",
+      "ad_url": "https://agent-connect.ai/agents/hotel-assistant/ad.json"
+    },
+    {
+      "id": "juhe",
+      "name": "聚合查询",
+      "ad_url": "https://agent-connect.ai/mcp/agents/juhe/ad.json"
+    },
+    {
+      "id": "navigation",
+      "name": "Agent导航",
+      "ad_url": "https://agent-search.ai/agents/navigation/ad.json"
+    }
+  ]
+}
