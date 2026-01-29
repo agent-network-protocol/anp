@@ -1,37 +1,87 @@
-# AgentConnect4Java
+# ANP Java SDK
 
-这是Python AgentConnect代码库的Java实现版本。它提供了DID（去中心化标识符）生成、身份验证和加密操作的功能。
+Agent Network Protocol (ANP) Java SDK - 完整的 Java 实现。
 
-## 项目结构
+## 模块结构
 
-项目按以下包进行组织：
-
-- `com.agentconnect.authentication`: 包含DID身份验证相关的类
-- `com.agentconnect.utils`: 包含加密操作和其他辅助功能的工具类
-- `test`目录中主要提供了单元测试类DIDWBAUnitTest，验证主要的几个功能方法的正确性
-- `test/java/com.agentconnect.test.example`:主要提供了一个DidWbaFullExample类，包含了一个完整的DID身份验证示例，包括did文档生成，密钥保存，AuthHeader生成，签名验签过程，token的验证和生成，是一个学习anp4java入门的不错的示例。
-
-## 构建项目
-
-本项目使用Maven进行依赖管理。构建项目的命令：
-
-```bash
-mvn clean package
+```
+java/
+├── anp4j/                         # 核心 SDK（无框架依赖）
+├── anp-spring-boot-starter/       # Spring Boot Starter（自动配置）
+└── anp-examples/                  # 示例代码
 ```
 
-## 依赖项
+| 模块 | 说明 | Maven 坐标 |
+|------|------|------------|
+| `anp4j` | 核心 SDK，不依赖任何框架 | `com.agentconnect:anp4j:1.0.0` |
+| `anp-spring-boot-starter` | Spring Boot 自动配置 | `com.agentconnect:anp-spring-boot-starter:1.0.0` |
+| `anp-examples` | 示例代码 | - |
 
-- BouncyCastle：用于加密操作
-- AsyncHttpClient：用于异步HTTP请求
-- Jackson：用于JSON处理
-- NovaCrypto Base58：用于Base58编码/解码
-- SLF4J和Logback：用于日志记录
-- JSON Canonicalization Scheme：用于JSON规范化
+## 快速开始
 
-## 许可证
+### 安装
 
-本项目基于MIT许可证开源。
+```bash
+cd java
+mvn clean install -DskipTests
+```
 
-## 作者
+### 引用
 
-原始Python实现：GaoWei Chang (chgaowei@gmail.com)。
+**不用 Spring Boot：**
+```xml
+<dependency>
+    <groupId>com.agentconnect</groupId>
+    <artifactId>anp4j</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+**用 Spring Boot：**
+```xml
+<dependency>
+    <groupId>com.agentconnect</groupId>
+    <artifactId>anp-spring-boot-starter</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+## Spring Boot 使用
+
+```java
+@Component
+@AnpAgent(name = "Hotel", did = "did:wba:example.com:hotel", prefix = "/hotel")
+public class HotelAgent {
+    
+    @Interface(name = "search", description = "搜索酒店")
+    public Map<String, Object> search(Map<String, Object> params, Context ctx) {
+        return Map.of("hotels", List.of("Hotel A", "Hotel B"));
+    }
+}
+```
+
+启动后自动暴露端点：
+- `GET /hotel/ad.json` - Agent 描述
+- `POST /hotel/rpc` - JSON-RPC 端点
+
+## 纯 Java 使用
+
+```java
+AgentHandler handler = new AgentHandler(new HotelAgent(), config);
+String adJson = handler.generateAgentDescription();
+String response = handler.handleRequest(jsonRpcRequest, callerDid);
+```
+
+## 运行示例
+
+```bash
+# Spring Boot 示例
+mvn exec:java -pl anp-examples -Dexec.mainClass="com.agentconnect.example.springboot.HotelApplication"
+
+# 本地示例（无 Spring）
+mvn exec:java -pl anp-examples -Dexec.mainClass="com.agentconnect.example.local.HotelServer"
+```
+
+## License
+
+MIT License

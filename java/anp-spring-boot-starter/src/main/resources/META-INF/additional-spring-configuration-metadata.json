@@ -1,0 +1,47 @@
+{
+  "groups": [
+    {
+      "name": "anp",
+      "description": "ANP SDK Configuration"
+    },
+    {
+      "name": "anp.auth",
+      "description": "ANP DID-WBA Authentication Configuration"
+    }
+  ],
+  "properties": [
+    {
+      "name": "anp.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable ANP auto-configuration",
+      "defaultValue": true
+    },
+    {
+      "name": "anp.prefix",
+      "type": "java.lang.String",
+      "description": "Default URL prefix for ANP endpoints",
+      "defaultValue": ""
+    },
+    {
+      "name": "anp.base-url",
+      "type": "java.lang.String",
+      "description": "Base URL for agent description (auto-detected if not set)"
+    },
+    {
+      "name": "anp.auth.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable DID-WBA authentication filter",
+      "defaultValue": false
+    },
+    {
+      "name": "anp.auth.exempt-paths",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Paths exempt from authentication (e.g., /ad.json)"
+    },
+    {
+      "name": "anp.auth.allowed-domains",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Allowed domains for DID verification"
+    }
+  ]
+}

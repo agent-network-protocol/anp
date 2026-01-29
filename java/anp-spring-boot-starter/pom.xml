@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentconnect</groupId>
+        <artifactId>anp-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>anp-spring-boot-starter</artifactId>
+    <name>ANP Spring Boot Starter</name>
+    <description>Spring Boot Starter for Agent Network Protocol (ANP) - Auto-configuration for ANP agents</description>
+
+    <dependencies>
+        <!-- ANP Core -->
+        <dependency>
+            <groupId>com.agentconnect</groupId>
+            <artifactId>anp4j</artifactId>
+        </dependency>
+        
+        <!-- Spring Boot -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

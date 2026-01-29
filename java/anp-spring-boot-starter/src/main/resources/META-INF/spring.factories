@@ -1,0 +1,3 @@
+# ANP Spring Boot Auto Configuration
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+com.agentconnect.spring.AnpAutoConfiguration
