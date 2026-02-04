@@ -10,9 +10,16 @@
 
 ## 文件说明
 
+### 离线示例
 - `create_did_document.py` - 创建DID文档和密钥对
 - `authenticate_and_verify.py` - 完整的身份认证和验证流程演示
 - `validate_did_document.py` - 验证DID文档结构的有效性
+
+### HTTP端到端示例
+- `http_server.py` - FastAPI HTTP服务端，集成DID WBA认证中间件
+- `http_client.py` - HTTP客户端，演示完整的认证流程
+
+### 生成文件目录
 - `generated/` - 存储生成的DID文档和密钥文件
 
 ## 前置条件
@@ -90,6 +97,73 @@ Bearer token verified. Associated DID: did:wba:...
 - **DID解析**：本地模拟DID文档解析过程
 - **JWT验证**：使用RS256算法进行令牌签名验证
 - **授权流程**：演示从DID认证到Bearer令牌的完整授权链
+
+### 4. HTTP端到端认证示例
+
+这个示例演示了使用实际HTTP请求的完整客户端-服务端认证流程。
+
+#### 启动服务端
+```bash
+uv run python examples/python/did_wba_examples/http_server.py
+```
+
+服务端将在 `http://localhost:8080` 启动，提供以下端点：
+- `/health` - 健康检查（无需认证）
+- `/api/protected` - 受保护端点（需要DID认证）
+- `/api/user-info` - 用户信息端点（需要DID认证）
+
+#### 运行客户端（在另一个终端）
+```bash
+uv run python examples/python/did_wba_examples/http_client.py
+```
+
+#### 预期输出
+```
+============================================================
+Step 1: Access health endpoint (no authentication required)
+============================================================
+Status: 200
+Response: {'status': 'healthy', 'service': 'did-wba-http-server'}
+
+============================================================
+Step 2: Access protected endpoint with DID authentication
+============================================================
+Auth header type: DID WBA
+Authorization: DID-WBA did="did:wba:didhost.cc:public", nonce="...", timestamp=...
+Status: 200
+Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': 'bearer'}
+Received Bearer token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+============================================================
+Step 3: Access protected endpoint with cached Bearer token
+============================================================
+Auth header type: Bearer
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+Status: 200
+Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': None}
+
+============================================================
+Step 4: Access user-info endpoint with Bearer token
+============================================================
+Status: 200
+Response: {'did': 'did:wba:didhost.cc:public', 'authenticated': True, ...}
+
+============================================================
+Demo completed successfully!
+============================================================
+```
+
+#### 认证流程说明
+
+1. **首次请求（DID认证）**：客户端发送DID WBA认证头
+2. **服务端验证**：服务端验证签名，颁发JWT Bearer令牌
+3. **令牌缓存**：客户端缓存Bearer令牌用于后续请求
+4. **后续请求**：客户端使用缓存的Bearer令牌（更高效）
+
+#### 技术要点
+- **中间件架构**：使用FastAPI中间件统一处理认证
+- **本地DID解析**：为离线演示提供本地DID文档解析器
+- **令牌管理**：客户端自动管理DID认证头和Bearer令牌的切换
 
 ### 3. DID文档验证 (`validate_did_document.py`)
 

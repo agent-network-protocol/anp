@@ -9,9 +9,17 @@
 This directory showcases how to build, validate, and verify `did:wba` identities with AgentConnect. All scripts operate locally—no HTTP services are required—making them ideal for learning or offline testing.
 
 ## Contents
+
+### Offline Examples
 - `create_did_document.py`: Generates a DID document and secp256k1 key pair.
 - `validate_did_document.py`: Confirms the generated document matches DID-WBA requirements.
 - `authenticate_and_verify.py`: Produces a DID authentication header, verifies it, and validates the issued bearer token using demo credentials.
+
+### HTTP End-to-End Examples
+- `http_server.py`: FastAPI HTTP server with DID WBA authentication middleware.
+- `http_client.py`: HTTP client demonstrating the complete authentication flow.
+
+### Generated Files
 - `generated/`: Output directory for DID documents and key files created by the examples.
 
 ## Prerequisites
@@ -79,6 +87,66 @@ Expected output:
 DID header verified. Issued bearer token.
 Bearer token verified. Associated DID: did:wba:didhost.cc:public
 ```
+
+### 4. HTTP End-to-End Authentication
+
+This example demonstrates a complete client-server authentication flow using actual HTTP requests.
+
+#### Start the Server
+```bash
+uv run python examples/python/did_wba_examples/http_server.py
+```
+The server starts on `http://localhost:8080` with:
+- `/health` - Health check (no auth required)
+- `/api/protected` - Protected endpoint (requires DID auth)
+- `/api/user-info` - User info endpoint (requires DID auth)
+
+#### Run the Client (in another terminal)
+```bash
+uv run python examples/python/did_wba_examples/http_client.py
+```
+
+Expected output:
+```
+============================================================
+Step 1: Access health endpoint (no authentication required)
+============================================================
+Status: 200
+Response: {'status': 'healthy', 'service': 'did-wba-http-server'}
+
+============================================================
+Step 2: Access protected endpoint with DID authentication
+============================================================
+Auth header type: DID WBA
+Authorization: DID-WBA did="did:wba:didhost.cc:public", nonce="...", timestamp=...
+Status: 200
+Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': 'bearer'}
+Received Bearer token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+============================================================
+Step 3: Access protected endpoint with cached Bearer token
+============================================================
+Auth header type: Bearer
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+Status: 200
+Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': None}
+
+============================================================
+Step 4: Access user-info endpoint with Bearer token
+============================================================
+Status: 200
+Response: {'did': 'did:wba:didhost.cc:public', 'authenticated': True, ...}
+
+============================================================
+Demo completed successfully!
+============================================================
+```
+
+#### Authentication Flow
+1. **First Request (DID Auth)**: Client sends DID WBA authentication header
+2. **Server Verification**: Server verifies signature, issues JWT Bearer token
+3. **Token Caching**: Client caches the Bearer token for subsequent requests
+4. **Subsequent Requests**: Client uses cached Bearer token (more efficient)
 
 ## Troubleshooting
 - **Missing files**: Run `create_did_document.py` before the other scripts, or confirm the sample files exist.
