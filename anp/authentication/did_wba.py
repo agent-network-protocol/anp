@@ -28,6 +28,8 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
+from anp.proof import generate_w3c_proof, verify_w3c_proof
+
 from .verification_methods import CURVE_MAPPING, create_verification_method
 
 
@@ -139,6 +141,14 @@ def create_did_wba_document(
             "serviceEndpoint": agent_description_url
         }]
     
+    # Self-sign the DID document with W3C Data Integrity Proof
+    did_document = generate_w3c_proof(
+        document=did_document,
+        private_key=secp256k1_private_key,
+        verification_method=f"{did}#key-1",
+        proof_purpose="assertionMethod",
+    )
+
     # Build keys dictionary with both private and public keys in PEM format
     keys = {
         "key-1": (
@@ -153,16 +163,18 @@ def create_did_wba_document(
             )
         )
     }
-    
+
     logging.info(f"Successfully created DID document with ID: {did}")
     return did_document, keys
 
-async def resolve_did_wba_document(did: str) -> Dict:
+async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict:
     """
     Resolve DID document from Web DID asynchronously
 
     Args:
         did: DID to resolve, e.g. did:wba:example.com:user:alice
+        verify_proof: If True and the resolved document contains a proof field,
+            verify the proof signature using the document's verification method.
 
     Returns:
         Dict: Resolved DID document
@@ -220,6 +232,32 @@ async def resolve_did_wba_document(did: str) -> Dict:
                     )
 
                 logging.info(f"Successfully resolved DID document for: {did}")
+
+                # Optionally verify W3C proof if present
+                if verify_proof and "proof" in did_document:
+                    proof = did_document["proof"]
+                    vm_id = proof.get("verificationMethod")
+                    if not vm_id:
+                        logging.warning("Proof missing verificationMethod field")
+                        return None
+
+                    method_dict = _find_verification_method(did_document, vm_id)
+                    if not method_dict:
+                        logging.warning(f"Verification method not found: {vm_id}")
+                        return None
+
+                    try:
+                        public_key = _extract_public_key(method_dict)
+                    except ValueError as e:
+                        logging.warning(f"Failed to extract public key: {e}")
+                        return None
+
+                    if not verify_w3c_proof(did_document, public_key):
+                        logging.warning("DID document proof verification failed")
+                        return None
+
+                    logging.info("DID document proof verified successfully")
+
                 return did_document
 
     except aiohttp.ClientError as e:
@@ -230,17 +268,19 @@ async def resolve_did_wba_document(did: str) -> Dict:
         return None
 
 # Add a sync wrapper for backward compatibility
-def resolve_did_wba_document_sync(did: str) -> Dict:
+def resolve_did_wba_document_sync(did: str, verify_proof: bool = False) -> Dict:
     """
     Synchronous wrapper for resolve_did_wba_document
 
     Args:
         did: DID to resolve, e.g. did:wba:example.com:user:alice
+        verify_proof: If True and the resolved document contains a proof field,
+            verify the proof signature using the document's verification method.
 
     Returns:
         Dict: Resolved DID document
     """
-    return asyncio.run(resolve_did_wba_document(did))
+    return asyncio.run(resolve_did_wba_document(did, verify_proof=verify_proof))
 
 def generate_auth_header(
     did_document: Dict,
