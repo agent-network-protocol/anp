@@ -594,7 +594,7 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
             if jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519':
                 raise ValueError(f"Invalid JWK parameters for {method_type}")
             try:
-                key_bytes = base64.b64decode(jwk['x'] + '==')
+                key_bytes = base64.urlsafe_b64decode(jwk['x'] + '=' * (-len(jwk['x']) % 4))
                 return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
             except Exception as e:
                 raise ValueError(f"Invalid Ed25519 JWK: {str(e)}")
