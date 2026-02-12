@@ -66,6 +66,7 @@ def create_did_wba_document(
     port: Optional[int] = None,
     path_segments: Optional[List[str]] = None,
     agent_description_url: Optional[str] = None,
+    services: Optional[List[Dict[str, Any]]] = None,
     # --- proof 参数 ---
     proof_purpose: str = "assertionMethod",
     verification_method: Optional[str] = None,
@@ -81,6 +82,9 @@ def create_did_wba_document(
         port: Optional port number
         path_segments: Optional DID path segments list, e.g. ['user', 'alice']
         agent_description_url: Optional URL for agent description
+        services: Optional list of custom service entries. Each entry is a dict
+            with at least "id", "type", "serviceEndpoint" keys. If "id" starts
+            with "#", it will be automatically prefixed with the DID.
         proof_purpose: Proof purpose string, default "assertionMethod"
         verification_method: Verification method ID for proof. If None,
             uses the first method from the document.
@@ -97,7 +101,9 @@ def create_did_wba_document(
     Raises:
         ValueError: If hostname is empty or is an IP address
 
-    Note: Currently only secp256k1 is supported
+    Note: Currently only secp256k1 is supported. All service entries (including
+        agent_description_url and custom services) are added to the document
+        before proof generation, so they are covered by the proof signature.
     """
     if not hostname:
         raise ValueError("Hostname cannot be empty")
@@ -145,13 +151,22 @@ def create_did_wba_document(
         "authentication": [vm_entry["id"]]
     }
 
-    # Add agent description if URL is provided
+    # 合并所有 service 条目
+    all_services = []
     if agent_description_url is not None:
-        did_document["service"] = [{
+        all_services.append({
             "id": f"{did}#ad",
             "type": "AgentDescription",
-            "serviceEndpoint": agent_description_url
-        }]
+            "serviceEndpoint": agent_description_url,
+        })
+    if services:
+        for svc in services:
+            svc_id = svc.get("id", "")
+            if svc_id.startswith("#"):
+                svc = {**svc, "id": f"{did}{svc_id}"}
+            all_services.append(svc)
+    if all_services:
+        did_document["service"] = all_services
 
     # Self-sign the DID document with W3C Data Integrity Proof
     proof_vm = verification_method
