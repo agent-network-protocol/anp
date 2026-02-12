@@ -65,23 +65,35 @@ def create_did_wba_document(
     hostname: str,
     port: Optional[int] = None,
     path_segments: Optional[List[str]] = None,
-    agent_description_url: Optional[str] = None
+    agent_description_url: Optional[str] = None,
+    # --- proof 参数 ---
+    proof_purpose: str = "assertionMethod",
+    verification_method: Optional[str] = None,
+    domain: Optional[str] = None,
+    challenge: Optional[str] = None,
+    created: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
     Generate DID document and corresponding private key dictionary
-    
+
     Args:
         hostname: Hostname
         port: Optional port number
         path_segments: Optional DID path segments list, e.g. ['user', 'alice']
         agent_description_url: Optional URL for agent description
-    
+        proof_purpose: Proof purpose string, default "assertionMethod"
+        verification_method: Verification method ID for proof. If None,
+            uses the first method from the document.
+        domain: Optional domain for proof
+        challenge: Optional challenge for proof
+        created: Optional ISO 8601 timestamp for proof
+
     Returns:
         Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
-            - First dict is the DID document 
-            - Second dict is the keys dictionary where key is DID fragment (e.g. "key-1") 
+            - First dict is the DID document
+            - Second dict is the keys dictionary where key is DID fragment (e.g. "key-1")
               and value is a tuple of (private_key_pem_bytes, public_key_pem_bytes)
-              
+
     Raises:
         ValueError: If hostname is empty or is an IP address
 
@@ -114,13 +126,13 @@ def create_did_wba_document(
     secp256k1_public_key = secp256k1_private_key.public_key()
     
     # Build verification method
-    verification_method = {
+    vm_entry = {
         "id": f"{did}#key-1",
         "type": "EcdsaSecp256k1VerificationKey2019",
         "controller": did,
         "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
     }
-    
+
     # Build DID document
     did_document = {
         "@context": [
@@ -129,8 +141,8 @@ def create_did_wba_document(
             "https://w3id.org/security/suites/secp256k1-2019/v1"
         ],
         "id": did,
-        "verificationMethod": [verification_method],
-        "authentication": [verification_method["id"]]
+        "verificationMethod": [vm_entry],
+        "authentication": [vm_entry["id"]]
     }
 
     # Add agent description if URL is provided
@@ -140,13 +152,20 @@ def create_did_wba_document(
             "type": "AgentDescription",
             "serviceEndpoint": agent_description_url
         }]
-    
+
     # Self-sign the DID document with W3C Data Integrity Proof
+    proof_vm = verification_method
+    if proof_vm is None:
+        proof_vm = did_document["verificationMethod"][0]["id"]
+
     did_document = generate_w3c_proof(
         document=did_document,
         private_key=secp256k1_private_key,
-        verification_method=f"{did}#key-1",
-        proof_purpose="assertionMethod",
+        verification_method=proof_vm,
+        proof_purpose=proof_purpose,
+        domain=domain,
+        challenge=challenge,
+        created=created,
     )
 
     # Build keys dictionary with both private and public keys in PEM format
