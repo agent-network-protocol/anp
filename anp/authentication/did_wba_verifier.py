@@ -16,7 +16,7 @@ import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
@@ -193,7 +193,7 @@ class DidWbaVerifier:
         """Verify if a timestamp is within the allowed period."""
         try:
             request_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            current_time = datetime.now(UTC)
+            current_time = datetime.now(timezone.utc)
             # Reject timestamps too far in the future (> 1 minute ahead of server time)
             if request_time - current_time > timedelta(minutes=1):
                 logger.error(
@@ -251,7 +251,7 @@ class DidWbaVerifier:
                 return False
 
         # Internal validation path
-        current_time = datetime.now(UTC)
+        current_time = datetime.now(timezone.utc)
 
         # Clean up expired nonces
         expired = [
@@ -287,7 +287,7 @@ class DidWbaVerifier:
             )
 
         payload = data.copy()
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         payload.update({"iat": now})
         exp = now + (
             expires_delta or timedelta(minutes=self.config.access_token_expire_minutes)
@@ -333,14 +333,14 @@ class DidWbaVerifier:
                 raise DidWbaVerifierError("Invalid DID format", status_code=401)
 
             # Additional time validation (PyJWT already checks exp)
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             issued_at = (
-                datetime.fromtimestamp(payload["iat"], tz=UTC)
+                datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
                 if isinstance(payload["iat"], int | float)
                 else payload["iat"]
             )
             expires_at = (
-                datetime.fromtimestamp(payload["exp"], tz=UTC)
+                datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
                 if isinstance(payload["exp"], int | float)
                 else payload["exp"]
             )

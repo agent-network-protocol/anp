@@ -5,7 +5,7 @@ This module defines the data models used in the Agent Network Protocol,
 including Agent Description, Information items, Interface items, and related structures.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -70,7 +70,7 @@ class AgentDescription(BaseModel):
     did: str = Field(description="DID identifier for this agent")
     owner: Optional[Owner] = Field(default=None, description="Owner information")
     description: str = Field(description="Agent description")
-    created: str = Field(default_factory=lambda: datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'), 
+    created: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 
                         description="Creation timestamp")
     securityDefinitions: Optional[Dict[str, SecurityDefinition]] = Field(
         default=None, 

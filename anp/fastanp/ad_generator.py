@@ -5,7 +5,7 @@ Generates the common header fields for ANP-compliant Agent Description documents
 Users can then add their own Information and Interface items.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from .models import Owner
@@ -77,7 +77,7 @@ class ADGenerator:
             "name": self.name,
             "did": self.did,
             "description": self.description,
-            "created": datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+            "created": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         }
         
         # Add owner if provided
