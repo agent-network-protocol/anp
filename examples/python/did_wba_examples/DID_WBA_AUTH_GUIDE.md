@@ -61,7 +61,7 @@ Authorization: DIDWba did="did:wba:example.com:user:alice", nonce="abc123", time
 - `nonce`：随机字符串，防止重放攻击（建议 16 字节随机数）
 - `timestamp`：请求时间，ISO 8601 UTC 格式，精确到秒
 - `verification_method`：DID 文档中验证方法的 fragment（如 `key-1`）
-- `signature`：对 `{nonce, timestamp, service, did}` 进行 JCS 规范化 → SHA-256 哈希 → 私钥签名 → base64url 编码
+- `signature`：对 `{nonce, timestamp, aud, did}` 进行 JCS 规范化 → SHA-256 哈希 → 私钥签名 → base64url 编码
 
 ### 1.4 签名验证过程
 

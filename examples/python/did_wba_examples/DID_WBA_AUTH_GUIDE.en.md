@@ -61,7 +61,7 @@ Field descriptions:
 - `nonce`: Random string to prevent replay attacks (recommended: 16-byte random value)
 - `timestamp`: Request time in ISO 8601 UTC format, accurate to seconds
 - `verification_method`: Fragment of the verification method in the DID document (e.g., `key-1`)
-- `signature`: Sign `{nonce, timestamp, service, did}` → JCS canonicalization → SHA-256 hash → private key signature → base64url encoding
+- `signature`: Sign `{nonce, timestamp, aud, did}` → JCS canonicalization → SHA-256 hash → private key signature → base64url encoding
 
 ### 1.4 Signature Verification Process
 
