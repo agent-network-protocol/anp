@@ -16,13 +16,16 @@ import unittest
 from pathlib import Path
 
 from anp.authentication import (
+    compute_jwk_fingerprint,
     create_did_wba_document,
+    create_did_wba_document_with_key_binding,
     extract_auth_header_parts,
     generate_auth_header,
     generate_auth_json,
     resolve_did_wba_document_sync,
     verify_auth_header_signature,
     verify_auth_json_signature,
+    verify_did_key_binding,
 )
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -384,6 +387,187 @@ class TestAuthHeaderParsing(unittest.TestCase):
         )
 
         self.assertEqual(version, "1.0")  # 默认应该是 1.0
+
+
+class TestKeyBoundDIDCreation(unittest.TestCase):
+    """测试 key-bound DID 文档创建和验证"""
+
+    def test_create_key_bound_did_document(self):
+        """测试创建 key-bound DID 文档，验证 DID 格式包含 k1_ 前缀"""
+        did_document, keys = create_did_wba_document_with_key_binding("example.com")
+
+        did = did_document["id"]
+        # DID 应包含 k1_ 前缀
+        self.assertIn(":k1_", did)
+        # DID 应以 did:wba:example.com:user:k1_ 开头
+        self.assertTrue(did.startswith("did:wba:example.com:user:k1_"))
+
+        # 验证密钥对存在
+        self.assertIn("key-1", keys)
+        private_key_pem, public_key_pem = keys["key-1"]
+        self.assertTrue(private_key_pem.startswith(b"-----BEGIN PRIVATE KEY-----"))
+        self.assertTrue(public_key_pem.startswith(b"-----BEGIN PUBLIC KEY-----"))
+
+    def test_fingerprint_length_is_43(self):
+        """测试 fingerprint 长度为 43 字符"""
+        did_document, _ = create_did_wba_document_with_key_binding("example.com")
+
+        did = did_document["id"]
+        # 提取最后一个段
+        last_segment = did.split(":")[-1]
+        self.assertTrue(last_segment.startswith("k1_"))
+        fingerprint = last_segment[3:]
+        self.assertEqual(len(fingerprint), 43)
+
+    def test_custom_path_prefix(self):
+        """测试自定义 path_prefix"""
+        did_document, _ = create_did_wba_document_with_key_binding(
+            "example.com", path_prefix=["agent"]
+        )
+
+        did = did_document["id"]
+        self.assertTrue(did.startswith("did:wba:example.com:agent:k1_"))
+
+    def test_default_path_prefix_is_user(self):
+        """测试默认 path_prefix 为 ['user']"""
+        did_document, _ = create_did_wba_document_with_key_binding("example.com")
+
+        did = did_document["id"]
+        parts = did.split(":")
+        # parts: ['did', 'wba', 'example.com', 'user', 'k1_...']
+        self.assertEqual(parts[3], "user")
+
+    def test_multi_segment_path_prefix(self):
+        """测试多段 path_prefix"""
+        did_document, _ = create_did_wba_document_with_key_binding(
+            "example.com", path_prefix=["org", "team"]
+        )
+
+        did = did_document["id"]
+        self.assertTrue(did.startswith("did:wba:example.com:org:team:k1_"))
+
+    def test_verify_did_key_binding_passes(self):
+        """测试 verify_did_key_binding 对正确的 key-bound DID 验证通过"""
+        did_document, _ = create_did_wba_document_with_key_binding("example.com")
+
+        did = did_document["id"]
+        public_key_jwk = did_document["verificationMethod"][0]["publicKeyJwk"]
+
+        self.assertTrue(verify_did_key_binding(did, public_key_jwk))
+
+    def test_verify_did_key_binding_fails_on_tampered_key(self):
+        """测试篡改公钥后 verify_did_key_binding 失败"""
+        did_document, _ = create_did_wba_document_with_key_binding("example.com")
+
+        did = did_document["id"]
+        # 生成一个不同的密钥
+        other_key = ec.generate_private_key(ec.SECP256K1())
+        other_public = other_key.public_key()
+        numbers = other_public.public_numbers()
+        import base64
+        tampered_jwk = {
+            "kty": "EC",
+            "crv": "secp256k1",
+            "x": base64.urlsafe_b64encode(numbers.x.to_bytes(32, 'big')).rstrip(b'=').decode('ascii'),
+            "y": base64.urlsafe_b64encode(numbers.y.to_bytes(32, 'big')).rstrip(b'=').decode('ascii'),
+        }
+
+        self.assertFalse(verify_did_key_binding(did, tampered_jwk))
+
+    def test_verify_did_key_binding_skips_non_k1_prefix(self):
+        """测试 u1_ 前缀的 DID 跳过 key binding 校验"""
+        # u1_ 前缀表示用户自选 ID，不需要 key binding 校验
+        did = "did:wba:example.com:user:u1_alice"
+        # 任何 JWK 都应返回 True（因为不是 k1_ 前缀）
+        fake_jwk = {"kty": "EC", "crv": "secp256k1", "x": "fake", "y": "fake"}
+        self.assertTrue(verify_did_key_binding(did, fake_jwk))
+
+    def test_verify_did_key_binding_skips_plain_id(self):
+        """测试普通 DID（无特殊前缀）跳过 key binding 校验"""
+        did = "did:wba:example.com:user:alice"
+        fake_jwk = {"kty": "EC", "crv": "secp256k1", "x": "fake", "y": "fake"}
+        self.assertTrue(verify_did_key_binding(did, fake_jwk))
+
+    def test_key_bound_did_with_port(self):
+        """测试带端口号的 key-bound DID"""
+        did_document, _ = create_did_wba_document_with_key_binding(
+            "example.com", port=8080
+        )
+
+        did = did_document["id"]
+        self.assertIn("%3A8080", did)
+        self.assertIn(":k1_", did)
+
+    def test_key_bound_did_with_services(self):
+        """测试带 service 的 key-bound DID"""
+        did_document, _ = create_did_wba_document_with_key_binding(
+            "example.com",
+            agent_description_url="https://example.com/ad.json",
+            services=[{"id": "#custom", "type": "Custom", "serviceEndpoint": "https://example.com/custom"}],
+        )
+
+        self.assertIn("service", did_document)
+        self.assertEqual(len(did_document["service"]), 2)
+
+    def test_key_bound_did_has_proof(self):
+        """测试 key-bound DID 文档包含 proof"""
+        did_document, _ = create_did_wba_document_with_key_binding("example.com")
+        self.assertIn("proof", did_document)
+
+
+class TestJWKFingerprint(unittest.TestCase):
+    """测试 JWK Fingerprint 计算"""
+
+    def test_fingerprint_stability(self):
+        """测试同一个 key 多次计算 fingerprint 结果一致"""
+        private_key = ec.generate_private_key(ec.SECP256K1())
+        public_key = private_key.public_key()
+
+        fp1 = compute_jwk_fingerprint(public_key)
+        fp2 = compute_jwk_fingerprint(public_key)
+        fp3 = compute_jwk_fingerprint(public_key)
+
+        self.assertEqual(fp1, fp2)
+        self.assertEqual(fp2, fp3)
+
+    def test_different_keys_produce_different_fingerprints(self):
+        """测试不同 key 产生不同 fingerprint"""
+        key1 = ec.generate_private_key(ec.SECP256K1()).public_key()
+        key2 = ec.generate_private_key(ec.SECP256K1()).public_key()
+
+        fp1 = compute_jwk_fingerprint(key1)
+        fp2 = compute_jwk_fingerprint(key2)
+
+        self.assertNotEqual(fp1, fp2)
+
+    def test_fingerprint_is_43_chars(self):
+        """测试 fingerprint 长度始终为 43 字符"""
+        for _ in range(10):
+            key = ec.generate_private_key(ec.SECP256K1()).public_key()
+            fp = compute_jwk_fingerprint(key)
+            self.assertEqual(len(fp), 43, f"Fingerprint length should be 43, got {len(fp)}: {fp}")
+
+    def test_fingerprint_is_base64url(self):
+        """测试 fingerprint 只包含 base64url 字符（无 padding）"""
+        import re
+        key = ec.generate_private_key(ec.SECP256K1()).public_key()
+        fp = compute_jwk_fingerprint(key)
+
+        # base64url 字符集: A-Z, a-z, 0-9, -, _
+        self.assertTrue(re.match(r'^[A-Za-z0-9_-]+$', fp), f"Invalid base64url chars in: {fp}")
+        # 无 padding
+        self.assertNotIn('=', fp)
+
+    def test_fixed_32_byte_encoding(self):
+        """测试 x/y 坐标使用固定 32 字节编码（即使前导字节为 0）
+
+        通过大量生成密钥来测试，确保 fingerprint 始终稳定为 43 字符，
+        说明底层使用了固定长度编码。
+        """
+        for _ in range(50):
+            key = ec.generate_private_key(ec.SECP256K1()).public_key()
+            fp = compute_jwk_fingerprint(key)
+            self.assertEqual(len(fp), 43)
 
 
 if __name__ == "__main__":

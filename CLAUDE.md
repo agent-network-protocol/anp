@@ -15,42 +15,44 @@ uv sync --extra api,dev                    # Install all optional dependencies
 **Testing:**
 ```bash
 uv run pytest                              # Run full test suite
-uv run pytest -k <pattern>                 # Run specific tests
+uv run pytest -k <pattern>                 # Run specific tests by name pattern
 uv run pytest --cov=anp                    # Run tests with coverage
 uv run pytest anp/unittest/                # Run core unit tests only
+uv run pytest anp/unittest/openanp/        # Run OpenANP tests only
+uv run pytest anp/unittest/ap2/            # Run AP2 tests only
+uv run pytest anp/unittest/e2e_v2/         # Run E2E encryption v2 tests only
+uv run pytest anp/unittest/proof/          # Run proof tests only
 uv run pytest anp/anp_crawler/test/        # Run ANP crawler tests only
-uv run pytest anp/fastanp/                 # Run FastANP tests only
-uv run python run_all_tests.py             # Run all unit tests (unified script)
-uv run python run_all_tests.py -v          # Run all tests with verbose output
-uv run python run_all_tests.py --cov=anp   # Run all tests with coverage
 ```
 
-**Build and Distribution:**
+**Build:**
 ```bash
 uv build --wheel                           # Build wheel for distribution
 ```
 
 **Running Examples:**
 ```bash
-# DID WBA authentication examples (offline)
+# OpenANP examples (recommended starting point, requires --extra api)
+uvicorn examples.python.openanp_examples.minimal_server:app --port 8000  # Terminal 1
+uv run python examples/python/openanp_examples/minimal_client.py         # Terminal 2
+
+# DID WBA authentication examples (offline, no extra deps)
 uv run python examples/python/did_wba_examples/create_did_document.py
 uv run python examples/python/did_wba_examples/authenticate_and_verify.py
-
-# Meta-protocol negotiation (requires Azure OpenAI config in .env)
-uv run python examples/python/negotiation_mode/negotiation_bob.py    # Start Bob first
-uv run python examples/python/negotiation_mode/negotiation_alice.py  # Then Alice
 
 # FastANP examples (requires --extra api)
 uv run python examples/python/fastanp_examples/simple_agent.py
 uv run python examples/python/fastanp_examples/hotel_booking_agent.py
-uv run python examples/python/fastanp_examples/test_hotel_booking_client.py
 
 # ANP Crawler examples
 uv run python examples/python/anp_crawler_examples/simple_amap_example.py
-uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 
 # AP2 Payment Protocol example
 uv run python examples/python/ap2_examples/ap2_complete_flow.py
+
+# Meta-protocol negotiation (requires Azure OpenAI config in .env)
+uv run python examples/python/negotiation_mode/negotiation_bob.py    # Start Bob first
+uv run python examples/python/negotiation_mode/negotiation_alice.py  # Then Alice
 
 # DID document generation tool
 uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
@@ -58,101 +60,57 @@ uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description
 
 ## Architecture Overview
 
-AgentConnect implements the Agent Network Protocol (ANP) through a three-layer architecture:
+AgentConnect is an open-source SDK implementing the [Agent Network Protocol (ANP)](https://github.com/agent-network-protocol/AgentNetworkProtocol). It provides two main approaches for building and interacting with ANP agents, plus supporting modules for authentication, encryption, payments, and protocol negotiation.
 
-**Core Modules (`anp/`):**
-- `authentication/`: DID WBA (Web-based Decentralized Identifiers) authentication system
-  - `did_wba.py`: Core DID document creation, resolution, and verification
-  - `did_wba_authenticator.py`: Authentication header generation (`DIDWbaAuthHeader`)
-  - `did_wba_verifier.py`: Signature verification and token validation (`DidWbaVerifier`)
-  - `verification_methods.py`: Cryptographic verification helpers
+### Two Primary Agent SDKs
 
-- `e2e_encryption/`: End-to-end encryption utilities (forward compatibility, not fully activated)
-  - WebSocket-based encrypted messaging infrastructure
-  - ECDHE key exchange mechanisms
+**`openanp/` — OpenANP (Recommended for building agents)**
+Class-based decorator SDK. Use `@anp_agent(config)` on a class and `@interface` on methods to auto-generate ad.json, OpenRPC interface docs, and JSON-RPC endpoints. Supports `Context` injection for DID/session access, `@information` decorator for data endpoints, and `RemoteAgent` for calling remote agents as if they were local objects.
 
-- `meta_protocol/`: LLM-powered protocol negotiation
-  - `meta_protocol.py`: Core negotiation logic (`MetaProtocol`, `ProtocolType`)
-  - `code_generator/`: Dynamic protocol code generation for requester/provider patterns
-  - `protocol_negotiator.py`: Manages protocol discovery and agreement
+```python
+from anp.openanp import anp_agent, interface, AgentConfig, RemoteAgent
 
-- `anp_crawler/`: Agent Network Protocol discovery and interoperability tools
-  - `anp_crawler.py`: Main crawler for ANP resources and agent descriptions
-  - `anp_parser.py`: Parses agent description documents and OpenRPC specifications
-  - `anp_interface.py`: Interface extraction and conversion utilities
-  - `anp_client.py`: HTTP client for ANP resource fetching
+@anp_agent(AgentConfig(name="Hotel", did="did:wba:example.com:hotel", prefix="/hotel"))
+class HotelAgent:
+    @interface
+    async def search(self, query: str) -> dict:
+        return {"results": [...]}
 
-- `fastanp/`: Fast development framework for ANP agents
-  - `fastanp.py`: Main FastANP application class with decorator-based interface registration
-  - `interface_manager.py`: Function registration and OpenRPC generation
-  - `information.py`: Dynamic information management
-  - `ad_generator.py`: Agent description document generation
-  - `models.py`: Pydantic models for ANP components
-  - `utils.py`: Utility functions for URL normalization and type conversion
-  - `middleware.py`: Authentication middleware for FastAPI integration
+# Server: app.include_router(HotelAgent.router())
+# Client: agent = await RemoteAgent.discover(url, auth); await agent.search(query="Tokyo")
+```
 
-- `ap2/`: Agent Payment Protocol v2 implementation
-  - `models.py`: Pydantic models for CartMandate and PaymentMandate
-  - `cart_mandate.py`: Shopping cart authorization and verification
-  - `payment_mandate.py`: Payment authorization and verification
-  - ES256K (ECDSA secp256k1) signature support for mandate integrity
+**`anp_crawler/` — ANP Crawler (For document fetching and LLM tool integration)**
+Crawler-style SDK for discovering agents, fetching ANP documents, and converting interfaces to OpenAI Tools format. Does not require LLM — deterministic data collection.
 
-- `utils/`: Shared cryptographic and utility functions
-  - `crypto_tool.py`: Low-level cryptographic primitives
-  - `llm/`: LLM integration abstractions
+```python
+from anp.anp_crawler import ANPCrawler
+crawler = ANPCrawler(did_document_path="...", private_key_path="...")
+content, tools = await crawler.fetch_text("https://example.com/ad.json")
+result = await crawler.execute_tool_call("search_poi", {"query": "Beijing"})
+```
 
-**Project Structure:**
-- `examples/`: Runnable demonstrations of core functionalities
-- `docs/`: Protocol documentation and key material for examples
-- `tools/`: Command-line utilities (DID generation, etc.)
-- `java/`: Cross-language integration support
-- `dist/`: Built distribution artifacts
+### Supporting Modules
 
-## Key Concepts
+- **`authentication/`**: DID WBA (Web-based Decentralized Identifiers) authentication — DID document creation (`create_did_wba_document`), auth header generation (`DIDWbaAuthHeader`), RS256 JWT signature verification (`DidWbaVerifier`)
+- **`e2e_encryption_v2/`**: Transport-agnostic E2E encryption v2 using HTTP RESTful dict-based messages, ECDHE key exchange, AES-GCM encryption. Session state machine: IDLE → HANDSHAKE_INITIATED → HANDSHAKE_COMPLETING → ACTIVE. Uses `did:wba:` format and snake_case fields (unlike the older `e2e_encryption/` which is WebSocket-coupled with camelCase)
+- **`e2e_encryption/`**: Legacy WebSocket-based E2E encryption (forward compatibility, uses `did:anp:` format)
+- **`proof/`**: W3C Data Integrity Proof generation and verification — supports EcdsaSecp256k1Signature2019 and Ed25519Signature2020
+- **`ap2/`**: Agent Payment Protocol v2 — CartMandate (merchant-signed) and PaymentMandate (user-signed) with ES256K (secp256k1) signatures. Two-phase flow: merchant creates CartMandate → user creates PaymentMandate referencing cart hash → merchant verifies. Spec: `docs/ap2/ap2-flow.md`
+- **`meta_protocol/`**: LLM-powered dynamic protocol negotiation — agents negotiate communication protocols using LLM-generated code for requester/provider roles
+- **`fastanp/`**: Older FastAPI plugin framework (predecessor to OpenANP). Uses `FastANP` class with `@anp.interface(path)` decorator. Still functional but OpenANP is now the recommended approach
+- **`utils/`**: Shared cryptographic primitives (`crypto_tool.py`) and LLM integration abstractions
 
-**DID WBA Authentication Flow:**
-1. Create DID document with `create_did_wba_document(hostname, path_segments)`
-2. Generate authentication headers with `DIDWbaAuthHeader`
-3. Verify signatures using `DidWbaVerifier` with RS256 JWT validation
+### Key Architectural Patterns
 
-**Meta-Protocol Negotiation:**
-- Agents dynamically negotiate communication protocols using LLM-generated code
-- Supports both requester and provider role generation
-- Enables protocol discovery and automatic adaptation
-
-**ANP Crawler Usage:**
-- Traverse agent networks to discover capabilities and endpoints
-- Parse OpenRPC specifications embedded in agent descriptions
-- Extract and convert protocol interfaces for interoperability
-
-**FastANP Framework:**
-- **Plugin Architecture**: FastAPI is the main framework, FastANP is a helper plugin (not a standalone framework)
-- **Decorator-based registration**: Use `@anp.interface(path)` to register functions as JSON-RPC methods
-- **Automatic OpenRPC generation**: Python functions + type hints → OpenRPC documents
-- **Interface access**: `anp.interfaces[function].link_summary` (URL reference) or `.content` (embedded)
-- **Context injection**: `ctx: Context` parameter provides session management, DID, and request access
-- **Session management**: Based on DID (not DID + token), shared across requests from same agent
-- **User-controlled routing**: User explicitly defines all routes including `/ad.json`
-- **Built-in authentication middleware**: DID WBA verification with wildcard path exemptions (`*/ad.json`, `/info/*`)
-
-**AP2 Payment Protocol:**
-- Secure payment authorization protocol built on DID WBA authentication
-- **CartMandate**: Merchant-signed shopping cart authorization with item details, pricing, and expiry
-- **PaymentMandate**: User-signed payment authorization referencing cart hash
-- **ES256K Signatures**: Uses ECDSA secp256k1 for cryptographic integrity
-- **Hash Verification**: Cart and payment data integrity through canonical JSON hashing
-- **Two-phase Flow**:
-  1. Merchant creates CartMandate with signature
-  2. User verifies CartMandate, creates and signs PaymentMandate
-  3. Merchant verifies PaymentMandate and completes transaction
-- Full specification: `docs/ap2/ap2-flow.md`
+- **DID WBA Auth Flow**: Create DID document → generate JWT auth headers → verify RS256 signatures
+- **OpenANP generates three endpoints per agent**: `GET <prefix>/ad.json` (agent description), `GET <prefix>/interface.json` (OpenRPC), `POST <prefix>/rpc` (JSON-RPC 2.0)
+- **FastANP vs OpenANP**: FastANP is instance-based plugin (`FastANP(name, did)`), OpenANP is class decorator-based (`@anp_agent`). Both generate OpenRPC from Python type hints
+- **Session management**: Based on DID identity (not DID + token), shared across requests from same agent
 
 ## Configuration
 
-**Environment Variables (`.env`):**
-
-Copy `.env.example` to `.env` and configure the following (required only for meta-protocol negotiation):
-
+Copy `.env.example` to `.env` for meta-protocol negotiation features:
 ```bash
 AZURE_OPENAI_API_KEY=<your-key>
 AZURE_OPENAI_ENDPOINT=<your-endpoint>
@@ -161,77 +119,26 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_MODEL_NAME=gpt-4o
 ```
 
-**Optional Dependencies:**
-- `api`: FastAPI + OpenAI integration (required for FastANP framework and meta-protocol negotiation)
-- `dev`: Development tools (pytest, pytest-asyncio)
+Optional dependency groups: `api` (FastAPI + OpenAI, needed for OpenANP/FastANP), `dev` (pytest + pytest-asyncio).
 
-**Security Note:** Never commit secrets to the repository. Use `.env` files loaded via `python-dotenv`.
+## Testing
 
-## Testing Guidelines
+Tests are distributed across:
+- `anp/unittest/` — Core unit tests organized by module (openanp, ap2, authentication, fastanp, e2e_v2, proof, anp_crawler)
+- `anp/anp_crawler/test/` — ANP crawler integration tests
+- `anp/fastanp/` — FastANP domain normalization tests
 
-Tests are distributed across multiple locations:
-- `anp/unittest/`: Core unit tests for ANP components (context, comprehensive FastANP tests)
-- `anp/anp_crawler/test/`: Tests for ANP crawler functionality
-- `anp/fastanp/`: Tests for FastANP framework (domain normalization tests)
-
-**Test Naming Convention:**
-- Test files: `test_<feature>.py`
-- Test functions: `test_<behavior>()`
-
-**Focus Areas for Testing:**
-- DID WBA authentication handshakes and signature verification
-- End-to-end encryption boundaries (forward compatibility)
-- Protocol negotiation flows with LLM code generation
-- FastANP decorator behavior and OpenRPC generation
-- Context injection and session management
-- Error conditions and edge cases
-
-**Note:** Some tests may require `.env` configuration for LLM-based features (meta-protocol negotiation).
+Some tests require `.env` configuration for LLM-based features.
 
 ## Code Style
 
-Follow Google Python Style Guide:
-- **Indentation**: 4 spaces
-- **Type hints**: Required for function signatures
-- **Docstrings**: Google-style format with Args/Returns/Raises sections
-- **Naming conventions**:
-  - `snake_case` for functions and modules
-  - `UpperCamelCase` for classes
-  - `UPPER_SNAKE_CASE` for constants
-- **Testability**: Prefer dependency injection and isolate network side effects
+Google Python Style Guide: 4-space indentation, type hints on function signatures, Google-style docstrings, `snake_case` functions/modules, `UpperCamelCase` classes, `UPPER_SNAKE_CASE` constants.
 
 ## Key Development Notes
 
-**FastANP Development:**
-- Function names registered with `@anp.interface()` must be globally unique (FastANP tracks by function reference)
-- Always use `uv run` prefix when running examples to ensure correct environment
-- The `/rpc` endpoint is automatically registered for JSON-RPC 2.0 requests
-- OpenRPC documents are automatically served at the paths specified in `@anp.interface(path)`
-- Context parameter (`ctx: Context`) is automatically injected and excluded from OpenRPC schemas
-- Request parameter (`req: Request`) is automatically injected similarly
-
-**DID WBA Authentication:**
-- DID documents are created with `create_did_wba_document(hostname, path_segments)`
-- Authentication uses RS256 JWT tokens
-- Verifier requires both private and public keys for token generation and verification
-- Example keys are available in `docs/did_public/` for testing purposes only
-
-**ANP Crawler Usage:**
-- ANPCrawler requires DID document and private key paths for authenticated requests
-- Discovered interfaces are automatically converted to callable tools
-- Use `list_available_tools()` to see discovered methods
-- Use `execute_tool_call(tool_name, arguments)` to invoke remote methods
-
-**AP2 Payment Protocol Development:**
-- CartMandate and PaymentMandate use ES256K (ECDSA secp256k1) for signing
-- Cart hash is computed using canonical JSON serialization before signing
-- PaymentMandate must reference cart hash for integrity verification
-- Merchant verifies both DID WBA authentication and mandate signatures
-- Example keys and flow demonstration in `examples/python/ap2_examples/`
-- Client-server mode: merchant agent runs on local IP, shopper connects remotely
-
-**Project-Specific Paths:**
-- Test DID documents: `docs/did_public/public-did-doc.json`
-- Test private keys: `docs/did_public/public-private-key.pem`
-- Examples are structured by feature: `examples/python/{did_wba_examples,fastanp_examples,anp_crawler_examples,ap2_examples,negotiation_mode}`
-- AP2 protocol specification: `docs/ap2/ap2-flow.md`
+- Always use `uv run` prefix when running scripts to ensure correct environment
+- OpenANP `@interface` method names must be unique within a class (tracked by function reference)
+- OpenANP `Context` parameter (`ctx: Context`) is auto-injected and excluded from OpenRPC schemas; detected by parameter name `ctx`/`context` or type annotation
+- OpenANP `router()` works as both class method (tries no-arg instantiation) and instance method (recommended for constructors with arguments)
+- Test DID documents and keys for testing: `docs/did_public/public-did-doc.json`, `docs/did_public/public-private-key.pem`
+- Examples organized by feature: `examples/python/{openanp_examples,did_wba_examples,fastanp_examples,anp_crawler_examples,ap2_examples,negotiation_mode}`

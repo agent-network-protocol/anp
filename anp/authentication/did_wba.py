@@ -46,6 +46,33 @@ def _encode_base64url(data: bytes) -> str:
     """Encode bytes data to base64url format"""
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
 
+def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
+    """
+    Compute JWK Thumbprint (RFC 7638) for a secp256k1 public key.
+
+    Canonical input is the minimal JWK with fixed field order (crv, kty, x, y),
+    using SHA-256 + base64url without padding, producing a 43-character output.
+
+    IMPORTANT: x/y coordinates are encoded as fixed 32 bytes per RFC 7518 Section 6.2.1.2,
+    not variable-length based on bit_length(). This ensures the same key always produces
+    the same fingerprint.
+
+    Args:
+        public_key: secp256k1 public key object
+
+    Returns:
+        str: 43-character base64url fingerprint
+    """
+    numbers = public_key.public_numbers()
+    # Fixed 32-byte encoding per RFC 7518 Section 6.2.1.2 (SEC1 Section 2.3.5)
+    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
+    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
+    # Canonical JSON with fixed field order (alphabetical, matching RFC 7638)
+    canonical = f'{{"crv":"secp256k1","kty":"EC","x":"{x}","y":"{y}"}}'
+    digest = hashlib.sha256(canonical.encode('ascii')).digest()
+    return _encode_base64url(digest)
+
+
 def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
     """Convert secp256k1 public key to JWK format"""
     numbers = public_key.public_numbers()
@@ -200,6 +227,198 @@ def create_did_wba_document(
 
     logging.info(f"Successfully created DID document with ID: {did}")
     return did_document, keys
+
+
+def create_did_wba_document_with_key_binding(
+    hostname: str,
+    port: Optional[int] = None,
+    path_prefix: Optional[List[str]] = None,
+    agent_description_url: Optional[str] = None,
+    services: Optional[List[Dict[str, Any]]] = None,
+    proof_purpose: str = "assertionMethod",
+    verification_method: Optional[str] = None,
+    domain: Optional[str] = None,
+    challenge: Optional[str] = None,
+    created: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
+    """
+    Generate a key-bound DID document where the DID identifier contains a
+    cryptographic fingerprint of the public key (JWK Thumbprint per RFC 7638).
+
+    The DID format is: did:wba:{domain}:{path_prefix}:k1_{fingerprint}
+    where k1_ is a version prefix for secp256k1 + SHA-256, and fingerprint
+    is a 43-character base64url-encoded JWK Thumbprint.
+
+    This binding prevents the hosting provider from replacing the public key
+    in the DID document, since any such change would invalidate the fingerprint
+    embedded in the DID itself.
+
+    Args:
+        hostname: Hostname
+        port: Optional port number
+        path_prefix: Path segments before the key-bound ID, e.g. ['user'] or ['agent'].
+            Defaults to ['user'] if None.
+        agent_description_url: Optional URL for agent description
+        services: Optional list of custom service entries. Each entry is a dict
+            with at least "id", "type", "serviceEndpoint" keys. If "id" starts
+            with "#", it will be automatically prefixed with the DID.
+        proof_purpose: Proof purpose string, default "assertionMethod"
+        verification_method: Verification method ID for proof. If None,
+            uses the first method from the document.
+        domain: Optional domain for proof
+        challenge: Optional challenge for proof
+        created: Optional ISO 8601 timestamp for proof
+
+    Returns:
+        Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
+            - First dict is the DID document
+            - Second dict is the keys dictionary where key is DID fragment (e.g. "key-1")
+              and value is a tuple of (private_key_pem_bytes, public_key_pem_bytes)
+
+    Raises:
+        ValueError: If hostname is empty or is an IP address
+    """
+    if not hostname:
+        raise ValueError("Hostname cannot be empty")
+
+    if _is_ip_address(hostname):
+        raise ValueError("Hostname cannot be an IP address")
+
+    if path_prefix is None:
+        path_prefix = ["user"]
+
+    logging.info(f"Creating key-bound DID WBA document for hostname: {hostname}")
+
+    # Generate secp256k1 key pair
+    secp256k1_private_key = ec.generate_private_key(ec.SECP256K1())
+    secp256k1_public_key = secp256k1_private_key.public_key()
+
+    # Compute JWK Thumbprint fingerprint
+    fp = compute_jwk_fingerprint(secp256k1_public_key)
+    unique_id = f"k1_{fp}"
+
+    # Build path segments: path_prefix + key-bound ID
+    path_segments = path_prefix + [unique_id]
+
+    # Build base DID
+    did_base = f"did:wba:{hostname}"
+    if port is not None:
+        encoded_port = urllib.parse.quote(f":{port}")
+        did_base = f"{did_base}{encoded_port}"
+
+    did_path = ":".join(path_segments)
+    did = f"{did_base}:{did_path}"
+
+    # Build verification method
+    vm_entry = {
+        "id": f"{did}#key-1",
+        "type": "EcdsaSecp256k1VerificationKey2019",
+        "controller": did,
+        "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
+    }
+
+    # Build DID document
+    did_document = {
+        "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/suites/jws-2020/v1",
+            "https://w3id.org/security/suites/secp256k1-2019/v1"
+        ],
+        "id": did,
+        "verificationMethod": [vm_entry],
+        "authentication": [vm_entry["id"]]
+    }
+
+    # Merge all service entries
+    all_services = []
+    if agent_description_url is not None:
+        all_services.append({
+            "id": f"{did}#ad",
+            "type": "AgentDescription",
+            "serviceEndpoint": agent_description_url,
+        })
+    if services:
+        for svc in services:
+            svc_id = svc.get("id", "")
+            if svc_id.startswith("#"):
+                svc = {**svc, "id": f"{did}{svc_id}"}
+            all_services.append(svc)
+    if all_services:
+        did_document["service"] = all_services
+
+    # Self-sign the DID document with W3C Data Integrity Proof
+    proof_vm = verification_method
+    if proof_vm is None:
+        proof_vm = did_document["verificationMethod"][0]["id"]
+
+    did_document = generate_w3c_proof(
+        document=did_document,
+        private_key=secp256k1_private_key,
+        verification_method=proof_vm,
+        proof_purpose=proof_purpose,
+        domain=domain,
+        challenge=challenge,
+        created=created,
+    )
+
+    # Build keys dictionary with both private and public keys in PEM format
+    keys = {
+        "key-1": (
+            secp256k1_private_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption()
+            ),
+            secp256k1_public_key.public_bytes(
+                encoding=Encoding.PEM,
+                format=PublicFormat.SubjectPublicKeyInfo
+            )
+        )
+    }
+
+    logging.info(f"Successfully created key-bound DID document with ID: {did}")
+    return did_document, keys
+
+
+def verify_did_key_binding(did: str, public_key_jwk: Dict) -> bool:
+    """
+    Verify that the fingerprint in a key-bound DID matches the public key.
+
+    For DIDs with a k1_ prefix in the last segment, this function recomputes
+    the JWK Thumbprint from the provided public key JWK and compares it with
+    the fingerprint embedded in the DID.
+
+    For DIDs without a recognized key-binding prefix (e.g. u1_ or plain IDs),
+    this function returns True (no binding to verify).
+
+    Args:
+        did: DID string, e.g. did:wba:example.com:user:k1_{fingerprint}
+        public_key_jwk: The publicKeyJwk from the DID document's verification method
+
+    Returns:
+        bool: True if fingerprint matches or if DID has no key-binding prefix
+    """
+    # Extract the last segment from the DID
+    parts = did.split(":")
+    if len(parts) < 4:
+        return True  # No path segments, nothing to verify
+
+    last_segment = parts[-1]
+
+    # Only verify k1_ prefixed segments
+    if not last_segment.startswith("k1_"):
+        return True
+
+    fp_from_did = last_segment[3:]  # Remove "k1_" prefix
+
+    # Reconstruct public key from JWK and compute fingerprint
+    try:
+        public_key = _extract_ec_public_key_from_jwk(public_key_jwk)
+        fp_computed = compute_jwk_fingerprint(public_key)
+        return fp_computed == fp_from_did
+    except (ValueError, KeyError):
+        return False
+
 
 async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict:
     """
