@@ -153,6 +153,13 @@ Demo completed successfully!
 - **Invalid key format**: Ensure private keys remain PEM-encoded; regenerate with the create script if necessary.
 - **DID mismatch**: Re-run `validate_did_document.py` to highlight structural issues.
 
+## Integration Guide
+
+For a comprehensive guide on integrating DID WBA authentication into your own HTTP server (including authentication principles, full API reference, and copy-paste code snippets), see:
+
+- **[DID WBA Auth Integration Guide (English)](DID_WBA_AUTH_GUIDE.en.md)**
+- **[DID WBA 身份认证集成指南 (中文)](DID_WBA_AUTH_GUIDE.md)**
+
 ## Next Steps
 - Swap the sample credentials for your own DID material.
 - Integrate `DIDWbaAuthHeader` into HTTP clients to call remote services that expect DID WBA headers.

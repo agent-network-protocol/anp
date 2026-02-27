@@ -281,6 +281,13 @@ verifier = DidWbaVerifier(config)
 result = await verifier.verify_auth_header(authorization, domain)
 ```
 
+## 集成指南
+
+如需将 DID WBA 认证集成到你自己的 HTTP 服务中（含认证原理、完整 API 参考和可直接复制的代码片段），请参阅：
+
+- **[DID WBA 身份认证集成指南 (中文)](DID_WBA_AUTH_GUIDE.md)**
+- **[DID WBA Auth Integration Guide (English)](DID_WBA_AUTH_GUIDE.en.md)**
+
 ## 相关文档
 
 - [DID-WBA规范](https://github.com/agent-network-protocol/AgentNetworkProtocol)
