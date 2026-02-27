@@ -539,7 +539,7 @@ def generate_auth_header(
     did_document: Dict,
     service_domain: str,
     sign_callback: Callable[[bytes, str], bytes],
-    version: str = "1.0"
+    version: str = "1.1"
 ) -> str:
     """
     Generate the Authorization header for DID authentication.
@@ -550,7 +550,7 @@ def generate_auth_header(
         sign_callback: Signature callback function that takes the content to sign and the verification method fragment as parameters.
             callback(content_to_sign: bytes, verification_method_fragment: str) -> bytes.
             If ECDSA, return signature in DER format.
-        version: Protocol version (default "1.0"). Versions >= 1.1 use "aud" field instead of "service" in signature.
+        version: Protocol version (default "1.1"). Versions >= 1.1 use "aud" field instead of "service" in signature.
 
     Returns:
         str: Value of the Authorization header. Do not include "Authorization:" prefix.
@@ -883,7 +883,7 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
             - timestamp: Timestamp string
             - verification_method: Verification method fragment
             - signature: Signature value
-            - version: Version string (optional, defaults to "1.0" if not present)
+            - version: Version string (optional, defaults to "1.1" if not present)
 
     Raises:
         ValueError: If any required field is missing in the auth header
@@ -898,7 +898,7 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
         'signature': r'(?i)signature="([^"]+)"'
     }
 
-    # Optional version field (defaults to "1.0" for backward compatibility)
+    # Optional version field (defaults to "1.1")
     version_pattern = r'(?i)v="([^"]+)"'
 
     # Verify the header starts with DIDWba
@@ -912,9 +912,9 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
             raise ValueError(f"Missing required field in auth header: {field}")
         parts[field] = match.group(1)
 
-    # Extract version if present, default to "1.0"
+    # Extract version if present, default to "1.1"
     version_match = re.search(version_pattern, auth_header)
-    version = version_match.group(1) if version_match else "1.0"
+    version = version_match.group(1) if version_match else "1.1"
 
     logging.debug(f"Extracted auth header parts: {parts}, version: {version}")
     return (parts['did'], parts['nonce'], parts['timestamp'],
@@ -997,7 +997,7 @@ def generate_auth_json(
     did_document: Dict,
     service_domain: str,
     sign_callback: Callable[[bytes, str], bytes],
-    version: str = "1.0"
+    version: str = "1.1"
 ) -> str:
     """
     Generate JSON format string for DID authentication.
@@ -1008,7 +1008,7 @@ def generate_auth_json(
         sign_callback: Signature callback function that takes content to sign and verification method fragment
             callback(content_to_sign: bytes, verification_method_fragment: str) -> bytes
             For ECDSA, return signature in DER format
-        version: Protocol version (default "1.0"). Versions >= 1.1 use "aud" field instead of "service" in signature.
+        version: Protocol version (default "1.1"). Versions >= 1.1 use "aud" field instead of "service" in signature.
 
     Returns:
         str: Authentication information in JSON format
@@ -1110,7 +1110,7 @@ def verify_auth_json_signature(
         timestamp_str = auth_data.get('timestamp')
         verification_method = auth_data.get('verification_method')
         signature = auth_data.get('signature')
-        version = auth_data.get('v', '1.0')  # Default to "1.0" for backward compatibility
+        version = auth_data.get('v', '1.1')  # Default to "1.1"
 
         # Verify all required fields exist
         if not all([client_did, nonce, timestamp_str, verification_method, signature]):

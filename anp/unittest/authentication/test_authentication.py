@@ -124,14 +124,14 @@ class TestAuthenticationHeaderVersion(unittest.TestCase):
         )
         self.assertTrue(is_valid, f"版本 1.2 验证失败: {message}")
 
-    def test_default_version_is_1_0(self):
-        """测试默认版本是 1.0"""
+    def test_default_version_is_1_1(self):
+        """测试默认版本是 1.1"""
         auth_header = generate_auth_header(
             self.did_document, self.service_domain, self._sign_callback
         )
 
         # 验证默认版本
-        self.assertIn('v="1.0"', auth_header)
+        self.assertIn('v="1.1"', auth_header)
 
         # 验证签名
         is_valid, message = verify_auth_header_signature(
@@ -141,17 +141,17 @@ class TestAuthenticationHeaderVersion(unittest.TestCase):
 
     def test_backward_compatibility_no_version(self):
         """测试向后兼容性:没有版本号的旧格式"""
-        # 生成版本 1.0 的认证头
+        # 生成版本 1.1 的认证头(使用 aud 字段)
         auth_header = generate_auth_header(
-            self.did_document, self.service_domain, self._sign_callback, version="1.0"
+            self.did_document, self.service_domain, self._sign_callback, version="1.1"
         )
 
-        # 移除版本号以模拟旧格式
-        auth_header_old = auth_header.replace('v="1.0", ', "")
+        # 移除版本号以模拟没有版本号的格式
+        auth_header_no_version = auth_header.replace('v="1.1", ', "")
 
-        # 验证签名(应该默认使用 service 字段)
+        # 验证签名(应该默认使用 aud 字段，因为默认版本已改为 1.1)
         is_valid, message = verify_auth_header_signature(
-            auth_header_old, self.did_document, self.service_domain
+            auth_header_no_version, self.did_document, self.service_domain
         )
         self.assertTrue(is_valid, f"向后兼容性验证失败: {message}")
 
@@ -386,7 +386,7 @@ class TestAuthHeaderParsing(unittest.TestCase):
             auth_header
         )
 
-        self.assertEqual(version, "1.0")  # 默认应该是 1.0
+        self.assertEqual(version, "1.1")  # 默认应该是 1.1
 
 
 class TestKeyBoundDIDCreation(unittest.TestCase):
