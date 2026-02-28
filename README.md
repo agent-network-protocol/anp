@@ -16,6 +16,12 @@ The goal of Agent Network Protocol (ANP) is to become the **HTTP of the Intellig
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+## 🔐 Add DID Authentication to Your Agent
+
+Want to add decentralized identity authentication to your agent? Check out the [DID WBA Authentication Integration Guide](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.en.md) to quickly add DID WBA authentication to any Python HTTP service.
+
+---
+
 ## 🚀 Quick Start - Build an ANP Agent in 30 Seconds
 
 OpenANP is the simplest way to build ANP agents. Here's a complete server in just a few lines:
