@@ -67,6 +67,13 @@ def main() -> None:
         print(f"Authorization: {headers['Authorization'][:80]}...")
 
         response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
+
+        if response.status_code == 401:
+            print("Received 401, clearing expired token and re-authenticating...")
+            authenticator.clear_token(SERVER_URL)
+            headers = authenticator.get_auth_header(SERVER_URL, force_new=True)
+            response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
+
         print(f"Status: {response.status_code}")
         print(f"Response: {response.json()}")
 
