@@ -106,10 +106,12 @@ def generate_signature_for_json(private_key: ec.EllipticCurvePrivateKey, did_doc
     
     # Separate r and s values
     r, s = decode_dss_signature(signature)
-    
-    # Convert r and s to bytes
-    r_bytes = r.to_bytes((r.bit_length() + 7) // 8, byteorder='big')
-    s_bytes = s.to_bytes((s.bit_length() + 7) // 8, byteorder='big')
+
+    # Convert r and s to fixed-length bytes (IEEE P1363 / RFC 7518)
+    # Each component must be zero-padded to the byte length of the curve order
+    key_size = (private_key.key_size + 7) // 8  # secp256r1/secp256k1 -> 32
+    r_bytes = r.to_bytes(key_size, byteorder='big')
+    s_bytes = s.to_bytes(key_size, byteorder='big')
     
     # Base64 URL-safe encode
     proof_value = base64.urlsafe_b64encode(r_bytes + s_bytes).rstrip(b'=').decode('utf-8')
@@ -121,12 +123,19 @@ def verify_signature_for_json(public_key: ec.EllipticCurvePublicKey, did_documen
     try:
         # Decode signature from Base64Url encoding to byte string
         signature_bytes = base64.urlsafe_b64decode(signature + '==')
-        
-        # Split r and s values
-        r_length = len(signature_bytes) // 2
-        r_bytes = signature_bytes[:r_length]
-        s_bytes = signature_bytes[r_length:]
-        
+
+        # Split r and s values (IEEE P1363: each component is key_size bytes)
+        key_size = (public_key.key_size + 7) // 8  # secp256r1/secp256k1 -> 32
+        expected_len = key_size * 2
+        if len(signature_bytes) == expected_len:
+            r_bytes = signature_bytes[:key_size]
+            s_bytes = signature_bytes[key_size:]
+        else:
+            # Fallback: legacy variable-length encoding, split in half
+            r_length = len(signature_bytes) // 2
+            r_bytes = signature_bytes[:r_length]
+            s_bytes = signature_bytes[r_length:]
+
         r = int.from_bytes(r_bytes, byteorder='big')
         s = int.from_bytes(s_bytes, byteorder='big')
         

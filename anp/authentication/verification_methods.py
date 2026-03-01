@@ -54,12 +54,19 @@ class EcdsaSecp256k1VerificationKey2019(VerificationMethod):
             # Decode base64url signature
             signature_bytes = base64.urlsafe_b64decode(signature + '=' * (-len(signature) % 4))
             
-            # Convert R|S format to DER format
-            r_length = len(signature_bytes) // 2
-            r = int.from_bytes(signature_bytes[:r_length], 'big')
-            s = int.from_bytes(signature_bytes[r_length:], 'big')
+            # Convert R|S format (IEEE P1363) to DER format
+            key_size = (self.public_key.key_size + 7) // 8
+            expected_len = key_size * 2
+            if len(signature_bytes) == expected_len:
+                r = int.from_bytes(signature_bytes[:key_size], 'big')
+                s = int.from_bytes(signature_bytes[key_size:], 'big')
+            else:
+                # Fallback: legacy variable-length encoding
+                r_length = len(signature_bytes) // 2
+                r = int.from_bytes(signature_bytes[:r_length], 'big')
+                s = int.from_bytes(signature_bytes[r_length:], 'big')
             signature_der = utils.encode_dss_signature(r, s)
-            
+
             self.public_key.verify(
                 signature_der,
                 content,
@@ -120,9 +127,10 @@ class EcdsaSecp256k1VerificationKey2019(VerificationMethod):
             # Try to parse DER format
             try:
                 r, s = utils.decode_dss_signature(signature_bytes)
-                # If successful parsing as DER format, convert to R|S format
-                r_bytes = r.to_bytes((r.bit_length() + 7) // 8, byteorder='big')
-                s_bytes = s.to_bytes((s.bit_length() + 7) // 8, byteorder='big')
+                # Fixed-length encoding (IEEE P1363): pad to curve order size
+                key_size = 32  # secp256k1 order is 256 bits = 32 bytes
+                r_bytes = r.to_bytes(key_size, byteorder='big')
+                s_bytes = s.to_bytes(key_size, byteorder='big')
                 signature = r_bytes + s_bytes
             except Exception:
                 # If not DER format, assume it's already in R|S format
@@ -147,9 +155,17 @@ class EcdsaSecp256r1VerificationKey2019(VerificationMethod):
         try:
             signature_bytes = base64.urlsafe_b64decode(signature + '=' * (-len(signature) % 4))
 
-            r_length = len(signature_bytes) // 2
-            r = int.from_bytes(signature_bytes[:r_length], 'big')
-            s = int.from_bytes(signature_bytes[r_length:], 'big')
+            # Convert R|S format (IEEE P1363) to DER format
+            key_size = (self.public_key.key_size + 7) // 8
+            expected_len = key_size * 2
+            if len(signature_bytes) == expected_len:
+                r = int.from_bytes(signature_bytes[:key_size], 'big')
+                s = int.from_bytes(signature_bytes[key_size:], 'big')
+            else:
+                # Fallback: legacy variable-length encoding
+                r_length = len(signature_bytes) // 2
+                r = int.from_bytes(signature_bytes[:r_length], 'big')
+                s = int.from_bytes(signature_bytes[r_length:], 'big')
             signature_der = utils.encode_dss_signature(r, s)
 
             self.public_key.verify(
@@ -199,8 +215,10 @@ class EcdsaSecp256r1VerificationKey2019(VerificationMethod):
         try:
             try:
                 r, s = utils.decode_dss_signature(signature_bytes)
-                r_bytes = r.to_bytes((r.bit_length() + 7) // 8, byteorder='big')
-                s_bytes = s.to_bytes((s.bit_length() + 7) // 8, byteorder='big')
+                # Fixed-length encoding (IEEE P1363): pad to curve order size
+                key_size = 32  # P-256 order is 256 bits = 32 bytes
+                r_bytes = r.to_bytes(key_size, byteorder='big')
+                s_bytes = s.to_bytes(key_size, byteorder='big')
                 signature = r_bytes + s_bytes
             except Exception:
                 if len(signature_bytes) % 2 != 0:

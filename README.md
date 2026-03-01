@@ -195,6 +195,7 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 | **FastANP** | FastAPI plugin framework | [README](anp/fastanp/README.md) |
 | **AP2** | Agent Payment Protocol v2 | [README](anp/ap2/README.md) |
 | **Authentication** | DID-WBA identity authentication | [Examples](examples/python/did_wba_examples/) |
+| **E2EE HPKE** | HPKE-based end-to-end encryption (private + group chat) | [Examples](examples/python/e2e_encryption_hpke_examples/) |
 
 ---
 
@@ -257,6 +258,30 @@ Location: `examples/python/ap2_examples/`
 ```bash
 # Complete AP2 flow (merchant + shopper)
 uv run python examples/python/ap2_examples/ap2_complete_flow.py
+```
+
+### E2EE HPKE Encryption Examples
+Location: `examples/python/e2e_encryption_hpke_examples/`
+
+| File | Description | Complexity |
+|------|-------------|------------|
+| `basic_private_chat.py` | One-step init + bidirectional encrypted messaging + rekey | ⭐ |
+| `group_chat_example.py` | Three-party group chat with Sender Key + epoch advance | ⭐⭐⭐ |
+| `key_manager_example.py` | Multi-session lifecycle management with HpkeKeyManager | ⭐⭐⭐ |
+| `error_handling_example.py` | Error scenarios (expired sessions, wrong keys, replay) | ⭐⭐⭐ |
+
+```bash
+# Basic private chat demo
+uv run python examples/python/e2e_encryption_hpke_examples/basic_private_chat.py
+
+# Group chat with Sender Key
+uv run python examples/python/e2e_encryption_hpke_examples/group_chat_example.py
+
+# Key manager and session lifecycle
+uv run python examples/python/e2e_encryption_hpke_examples/key_manager_example.py
+
+# Error handling and edge cases
+uv run python examples/python/e2e_encryption_hpke_examples/error_handling_example.py
 ```
 
 ---

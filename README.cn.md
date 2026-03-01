@@ -199,6 +199,7 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 | **FastANP** | FastAPI插件框架 | [README](anp/fastanp/README.cn.md) |
 | **AP2** | 智能体支付协议v2 | [README](anp/ap2/README.cn.md) |
 | **Authentication** | DID-WBA身份认证 | [示例](examples/python/did_wba_examples/) |
+| **E2EE HPKE** | 基于HPKE的端到端加密（私聊+群聊） | [示例](examples/python/e2e_encryption_hpke_examples/) |
 
 ---
 
@@ -261,6 +262,30 @@ uv run python examples/python/fastanp_examples/hotel_booking_agent.py
 ```bash
 # 完整AP2流程（商户+购物者）
 uv run python examples/python/ap2_examples/ap2_complete_flow.py
+```
+
+### E2EE HPKE加密示例
+位置：`examples/python/e2e_encryption_hpke_examples/`
+
+| 文件 | 说明 | 复杂度 |
+|------|------|--------|
+| `basic_private_chat.py` | 一步初始化 + 双向加密通信 + Rekey | ⭐ |
+| `group_chat_example.py` | 三方群聊 Sender Key + Epoch推进 | ⭐⭐⭐ |
+| `key_manager_example.py` | HpkeKeyManager多会话生命周期管理 | ⭐⭐⭐ |
+| `error_handling_example.py` | 异常场景处理（过期、错误密钥、重放） | ⭐⭐⭐ |
+
+```bash
+# 基础私聊示例
+uv run python examples/python/e2e_encryption_hpke_examples/basic_private_chat.py
+
+# 群聊示例
+uv run python examples/python/e2e_encryption_hpke_examples/group_chat_example.py
+
+# KeyManager生命周期管理示例
+uv run python examples/python/e2e_encryption_hpke_examples/key_manager_example.py
+
+# 错误处理示例
+uv run python examples/python/e2e_encryption_hpke_examples/error_handling_example.py
 ```
 
 ---
