@@ -9,6 +9,7 @@ Tests cover:
 - Signature verification
 """
 
+import base64
 import json
 import logging
 import os
@@ -568,6 +569,30 @@ class TestJWKFingerprint(unittest.TestCase):
             key = ec.generate_private_key(ec.SECP256K1()).public_key()
             fp = compute_jwk_fingerprint(key)
             self.assertEqual(len(fp), 43)
+
+
+class TestJWKCoordinateEncoding(unittest.TestCase):
+    """测试 DID 文档中 JWK 坐标编码长度"""
+
+    def test_key1_jwk_coordinates_are_32_bytes(self):
+        """验证 key-1 (secp256k1) JWK 的 x/y base64url 解码后长度恒为 32 字节。"""
+        for _ in range(20):
+            did_document, keys = create_did_wba_document("example.com")
+            vm_key1 = did_document["verificationMethod"][0]
+            jwk = vm_key1["publicKeyJwk"]
+
+            # base64url 解码（补齐 padding）
+            x_bytes = base64.urlsafe_b64decode(jwk["x"] + "==")
+            y_bytes = base64.urlsafe_b64decode(jwk["y"] + "==")
+
+            self.assertEqual(
+                len(x_bytes), 32,
+                f"x coordinate should be 32 bytes, got {len(x_bytes)}"
+            )
+            self.assertEqual(
+                len(y_bytes), 32,
+                f"y coordinate should be 32 bytes, got {len(y_bytes)}"
+            )
 
 
 if __name__ == "__main__":

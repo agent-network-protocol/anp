@@ -137,6 +137,105 @@ class EcdsaSecp256k1VerificationKey2019(VerificationMethod):
             logging.error(f"Failed to encode signature: {str(e)}")
             raise ValueError(f"Invalid signature format: {str(e)}")
 
+class EcdsaSecp256r1VerificationKey2019(VerificationMethod):
+    """EcdsaSecp256r1VerificationKey2019 implementation (P-256 curve)"""
+
+    def __init__(self, public_key: ec.EllipticCurvePublicKey):
+        self.public_key = public_key
+
+    def verify_signature(self, content: bytes, signature: str) -> bool:
+        try:
+            signature_bytes = base64.urlsafe_b64decode(signature + '=' * (-len(signature) % 4))
+
+            r_length = len(signature_bytes) // 2
+            r = int.from_bytes(signature_bytes[:r_length], 'big')
+            s = int.from_bytes(signature_bytes[r_length:], 'big')
+            signature_der = utils.encode_dss_signature(r, s)
+
+            self.public_key.verify(
+                signature_der,
+                content,
+                ec.ECDSA(hashes.SHA256())
+            )
+            return True
+        except Exception as e:
+            logging.error(f"Secp256r1 signature verification failed: {str(e)}")
+            return False
+
+    @classmethod
+    def from_dict(cls, method_dict: Dict) -> 'EcdsaSecp256r1VerificationKey2019':
+        if 'publicKeyJwk' in method_dict:
+            return cls(cls._extract_public_key_from_jwk(method_dict['publicKeyJwk']))
+        elif 'publicKeyMultibase' in method_dict:
+            return cls(cls._extract_public_key_from_multibase(method_dict['publicKeyMultibase']))
+        raise ValueError("Unsupported key format for EcdsaSecp256r1VerificationKey2019")
+
+    @staticmethod
+    def _extract_public_key_from_jwk(jwk: Dict) -> ec.EllipticCurvePublicKey:
+        if jwk.get('kty') != 'EC' or jwk.get('crv') != 'P-256':
+            raise ValueError("Invalid JWK parameters for Secp256r1")
+
+        x = int.from_bytes(base64.urlsafe_b64decode(
+            jwk['x'] + '=' * (-len(jwk['x']) % 4)), 'big')
+        y = int.from_bytes(base64.urlsafe_b64decode(
+            jwk['y'] + '=' * (-len(jwk['y']) % 4)), 'big')
+
+        return ec.EllipticCurvePublicNumbers(
+            x, y, ec.SECP256R1()
+        ).public_key()
+
+    @staticmethod
+    def _extract_public_key_from_multibase(multibase: str) -> ec.EllipticCurvePublicKey:
+        if not multibase.startswith('z'):
+            raise ValueError("Unsupported multibase encoding")
+        key_bytes = base58.b58decode(multibase[1:])
+        return ec.EllipticCurvePublicKey.from_encoded_point(
+            ec.SECP256R1(),
+            key_bytes
+        )
+
+    @staticmethod
+    def encode_signature(signature_bytes: bytes) -> str:
+        try:
+            try:
+                r, s = utils.decode_dss_signature(signature_bytes)
+                r_bytes = r.to_bytes((r.bit_length() + 7) // 8, byteorder='big')
+                s_bytes = s.to_bytes((s.bit_length() + 7) // 8, byteorder='big')
+                signature = r_bytes + s_bytes
+            except Exception:
+                if len(signature_bytes) % 2 != 0:
+                    raise ValueError("Invalid R|S signature format: length must be even")
+                signature = signature_bytes
+
+            return base64.urlsafe_b64encode(signature).rstrip(b'=').decode('ascii')
+
+        except Exception as e:
+            logging.error(f"Failed to encode signature: {str(e)}")
+            raise ValueError(f"Invalid signature format: {str(e)}")
+
+
+class X25519KeyAgreementKey2019(VerificationMethod):
+    """X25519KeyAgreementKey2019 implementation (key agreement only, no signing)"""
+
+    def __init__(self, public_key):
+        self.public_key = public_key
+
+    def verify_signature(self, content: bytes, signature: str) -> bool:
+        raise NotImplementedError("X25519 keys cannot be used for signature verification")
+
+    @classmethod
+    def from_dict(cls, method_dict: Dict) -> 'X25519KeyAgreementKey2019':
+        if 'publicKeyMultibase' in method_dict:
+            from anp.e2e_encryption_hpke.key_pair import public_key_from_multibase
+            pk = public_key_from_multibase(method_dict['publicKeyMultibase'])
+            return cls(pk)
+        raise ValueError("Unsupported key format for X25519KeyAgreementKey2019")
+
+    @staticmethod
+    def encode_signature(signature_bytes: bytes) -> str:
+        raise NotImplementedError("X25519 keys cannot be used for signature encoding")
+
+
 class Ed25519VerificationKey2018(VerificationMethod):
     """Ed25519VerificationKey2018 implementation"""
     
@@ -198,6 +297,8 @@ def create_verification_method(method_dict: Dict) -> VerificationMethod:
         
     method_mapping = {
         'EcdsaSecp256k1VerificationKey2019': EcdsaSecp256k1VerificationKey2019,
+        'EcdsaSecp256r1VerificationKey2019': EcdsaSecp256r1VerificationKey2019,
+        'X25519KeyAgreementKey2019': X25519KeyAgreementKey2019,
         'Ed25519VerificationKey2018': Ed25519VerificationKey2018,
     }
     

@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from anp.authentication.did_wba import create_did_wba_document
+from anp.authentication.did_wba import (
+    VM_KEY_AUTH,
+    VM_KEY_E2EE_AGREEMENT,
+    VM_KEY_E2EE_SIGNING,
+    create_did_wba_document,
+)
 from anp.utils.log_base import set_log_color_level
 
 
@@ -138,9 +143,14 @@ def save_documents(unique_id: str, did_document: Dict[str, Any], keys: Dict[str,
     }
 
     for method_fragment in keys:
+        KEY_TYPE_MAP = {
+            VM_KEY_AUTH: "EcdsaSecp256k1",
+            VM_KEY_E2EE_SIGNING: "EcdsaSecp256r1",
+            VM_KEY_E2EE_AGREEMENT: "X25519",
+        }
         private_key_doc["keys"][method_fragment] = {
             "path": f"{method_fragment}_private.pem",
-            "type": "EcdsaSecp256k1"
+            "type": KEY_TYPE_MAP.get(method_fragment, "Unknown"),
         }
 
     # Save private key document
@@ -178,6 +188,7 @@ def main():
     parser.add_argument("--output-dir", "-o", help="Optional custom output directory")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress all output except errors")
+    parser.add_argument("--no-e2ee", action="store_true", help="Disable E2EE keys (secp256r1 + X25519)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -205,7 +216,8 @@ def main():
         did_document, keys = create_did_wba_document(
             hostname=hostname,
             path_segments=path_segments,
-            agent_description_url=agent_description_url
+            agent_description_url=agent_description_url,
+            enable_e2ee=not args.no_e2ee,
         )
 
         # Save documents
@@ -217,7 +229,8 @@ def main():
             print_colored(f"📁 Documents saved to: {output_dir}", "cyan")
             print_colored(f"📄 DID document: {output_dir}/did.json", "cyan")
             print_colored(f"🔑 Private key document: {output_dir}/private_keys.json", "cyan")
-            print_colored(f"🔒 Private key file(s): {output_dir}/key-1_private.pem", "cyan")
+            for key_name in keys:
+                print_colored(f"🔒 Private key file: {output_dir}/{key_name}_private.pem", "cyan")
 
             print_colored("\n⚠️  Important Security Notice:", "yellow")
             print_colored("   The private key files contain sensitive cryptographic material.", "yellow")

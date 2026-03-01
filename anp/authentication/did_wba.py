@@ -32,6 +32,11 @@ from anp.proof import generate_w3c_proof, verify_w3c_proof
 
 from .verification_methods import CURVE_MAPPING, create_verification_method
 
+# DID 文档中验证方法的 fragment 标识符（仅写入侧使用）
+VM_KEY_AUTH = "key-1"           # secp256k1, 用于 DID 认证（authentication）
+VM_KEY_E2EE_SIGNING = "key-2"   # secp256r1, 用于 E2EE 消息签名
+VM_KEY_E2EE_AGREEMENT = "key-3" # X25519, 用于 E2EE 密钥协商（keyAgreement）
+
 
 def _is_ip_address(hostname: str) -> bool:
     """Check if a hostname is an IP address."""
@@ -76,8 +81,8 @@ def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
 def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
     """Convert secp256k1 public key to JWK format"""
     numbers = public_key.public_numbers()
-    x = _encode_base64url(numbers.x.to_bytes((numbers.x.bit_length() + 7) // 8, 'big'))
-    y = _encode_base64url(numbers.y.to_bytes((numbers.y.bit_length() + 7) // 8, 'big')) 
+    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
+    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
     compressed = public_key.public_bytes(encoding=Encoding.X962, format=PublicFormat.CompressedPoint)
     kid = _encode_base64url(hashlib.sha256(compressed).digest())
     return {
@@ -87,6 +92,101 @@ def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
         "y": y,
         "kid": kid
     }
+
+
+def _secp256r1_public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
+    """Convert secp256r1 (P-256) public key to JWK format."""
+    numbers = public_key.public_numbers()
+    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
+    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
+    return {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": x,
+        "y": y,
+    }
+
+
+def _build_e2ee_entries(
+    did: str,
+) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Tuple[bytes, bytes]]]:
+    """Build E2EE verification method entries (secp256r1 + X25519).
+
+    Uses lazy imports to avoid hard dependency on e2e_encryption_hpke.
+
+    Args:
+        did: The DID identifier string.
+
+    Returns:
+        Tuple containing:
+            - vm_entries: list of two verificationMethod dicts (#key-2, #key-3)
+            - ka_refs: list of keyAgreement references (["#key-3"])
+            - keys_dict: {"key-2": (priv_pem, pub_pem), "key-3": (priv_pem, pub_pem)}
+    """
+    from anp.e2e_encryption_hpke.key_pair import (
+        generate_x25519_key_pair,
+        public_key_to_multibase,
+    )
+
+    # Generate secp256r1 key pair
+    secp256r1_private_key = ec.generate_private_key(ec.SECP256R1())
+    secp256r1_public_key = secp256r1_private_key.public_key()
+
+    # Generate X25519 key pair
+    x25519_private_key, x25519_public_key = generate_x25519_key_pair()
+
+    # Build verification method entries
+    vm_key2 = {
+        "id": f"{did}#{VM_KEY_E2EE_SIGNING}",
+        "type": "EcdsaSecp256r1VerificationKey2019",
+        "controller": did,
+        "publicKeyJwk": _secp256r1_public_key_to_jwk(secp256r1_public_key),
+    }
+
+    vm_key3 = {
+        "id": f"{did}#{VM_KEY_E2EE_AGREEMENT}",
+        "type": "X25519KeyAgreementKey2019",
+        "controller": did,
+        "publicKeyMultibase": public_key_to_multibase(x25519_public_key),
+    }
+
+    vm_entries = [vm_key2, vm_key3]
+    ka_refs = [f"{did}#{VM_KEY_E2EE_AGREEMENT}"]
+
+    # Serialize keys to PEM
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding as _Enc,
+        NoEncryption as _NoEnc,
+        PrivateFormat as _PF,
+        PublicFormat as _PubF,
+    )
+
+    keys_dict = {
+        VM_KEY_E2EE_SIGNING: (
+            secp256r1_private_key.private_bytes(
+                encoding=_Enc.PEM,
+                format=_PF.PKCS8,
+                encryption_algorithm=_NoEnc(),
+            ),
+            secp256r1_public_key.public_bytes(
+                encoding=_Enc.PEM,
+                format=_PubF.SubjectPublicKeyInfo,
+            ),
+        ),
+        VM_KEY_E2EE_AGREEMENT: (
+            x25519_private_key.private_bytes(
+                encoding=_Enc.PEM,
+                format=_PF.PKCS8,
+                encryption_algorithm=_NoEnc(),
+            ),
+            x25519_public_key.public_bytes(
+                encoding=_Enc.PEM,
+                format=_PubF.SubjectPublicKeyInfo,
+            ),
+        ),
+    }
+
+    return vm_entries, ka_refs, keys_dict
 
 def create_did_wba_document(
     hostname: str,
@@ -100,6 +200,8 @@ def create_did_wba_document(
     domain: Optional[str] = None,
     challenge: Optional[str] = None,
     created: Optional[str] = None,
+    # --- E2EE 参数 ---
+    enable_e2ee: bool = True,
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
     Generate DID document and corresponding private key dictionary
@@ -118,6 +220,8 @@ def create_did_wba_document(
         domain: Optional domain for proof
         challenge: Optional challenge for proof
         created: Optional ISO 8601 timestamp for proof
+        enable_e2ee: If True (default), add secp256r1 (#key-2) and X25519
+            (#key-3) verification methods for E2EE support.
 
     Returns:
         Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
@@ -127,56 +231,78 @@ def create_did_wba_document(
 
     Raises:
         ValueError: If hostname is empty or is an IP address
-
-    Note: Currently only secp256k1 is supported. All service entries (including
-        agent_description_url and custom services) are added to the document
-        before proof generation, so they are covered by the proof signature.
     """
     if not hostname:
         raise ValueError("Hostname cannot be empty")
-        
+
     if _is_ip_address(hostname):
         raise ValueError("Hostname cannot be an IP address")
-    
+
     logging.info(f"Creating DID WBA document for hostname: {hostname}")
-    
+
     # Build base DID
     did_base = f"did:wba:{hostname}"
     if port is not None:
         encoded_port = urllib.parse.quote(f":{port}")
         did_base = f"{did_base}{encoded_port}"
         logging.debug(f"Added port to DID base: {did_base}")
-    
+
     did = did_base
     if path_segments:
         did_path = ":".join(path_segments)
         did = f"{did_base}:{did_path}"
         logging.debug(f"Added path segments to DID: {did}")
-    
+
     # Generate secp256k1 key pair
     logging.debug("Generating secp256k1 key pair")
     secp256k1_private_key = ec.generate_private_key(ec.SECP256K1())
     secp256k1_public_key = secp256k1_private_key.public_key()
-    
+
     # Build verification method
     vm_entry = {
-        "id": f"{did}#key-1",
+        "id": f"{did}#{VM_KEY_AUTH}",
         "type": "EcdsaSecp256k1VerificationKey2019",
         "controller": did,
         "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
     }
 
+    verification_methods = [vm_entry]
+    contexts = [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/jws-2020/v1",
+        "https://w3id.org/security/suites/secp256k1-2019/v1",
+    ]
+
+    # Build keys dictionary with both private and public keys in PEM format
+    keys = {
+        VM_KEY_AUTH: (
+            secp256k1_private_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption()
+            ),
+            secp256k1_public_key.public_bytes(
+                encoding=Encoding.PEM,
+                format=PublicFormat.SubjectPublicKeyInfo
+            )
+        )
+    }
+
     # Build DID document
     did_document = {
-        "@context": [
-            "https://www.w3.org/ns/did/v1",
-            "https://w3id.org/security/suites/jws-2020/v1",
-            "https://w3id.org/security/suites/secp256k1-2019/v1"
-        ],
+        "@context": contexts,
         "id": did,
-        "verificationMethod": [vm_entry],
-        "authentication": [vm_entry["id"]]
+        "verificationMethod": verification_methods,
+        "authentication": [vm_entry["id"]],
     }
+
+    # Add E2EE keys if enabled
+    if enable_e2ee:
+        e2ee_vms, ka_refs, e2ee_keys = _build_e2ee_entries(did)
+        verification_methods.extend(e2ee_vms)
+        did_document["keyAgreement"] = ka_refs
+        contexts.append("https://w3id.org/security/suites/x25519-2019/v1")
+        keys.update(e2ee_keys)
 
     # 合并所有 service 条目
     all_services = []
@@ -210,21 +336,6 @@ def create_did_wba_document(
         created=created,
     )
 
-    # Build keys dictionary with both private and public keys in PEM format
-    keys = {
-        "key-1": (
-            secp256k1_private_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption()
-            ),
-            secp256k1_public_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo
-            )
-        )
-    }
-
     logging.info(f"Successfully created DID document with ID: {did}")
     return did_document, keys
 
@@ -240,6 +351,8 @@ def create_did_wba_document_with_key_binding(
     domain: Optional[str] = None,
     challenge: Optional[str] = None,
     created: Optional[str] = None,
+    # --- E2EE 参数 ---
+    enable_e2ee: bool = True,
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
     Generate a key-bound DID document where the DID identifier contains a
@@ -268,6 +381,8 @@ def create_did_wba_document_with_key_binding(
         domain: Optional domain for proof
         challenge: Optional challenge for proof
         created: Optional ISO 8601 timestamp for proof
+        enable_e2ee: If True (default), add secp256r1 (#key-2) and X25519
+            (#key-3) verification methods for E2EE support.
 
     Returns:
         Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
@@ -311,23 +426,49 @@ def create_did_wba_document_with_key_binding(
 
     # Build verification method
     vm_entry = {
-        "id": f"{did}#key-1",
+        "id": f"{did}#{VM_KEY_AUTH}",
         "type": "EcdsaSecp256k1VerificationKey2019",
         "controller": did,
         "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
     }
 
+    verification_methods = [vm_entry]
+    contexts = [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/jws-2020/v1",
+        "https://w3id.org/security/suites/secp256k1-2019/v1",
+    ]
+
+    # Build keys dictionary with both private and public keys in PEM format
+    keys = {
+        VM_KEY_AUTH: (
+            secp256k1_private_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption()
+            ),
+            secp256k1_public_key.public_bytes(
+                encoding=Encoding.PEM,
+                format=PublicFormat.SubjectPublicKeyInfo
+            )
+        )
+    }
+
     # Build DID document
     did_document = {
-        "@context": [
-            "https://www.w3.org/ns/did/v1",
-            "https://w3id.org/security/suites/jws-2020/v1",
-            "https://w3id.org/security/suites/secp256k1-2019/v1"
-        ],
+        "@context": contexts,
         "id": did,
-        "verificationMethod": [vm_entry],
-        "authentication": [vm_entry["id"]]
+        "verificationMethod": verification_methods,
+        "authentication": [vm_entry["id"]],
     }
+
+    # Add E2EE keys if enabled
+    if enable_e2ee:
+        e2ee_vms, ka_refs, e2ee_keys = _build_e2ee_entries(did)
+        verification_methods.extend(e2ee_vms)
+        did_document["keyAgreement"] = ka_refs
+        contexts.append("https://w3id.org/security/suites/x25519-2019/v1")
+        keys.update(e2ee_keys)
 
     # Merge all service entries
     all_services = []
@@ -360,21 +501,6 @@ def create_did_wba_document_with_key_binding(
         challenge=challenge,
         created=created,
     )
-
-    # Build keys dictionary with both private and public keys in PEM format
-    keys = {
-        "key-1": (
-            secp256k1_private_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption()
-            ),
-            secp256k1_public_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo
-            )
-        )
-    }
 
     logging.info(f"Successfully created key-bound DID document with ID: {did}")
     return did_document, keys
@@ -839,7 +965,15 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
             return _extract_secp256k1_public_key_from_multibase(
                 verification_method['publicKeyMultibase']
             )
-            
+
+    # Handle EcdsaSecp256r1VerificationKey2019
+    elif method_type == 'EcdsaSecp256r1VerificationKey2019':
+        if 'publicKeyJwk' in verification_method:
+            jwk = verification_method['publicKeyJwk']
+            if jwk.get('crv') != 'P-256':
+                raise ValueError("Invalid curve for EcdsaSecp256r1VerificationKey2019")
+            return _extract_ec_public_key_from_jwk(jwk)
+
     # Handle Ed25519 verification methods
     elif method_type in ['Ed25519VerificationKey2020', 'Ed25519VerificationKey2018']:
         if 'publicKeyJwk' in verification_method:
