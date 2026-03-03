@@ -41,6 +41,7 @@ class ErrorCode(str, Enum):
     INVALID_SEQ = "invalid_seq"
     UNSUPPORTED_SUITE = "unsupported_suite"
     NO_KEY_AGREEMENT = "no_key_agreement"
+    SENDER_KEY_NOT_FOUND = "sender_key_not_found"
 
 
 class EpochReason(str, Enum):
