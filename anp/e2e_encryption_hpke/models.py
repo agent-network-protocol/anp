@@ -92,6 +92,7 @@ class E2eeErrorContent(BaseModel):
     """e2ee_error 错误通知 content 结构。"""
     error_code: str
     session_id: Optional[str] = None
+    failed_msg_id: Optional[str] = None
     message: Optional[str] = None
 
 

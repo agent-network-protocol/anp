@@ -100,12 +100,15 @@ def build_e2ee_rekey(
 def build_e2ee_error(
     error_code: str,
     session_id: Optional[str] = None,
+    failed_msg_id: Optional[str] = None,
     message: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 e2ee_error 消息 content。"""
     content: Dict[str, Any] = {"error_code": error_code}
     if session_id is not None:
         content["session_id"] = session_id
+    if failed_msg_id is not None:
+        content["failed_msg_id"] = failed_msg_id
     if message is not None:
         content["message"] = message
     return content
