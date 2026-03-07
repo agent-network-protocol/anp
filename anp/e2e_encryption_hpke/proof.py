@@ -1,4 +1,4 @@
-"""EcdsaSecp256r1Signature2019 proof 签名。
+"""EcdsaSecp256r1Signature2019 proof 签名与校验。
 
 与 anp/proof/proof.py 的 W3C proof 签名流程不同：
 W3C 用 hash(options) || hash(document) 拼接后签名，
@@ -8,7 +8,6 @@ W3C 用 hash(options) || hash(document) 拼接后签名，
 import base64
 import copy
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Any, Dict
 
@@ -17,6 +16,18 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 from anp.e2e_encryption_hpke.models import PROOF_TYPE
+
+
+DEFAULT_MAX_FUTURE_SKEW_SECONDS = 300
+DEFAULT_MAX_PAST_AGE_SECONDS = 86400
+
+
+class ProofValidationError(ValueError):
+    """Raised when proof verification fails with a stable machine-readable code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -63,6 +74,7 @@ def generate_proof(
     content: Dict[str, Any],
     private_key: ec.EllipticCurvePrivateKey,
     verification_method: str,
+    created: str | None = None,
 ) -> Dict[str, Any]:
     """为 content 生成 proof 签名。
 
@@ -78,10 +90,10 @@ def generate_proof(
         含 proof 字段（包括 proof_value）的新 dict。
     """
     result = copy.deepcopy(content)
-    created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    created_value = created or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     result["proof"] = {
         "type": PROOF_TYPE,
-        "created": created,
+        "created": created_value,
         "verification_method": verification_method,
     }
 
@@ -93,60 +105,104 @@ def generate_proof(
     return result
 
 
-def verify_proof(
+def validate_proof(
     content: Dict[str, Any],
     public_key: ec.EllipticCurvePublicKey,
-    max_time_drift: int = 300,
-) -> bool:
-    """验证 content 的 proof 签名。
+    *,
+    max_past_age_seconds: int | None = DEFAULT_MAX_PAST_AGE_SECONDS,
+    max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+) -> None:
+    """Validate content proof and raise a structured error on failure.
 
     Args:
         content: 含 proof 字段的 content dict。
         public_key: secp256r1 签名公钥。
-        max_time_drift: 允许的最大时钟偏差（秒）。
+        max_past_age_seconds: 允许的最大过去年龄（秒）。
+            设为 ``None`` 或小于 0 表示跳过“过旧”检查。
+        max_future_skew_seconds: 允许的最大未来时间偏移（秒）。
 
-    Returns:
-        True 表示验证通过。
+    Raises:
+        ProofValidationError: proof 结构错误、时间戳非法或签名校验失败。
     """
-    try:
-        proof = content.get("proof")
-        if not proof:
-            logging.error("Content has no proof field")
-            return False
+    proof = content.get("proof")
+    if not proof:
+        raise ProofValidationError("proof_missing", "Content has no proof field")
 
-        proof_value = proof.get("proof_value")
-        if not proof_value:
-            logging.error("Proof has no proof_value")
-            return False
+    proof_value = proof.get("proof_value")
+    if not proof_value:
+        raise ProofValidationError("proof_value_missing", "Proof has no proof_value")
 
-        proof_type = proof.get("type")
-        if proof_type != PROOF_TYPE:
-            logging.error(f"Unsupported proof type: {proof_type}")
-            return False
+    proof_type = proof.get("type")
+    if proof_type != PROOF_TYPE:
+        raise ProofValidationError(
+            "proof_type_invalid",
+            f"Unsupported proof type: {proof_type}",
+        )
 
-        # 时间戳检查
-        created = proof.get("created")
-        if created and max_time_drift > 0:
-            try:
-                created_time = datetime.fromisoformat(
-                    created.replace("Z", "+00:00")
+    created = proof.get("created")
+    if created:
+        try:
+            created_time = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except (ValueError, TypeError) as exc:
+            raise ProofValidationError(
+                "proof_invalid_timestamp",
+                f"Invalid proof timestamp: {created}",
+            ) from exc
+
+        now = datetime.now(timezone.utc)
+        future_skew = (created_time - now).total_seconds()
+        if max_future_skew_seconds >= 0 and future_skew > max_future_skew_seconds:
+            raise ProofValidationError(
+                "proof_from_future",
+                f"Proof timestamp is too far in the future: {future_skew}s",
+            )
+
+        if max_past_age_seconds is not None and max_past_age_seconds >= 0:
+            age_seconds = (now - created_time).total_seconds()
+            if age_seconds > max_past_age_seconds:
+                raise ProofValidationError(
+                    "proof_expired",
+                    f"Proof timestamp age too large: {age_seconds}s",
                 )
-                now = datetime.now(timezone.utc)
-                drift = abs((now - created_time).total_seconds())
-                if drift > max_time_drift:
-                    logging.error(f"Proof timestamp drift too large: {drift}s")
-                    return False
-            except (ValueError, TypeError):
-                logging.error(f"Invalid proof timestamp: {created}")
-                return False
 
-        # 移除 proof_value → JCS 规范化 → 验证
-        stripped = _strip_proof_value(content)
-        canonical = jcs.canonicalize(stripped)
+    stripped = _strip_proof_value(content)
+    canonical = jcs.canonicalize(stripped)
+    try:
         signature = _b64url_decode(proof_value)
+    except Exception as exc:
+        raise ProofValidationError(
+            "proof_value_invalid",
+            "Proof value is not valid Base64URL data",
+        ) from exc
 
-        return _verify_secp256r1(public_key, canonical, signature)
+    if not _verify_secp256r1(public_key, canonical, signature):
+        raise ProofValidationError("proof_signature_invalid", "Proof signature verification failed")
 
-    except Exception as e:
-        logging.error(f"Proof verification failed: {e}")
+
+def verify_proof(
+    content: Dict[str, Any],
+    public_key: ec.EllipticCurvePublicKey,
+    max_time_drift: int | None = None,
+    *,
+    max_past_age_seconds: int | None = DEFAULT_MAX_PAST_AGE_SECONDS,
+    max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+) -> bool:
+    """验证 content 的 proof 签名并兼容旧版 max_time_drift 参数。"""
+    if max_time_drift is not None:
+        if max_time_drift == 0:
+            max_past_age_seconds = None
+        else:
+            max_past_age_seconds = max_time_drift
+            max_future_skew_seconds = max_time_drift
+
+    try:
+        validate_proof(
+            content,
+            public_key,
+            max_past_age_seconds=max_past_age_seconds,
+            max_future_skew_seconds=max_future_skew_seconds,
+        )
+        return True
+    except ProofValidationError as exc:
+        logging.error("Proof verification failed (%s): %s", exc.code, exc)
         return False

@@ -5,7 +5,7 @@
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
@@ -14,10 +14,25 @@ from pydantic import BaseModel
 
 HPKE_SUITE = "DHKEM-X25519-HKDF-SHA256/HKDF-SHA256/AES-128-GCM"
 PROOF_TYPE = "EcdsaSecp256r1Signature2019"
+E2EE_VERSION = "1.1"
 DEFAULT_EXPIRES = 86400  # 会话 / Sender Key 默认有效期（秒）
 DEFAULT_MAX_SKIP = 256  # 窗口模式最大允许跳跃量
 DEFAULT_SKIP_KEY_TTL = 300  # 跳跃 msg_key 缓存有效期（秒）
 OLD_EPOCH_TTL = 3600  # 旧 epoch Sender Key 保留时间（秒）
+
+
+def ensure_supported_e2ee_version(content: dict[str, Any]) -> str:
+    """Validate that an E2EE content dict declares the supported protocol version."""
+    version = str(content.get("e2ee_version", "")).strip()
+    if not version:
+        raise ValueError(
+            f"unsupported_version: missing e2ee_version (required {E2EE_VERSION})"
+        )
+    if version != E2EE_VERSION:
+        raise ValueError(
+            f"unsupported_version: expected {E2EE_VERSION}, got {version}"
+        )
+    return version
 
 
 # ── 枚举 ──────────────────────────────────────────────────────────
@@ -25,6 +40,7 @@ OLD_EPOCH_TTL = 3600  # 旧 epoch Sender Key 保留时间（秒）
 class MessageType(str, Enum):
     """消息 type 字段的 E2EE 类型。"""
     E2EE_INIT = "e2ee_init"
+    E2EE_ACK = "e2ee_ack"
     E2EE_MSG = "e2ee_msg"
     E2EE_REKEY = "e2ee_rekey"
     E2EE_ERROR = "e2ee_error"
@@ -42,6 +58,9 @@ class ErrorCode(str, Enum):
     UNSUPPORTED_SUITE = "unsupported_suite"
     NO_KEY_AGREEMENT = "no_key_agreement"
     SENDER_KEY_NOT_FOUND = "sender_key_not_found"
+    PROOF_EXPIRED = "proof_expired"
+    PROOF_FROM_FUTURE = "proof_from_future"
+    UNSUPPORTED_VERSION = "unsupported_version"
 
 
 class EpochReason(str, Enum):
@@ -69,6 +88,7 @@ class Proof(BaseModel):
 
 class E2eeInitContent(BaseModel):
     """e2ee_init / e2ee_rekey 消息 content 结构。"""
+    e2ee_version: str
     session_id: str
     hpke_suite: str = HPKE_SUITE
     sender_did: str
@@ -82,22 +102,38 @@ class E2eeInitContent(BaseModel):
 
 class E2eeMsgContent(BaseModel):
     """e2ee_msg 加密消息 content 结构。"""
+    e2ee_version: str
     session_id: str
     seq: int
     original_type: str
     ciphertext: str  # Base64，AES-128-GCM 密文 + tag
 
 
+class E2eeAckContent(BaseModel):
+    """e2ee_ack 会话确认消息 content 结构。"""
+    e2ee_version: str
+    session_id: str
+    sender_did: str
+    recipient_did: str
+    expires: int = DEFAULT_EXPIRES
+    proof: Proof
+
+
 class E2eeErrorContent(BaseModel):
     """e2ee_error 错误通知 content 结构。"""
+    e2ee_version: str
     error_code: str
     session_id: Optional[str] = None
     failed_msg_id: Optional[str] = None
+    failed_server_seq: Optional[int] = None
+    retry_hint: Optional[str] = None
+    required_e2ee_version: Optional[str] = None
     message: Optional[str] = None
 
 
 class GroupE2eeKeyContent(BaseModel):
     """group_e2ee_key — Sender Key 分发 content 结构。"""
+    e2ee_version: str
     group_did: str
     epoch: int
     sender_did: str
@@ -112,6 +148,7 @@ class GroupE2eeKeyContent(BaseModel):
 
 class GroupE2eeMsgContent(BaseModel):
     """group_e2ee_msg 群密文消息 content 结构。"""
+    e2ee_version: str
     group_did: str
     epoch: int
     sender_did: str
@@ -123,6 +160,7 @@ class GroupE2eeMsgContent(BaseModel):
 
 class GroupEpochAdvanceContent(BaseModel):
     """group_epoch_advance 群纪元变化通知 content 结构。"""
+    e2ee_version: str
     group_did: str
     new_epoch: int
     reason: str

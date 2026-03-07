@@ -3,6 +3,7 @@
 from typing import Any, Dict, Optional
 
 from anp.e2e_encryption_hpke.models import (
+    E2eeAckContent,
     E2eeErrorContent,
     E2eeInitContent,
     E2eeMsgContent,
@@ -31,6 +32,11 @@ def detect_message_type(type_field: str) -> Optional[MessageType]:
 def parse_e2ee_init(content: Dict[str, Any]) -> E2eeInitContent:
     """解析 e2ee_init / e2ee_rekey 消息 content。"""
     return E2eeInitContent(**content)
+
+
+def parse_e2ee_ack(content: Dict[str, Any]) -> E2eeAckContent:
+    """解析 e2ee_ack 消息 content。"""
+    return E2eeAckContent(**content)
 
 
 def parse_e2ee_msg(content: Dict[str, Any]) -> E2eeMsgContent:

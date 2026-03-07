@@ -21,6 +21,7 @@ from anp.e2e_encryption_hpke.key_pair import (
     public_key_to_multibase,
 )
 from anp.e2e_encryption_hpke.message_builder import (
+    build_e2ee_ack,
     build_e2ee_error,
     build_e2ee_init,
     build_e2ee_msg,
@@ -31,6 +32,7 @@ from anp.e2e_encryption_hpke.message_builder import (
 )
 from anp.e2e_encryption_hpke.message_parser import (
     detect_message_type,
+    parse_e2ee_ack,
     parse_e2ee_error,
     parse_e2ee_init,
     parse_e2ee_msg,
@@ -40,16 +42,19 @@ from anp.e2e_encryption_hpke.message_parser import (
 )
 from anp.e2e_encryption_hpke.models import (
     DEFAULT_EXPIRES,
+    E2EE_VERSION,
     DEFAULT_MAX_SKIP,
     DEFAULT_SKIP_KEY_TTL,
     HPKE_SUITE,
     OLD_EPOCH_TTL,
     PROOF_TYPE,
+    E2eeAckContent,
     E2eeErrorContent,
     E2eeInitContent,
     E2eeMsgContent,
     EpochReason,
     ErrorCode,
+    ensure_supported_e2ee_version,
     GroupE2eeKeyContent,
     GroupE2eeMsgContent,
     GroupEpochAdvanceContent,
@@ -57,7 +62,12 @@ from anp.e2e_encryption_hpke.models import (
     Proof,
     SeqMode,
 )
-from anp.e2e_encryption_hpke.proof import generate_proof, verify_proof
+from anp.e2e_encryption_hpke.proof import (
+    ProofValidationError,
+    generate_proof,
+    validate_proof,
+    verify_proof,
+)
 from anp.e2e_encryption_hpke.ratchet import (
     assign_chain_keys,
     derive_chain_keys,
@@ -79,6 +89,7 @@ __all__ = [
     "HpkeKeyManager",
     # models
     "HPKE_SUITE",
+    "E2EE_VERSION",
     "PROOF_TYPE",
     "DEFAULT_EXPIRES",
     "DEFAULT_MAX_SKIP",
@@ -86,10 +97,12 @@ __all__ = [
     "OLD_EPOCH_TTL",
     "MessageType",
     "ErrorCode",
+    "ensure_supported_e2ee_version",
     "EpochReason",
     "SeqMode",
     "Proof",
     "E2eeInitContent",
+    "E2eeAckContent",
     "E2eeMsgContent",
     "E2eeErrorContent",
     "GroupE2eeKeyContent",
@@ -120,9 +133,12 @@ __all__ = [
     # seq_manager
     "SeqManager",
     # proof
+    "ProofValidationError",
     "generate_proof",
+    "validate_proof",
     "verify_proof",
     # message_builder
+    "build_e2ee_ack",
     "build_e2ee_init",
     "build_e2ee_msg",
     "build_e2ee_rekey",
@@ -132,6 +148,7 @@ __all__ = [
     "build_group_epoch_advance",
     # message_parser
     "detect_message_type",
+    "parse_e2ee_ack",
     "parse_e2ee_init",
     "parse_e2ee_msg",
     "parse_e2ee_error",

@@ -4,7 +4,7 @@
 
 1. **地位**: 基于 HPKE (RFC 9180) 的端到端加密模块，传输无关
 2. **边界**: 输入为 X25519/secp256r1 密钥和协议消息 dict，输出为协议响应 dict 和加解密结果；不依赖任何传输层
-3. **约束**: 字段名 snake_case、proof 类型 EcdsaSecp256r1Signature2019、DID 格式 did:wba:...
+3. **约束**: 字段名 snake_case、proof 类型 EcdsaSecp256r1Signature2019、DID 格式 did:wba:...；所有 E2EE content 必须声明 `e2ee_version="1.1"`；控制消息 freshness 校验区分 future skew 与 past age，不能仅用对称时钟漂移
 
 ## 与 e2e_encryption_v2/ 的差异
 
@@ -19,7 +19,7 @@
 
 ## 成员清单
 
-**models.py**: 常量、枚举（MessageType/ErrorCode/EpochReason/SeqMode）和 Pydantic 模型
+**models.py**: 常量、枚举（MessageType/ErrorCode/EpochReason/SeqMode）和 Pydantic 模型（含 `E2EE_VERSION` 与版本校验辅助函数）
 
 **hpke.py**: HPKE Base 模式封装（RFC 9180 手动实现：X25519 + HKDF-SHA256 + AES-128-GCM）
 
@@ -31,13 +31,13 @@
 
 **seq_manager.py**: 序号管理（严格/窗口模式）和防重放
 
-**proof.py**: EcdsaSecp256r1Signature2019 proof 签名（JCS 规范化 + ECDSA-SHA256）
+**proof.py**: EcdsaSecp256r1Signature2019 proof 签名与 freshness 校验（JCS 规范化 + ECDSA-SHA256，支持 future skew / past age 分离）
 
-**message_builder.py**: 7 种消息构建函数
+**message_builder.py**: 8 种消息构建函数（含 `e2ee_ack`）
 
 **message_parser.py**: 消息解析和类型检测
 
-**session.py**: 私聊 E2EE 会话（IDLE → ACTIVE 两态状态机）
+**session.py**: 私聊 E2EE 会话（IDLE → ACTIVE 两态状态机，处理 e2ee_init/e2ee_rekey 时按 expires 执行 proof freshness 校验）
 
 **group_session.py**: 群聊 Sender Key 会话（epoch 管理、Sender Key 分发/接收）
 

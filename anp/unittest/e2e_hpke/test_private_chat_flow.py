@@ -205,6 +205,19 @@ class TestPrivateChatFlow(unittest.TestCase):
         with self.assertRaises(ValueError):
             bob.process_init(init_content, wrong_key)
 
+    def test_legacy_message_without_e2ee_version_rejected(self):
+        """缺少 e2ee_version 的旧消息应被拒绝。"""
+        alice = self._make_alice_session()
+        bob = self._make_bob_session()
+
+        _, init_content = alice.initiate_session(
+            self.bob_x25519_pk, f"{self.bob_did}#key-x25519-1"
+        )
+        del init_content["e2ee_version"]
+
+        with self.assertRaises(ValueError):
+            bob.process_init(init_content, self.alice_signing_pk)
+
     def test_replay_rejected(self):
         """重放消息应被拒绝。"""
         alice = self._make_alice_session()

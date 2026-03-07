@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from anp.e2e_encryption_hpke.message_builder import (
+    build_e2ee_ack,
     build_e2ee_error,
     build_e2ee_init,
     build_e2ee_msg,
@@ -18,7 +19,7 @@ from anp.e2e_encryption_hpke.message_builder import (
     build_group_e2ee_msg,
     build_group_epoch_advance,
 )
-from anp.e2e_encryption_hpke.models import HPKE_SUITE
+from anp.e2e_encryption_hpke.models import E2EE_VERSION, HPKE_SUITE
 
 
 class TestBuildE2eeInit(unittest.TestCase):
@@ -48,6 +49,7 @@ class TestBuildE2eeInit(unittest.TestCase):
             verification_method=self.verification_method,
         )
 
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["session_id"], self.session_id)
         self.assertEqual(content["hpke_suite"], HPKE_SUITE)
         self.assertEqual(content["sender_did"], self.sender_did)
@@ -92,12 +94,35 @@ class TestBuildE2eeMsg(unittest.TestCase):
             ciphertext_b64="Y2lwaGVydGV4dA==",
         )
 
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["session_id"], "sess001")
         self.assertEqual(content["seq"], 1)
         self.assertEqual(content["original_type"], "text/plain")
         self.assertEqual(content["ciphertext"], "Y2lwaGVydGV4dA==")
         # e2ee_msg 不含 proof
         self.assertNotIn("proof", content)
+
+
+class TestBuildE2eeAck(unittest.TestCase):
+    """测试 build_e2ee_ack 函数。"""
+
+    def setUp(self):
+        self.signing_key = ec.generate_private_key(ec.SECP256R1())
+
+    def test_build_e2ee_ack_has_required_fields(self):
+        content = build_e2ee_ack(
+            session_id="sess-ack-1",
+            sender_did="did:wba:example.com:user:bob",
+            recipient_did="did:wba:example.com:user:alice",
+            signing_key=self.signing_key,
+            verification_method="did:wba:example.com:user:bob#key-2",
+        )
+
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
+        self.assertEqual(content["session_id"], "sess-ack-1")
+        self.assertEqual(content["sender_did"], "did:wba:example.com:user:bob")
+        self.assertEqual(content["recipient_did"], "did:wba:example.com:user:alice")
+        self.assertIn("proof", content)
 
 
 class TestBuildE2eeRekey(unittest.TestCase):
@@ -137,11 +162,20 @@ class TestBuildE2eeError(unittest.TestCase):
         content = build_e2ee_error(
             error_code="session_not_found",
             session_id="sess001",
+            failed_msg_id="msg-001",
+            failed_server_seq=42,
+            retry_hint="rekey_then_resend",
+            required_e2ee_version=E2EE_VERSION,
             message="Session does not exist",
         )
 
         self.assertEqual(content["error_code"], "session_not_found")
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["session_id"], "sess001")
+        self.assertEqual(content["failed_msg_id"], "msg-001")
+        self.assertEqual(content["failed_server_seq"], 42)
+        self.assertEqual(content["retry_hint"], "rekey_then_resend")
+        self.assertEqual(content["required_e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["message"], "Session does not exist")
 
     def test_build_e2ee_error_with_only_error_code(self):
@@ -149,7 +183,11 @@ class TestBuildE2eeError(unittest.TestCase):
         content = build_e2ee_error(error_code="decryption_failed")
 
         self.assertEqual(content["error_code"], "decryption_failed")
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertNotIn("session_id", content)
+        self.assertNotIn("failed_msg_id", content)
+        self.assertNotIn("failed_server_seq", content)
+        self.assertNotIn("retry_hint", content)
         self.assertNotIn("message", content)
 
 
@@ -177,6 +215,7 @@ class TestBuildGroupE2eeKey(unittest.TestCase):
         )
 
         self.assertEqual(content["group_did"], "did:wba:example.com:group:dev-team")
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["epoch"], 1)
         self.assertEqual(content["sender_did"], "did:wba:example.com:user:alice")
         self.assertIn("sender_key_id", content)
@@ -208,6 +247,7 @@ class TestBuildGroupE2eeMsg(unittest.TestCase):
         )
 
         self.assertEqual(content["group_did"], "did:wba:example.com:group:dev-team")
+        self.assertEqual(content["e2ee_version"], E2EE_VERSION)
         self.assertEqual(content["epoch"], 1)
         self.assertEqual(content["sender_did"], "did:wba:example.com:user:alice")
         self.assertEqual(

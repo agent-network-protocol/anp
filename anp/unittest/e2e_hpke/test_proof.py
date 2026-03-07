@@ -5,11 +5,18 @@
 
 import copy
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from anp.e2e_encryption_hpke.models import PROOF_TYPE
-from anp.e2e_encryption_hpke.proof import generate_proof, verify_proof
+from anp.e2e_encryption_hpke.proof import (
+    DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+    generate_proof,
+    validate_proof,
+    verify_proof,
+    ProofValidationError,
+)
 
 
 class TestGenerateProof(unittest.TestCase):
@@ -112,6 +119,64 @@ class TestVerifyProof(unittest.TestCase):
         )
         del signed["proof"]["proof_value"]
         self.assertFalse(verify_proof(signed, self.public_key))
+
+    def test_validate_proof_allows_recent_past_age_within_window(self):
+        """过期窗口内的旧 proof 应按 max_past_age_seconds 通过。"""
+        created = (
+            datetime.now(timezone.utc) - timedelta(minutes=7)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        signed = generate_proof(
+            self.content,
+            self.private_key,
+            self.verification_method,
+            created=created,
+        )
+        validate_proof(
+            signed,
+            self.public_key,
+            max_past_age_seconds=3600,
+            max_future_skew_seconds=DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+        )
+
+    def test_validate_proof_rejects_expired_timestamp(self):
+        """超过 max_past_age_seconds 的 proof 应返回 proof_expired。"""
+        created = (
+            datetime.now(timezone.utc) - timedelta(days=2)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        signed = generate_proof(
+            self.content,
+            self.private_key,
+            self.verification_method,
+            created=created,
+        )
+        with self.assertRaises(ProofValidationError) as ctx:
+            validate_proof(
+                signed,
+                self.public_key,
+                max_past_age_seconds=86400,
+                max_future_skew_seconds=DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+            )
+        self.assertEqual(ctx.exception.code, "proof_expired")
+
+    def test_validate_proof_rejects_future_timestamp(self):
+        """超过未来偏移窗口的 proof 应返回 proof_from_future。"""
+        created = (
+            datetime.now(timezone.utc) + timedelta(minutes=10)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        signed = generate_proof(
+            self.content,
+            self.private_key,
+            self.verification_method,
+            created=created,
+        )
+        with self.assertRaises(ProofValidationError) as ctx:
+            validate_proof(
+                signed,
+                self.public_key,
+                max_past_age_seconds=86400,
+                max_future_skew_seconds=300,
+            )
+        self.assertEqual(ctx.exception.code, "proof_from_future")
 
 
 if __name__ == "__main__":

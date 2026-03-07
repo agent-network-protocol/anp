@@ -1,6 +1,6 @@
 [project]
 name = "anp"
-version = "0.6.4"
+version = "0.6.6"
 description = "An SDK that enables agents to connect with each other, allowing them to perform identity authentication, end-to-end encrypted communication, automatic protocol negotiation based on LLMs, and efficient data exchange."
 authors = [
     {name = "changshan", email = "chgaowei@gmail.com"}
@@ -53,5 +53,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["anp"]
-
-

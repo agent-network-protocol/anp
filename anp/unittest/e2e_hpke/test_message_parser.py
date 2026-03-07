@@ -7,6 +7,7 @@ import unittest
 
 from anp.e2e_encryption_hpke.message_parser import (
     detect_message_type,
+    parse_e2ee_ack,
     parse_e2ee_error,
     parse_e2ee_init,
     parse_e2ee_msg,
@@ -15,6 +16,7 @@ from anp.e2e_encryption_hpke.message_parser import (
     parse_group_epoch_advance,
 )
 from anp.e2e_encryption_hpke.models import MessageType
+from anp.e2e_encryption_hpke.models import E2EE_VERSION
 
 
 # 测试用的 proof 字典
@@ -32,6 +34,11 @@ class TestDetectMessageType(unittest.TestCase):
     def test_detect_e2ee_init(self):
         self.assertEqual(
             detect_message_type("e2ee_init"), MessageType.E2EE_INIT
+        )
+
+    def test_detect_e2ee_ack(self):
+        self.assertEqual(
+            detect_message_type("e2ee_ack"), MessageType.E2EE_ACK
         )
 
     def test_detect_e2ee_msg(self):
@@ -78,6 +85,7 @@ class TestParseE2eeInit(unittest.TestCase):
     def test_parse_valid_e2ee_init(self):
         """解析合法的 e2ee_init content 应返回 E2eeInitContent 实例。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "session_id": "abc123",
             "hpke_suite": "DHKEM-X25519-HKDF-SHA256/HKDF-SHA256/AES-128-GCM",
             "sender_did": "did:wba:example.com:user:alice",
@@ -106,6 +114,7 @@ class TestParseE2eeMsg(unittest.TestCase):
     def test_parse_valid_e2ee_msg(self):
         """解析合法的 e2ee_msg content 应返回 E2eeMsgContent 实例。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "session_id": "sess001",
             "seq": 1,
             "original_type": "text/plain",
@@ -119,29 +128,63 @@ class TestParseE2eeMsg(unittest.TestCase):
         self.assertEqual(parsed.ciphertext, "Y2lwaGVydGV4dA==")
 
 
+class TestParseE2eeAck(unittest.TestCase):
+    """测试 parse_e2ee_ack 函数。"""
+
+    def test_parse_valid_e2ee_ack(self):
+        content = {
+            "e2ee_version": E2EE_VERSION,
+            "session_id": "sess001",
+            "sender_did": "did:wba:example.com:user:bob",
+            "recipient_did": "did:wba:example.com:user:alice",
+            "expires": 86400,
+            "proof": _SAMPLE_PROOF,
+        }
+        parsed = parse_e2ee_ack(content)
+
+        self.assertEqual(parsed.session_id, "sess001")
+        self.assertEqual(parsed.sender_did, "did:wba:example.com:user:bob")
+        self.assertEqual(parsed.recipient_did, "did:wba:example.com:user:alice")
+        self.assertEqual(parsed.expires, 86400)
+
+
 class TestParseE2eeError(unittest.TestCase):
     """测试 parse_e2ee_error 函数。"""
 
     def test_parse_valid_e2ee_error_all_fields(self):
         """解析包含所有字段的 e2ee_error content。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "error_code": "session_not_found",
             "session_id": "sess001",
+            "failed_msg_id": "msg-001",
+            "failed_server_seq": 42,
+            "retry_hint": "rekey_then_resend",
+            "required_e2ee_version": E2EE_VERSION,
             "message": "Session does not exist",
         }
         parsed = parse_e2ee_error(content)
 
         self.assertEqual(parsed.error_code, "session_not_found")
         self.assertEqual(parsed.session_id, "sess001")
+        self.assertEqual(parsed.failed_msg_id, "msg-001")
+        self.assertEqual(parsed.failed_server_seq, 42)
+        self.assertEqual(parsed.retry_hint, "rekey_then_resend")
+        self.assertEqual(parsed.required_e2ee_version, E2EE_VERSION)
         self.assertEqual(parsed.message, "Session does not exist")
 
     def test_parse_valid_e2ee_error_minimal(self):
         """解析仅包含 error_code 的 e2ee_error content。"""
         content = {"error_code": "decryption_failed"}
+        content["e2ee_version"] = E2EE_VERSION
         parsed = parse_e2ee_error(content)
 
         self.assertEqual(parsed.error_code, "decryption_failed")
         self.assertIsNone(parsed.session_id)
+        self.assertIsNone(parsed.failed_msg_id)
+        self.assertIsNone(parsed.failed_server_seq)
+        self.assertIsNone(parsed.retry_hint)
+        self.assertIsNone(parsed.required_e2ee_version)
         self.assertIsNone(parsed.message)
 
 
@@ -151,6 +194,7 @@ class TestParseGroupE2eeKey(unittest.TestCase):
     def test_parse_valid_group_e2ee_key(self):
         """解析合法的 group_e2ee_key content 应返回 GroupE2eeKeyContent 实例。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "group_did": "did:wba:example.com:group:dev-team",
             "epoch": 1,
             "sender_did": "did:wba:example.com:user:alice",
@@ -180,6 +224,7 @@ class TestParseGroupE2eeMsg(unittest.TestCase):
     def test_parse_valid_group_e2ee_msg(self):
         """解析合法的 group_e2ee_msg content 应返回 GroupE2eeMsgContent 实例。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "group_did": "did:wba:example.com:group:dev-team",
             "epoch": 1,
             "sender_did": "did:wba:example.com:user:alice",
@@ -206,6 +251,7 @@ class TestParseGroupEpochAdvance(unittest.TestCase):
     def test_parse_valid_group_epoch_advance(self):
         """解析合法的 group_epoch_advance content 应返回 GroupEpochAdvanceContent 实例。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "group_did": "did:wba:example.com:group:dev-team",
             "new_epoch": 2,
             "reason": "member_added",
@@ -228,6 +274,7 @@ class TestParseGroupEpochAdvance(unittest.TestCase):
     def test_parse_group_epoch_advance_minimal(self):
         """解析不包含可选字段的 group_epoch_advance content。"""
         content = {
+            "e2ee_version": E2EE_VERSION,
             "group_did": "did:wba:example.com:group:dev-team",
             "new_epoch": 3,
             "reason": "key_rotation",

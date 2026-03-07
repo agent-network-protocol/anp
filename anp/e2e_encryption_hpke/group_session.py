@@ -20,7 +20,12 @@ from anp.e2e_encryption_hpke.message_builder import (
     build_group_e2ee_msg,
     build_group_epoch_advance,
 )
-from anp.e2e_encryption_hpke.models import DEFAULT_EXPIRES, OLD_EPOCH_TTL, SeqMode
+from anp.e2e_encryption_hpke.models import (
+    DEFAULT_EXPIRES,
+    OLD_EPOCH_TTL,
+    SeqMode,
+    ensure_supported_e2ee_version,
+)
 from anp.e2e_encryption_hpke.proof import verify_proof
 from anp.e2e_encryption_hpke.ratchet import derive_group_message_key
 from anp.e2e_encryption_hpke.seq_manager import SeqManager
@@ -182,6 +187,8 @@ class GroupE2eeSession:
         Raises:
             ValueError: 验证失败或重复 Sender Key。
         """
+        ensure_supported_e2ee_version(content)
+
         # 验证 proof
         if not verify_proof(content, sender_signing_pk):
             raise ValueError("group_e2ee_key proof verification failed")
@@ -266,6 +273,8 @@ class GroupE2eeSession:
         Raises:
             ValueError: 未找到对应 Sender Key 或序号验证失败。
         """
+        ensure_supported_e2ee_version(content)
+
         sender_did = content["sender_did"]
         epoch = content["epoch"]
         sender_key_id = content["sender_key_id"]
@@ -329,6 +338,7 @@ class GroupE2eeSession:
         Raises:
             ValueError: 签名验证失败或 epoch 非递增。
         """
+        ensure_supported_e2ee_version(content)
         if not verify_proof(content, admin_signing_pk):
             raise ValueError("group_epoch_advance proof verification failed")
 

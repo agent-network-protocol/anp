@@ -19,8 +19,12 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 from anp.e2e_encryption_hpke.crypto import decrypt_aes_128_gcm, encrypt_aes_128_gcm
 from anp.e2e_encryption_hpke.hpke import hpke_open
 from anp.e2e_encryption_hpke.message_builder import build_e2ee_init, build_e2ee_msg
-from anp.e2e_encryption_hpke.models import DEFAULT_EXPIRES, SeqMode
-from anp.e2e_encryption_hpke.proof import verify_proof
+from anp.e2e_encryption_hpke.models import (
+    DEFAULT_EXPIRES,
+    SeqMode,
+    ensure_supported_e2ee_version,
+)
+from anp.e2e_encryption_hpke.proof import validate_proof, ProofValidationError
 from anp.e2e_encryption_hpke.ratchet import (
     assign_chain_keys,
     derive_chain_keys,
@@ -148,9 +152,17 @@ class E2eeHpkeSession:
                 f"Cannot process init from {self._state.value} state, need IDLE"
             )
 
-        # 验证 proof
-        if not verify_proof(content, sender_signing_pk):
-            raise ValueError("e2ee_init proof verification failed")
+        ensure_supported_e2ee_version(content)
+
+        expires = int(content.get("expires", self._default_expires))
+        try:
+            validate_proof(
+                content,
+                sender_signing_pk,
+                max_past_age_seconds=expires,
+            )
+        except ProofValidationError as exc:
+            raise ValueError(f"e2ee_init proof verification failed: {exc.code}") from exc
 
         # 验证接收方是否为本地
         if content["recipient_did"] != self.local_did:
@@ -163,7 +175,6 @@ class E2eeHpkeSession:
         root_seed = hpke_open(self._local_x25519_sk, enc_bytes, ct_bytes, aad=aad)
 
         self._session_id = content["session_id"]
-        expires = content.get("expires", self._default_expires)
         self._setup_chain_keys(root_seed, expires)
 
     def encrypt_message(
@@ -217,6 +228,8 @@ class E2eeHpkeSession:
             raise RuntimeError(
                 f"Cannot decrypt from {self._state.value} state, need ACTIVE"
             )
+
+        ensure_supported_e2ee_version(content)
 
         seq = content["seq"]
         if not self._seq_manager.validate_recv_seq(seq):
