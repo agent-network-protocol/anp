@@ -5,239 +5,219 @@
 #
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
-import json
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-# Import anp for DID authentication
 from .did_wba import generate_auth_header
+from .http_signatures import generate_http_signature_headers
 
 
 class DIDWbaAuthHeader:
-    """
-    Simplified DID authentication client providing HTTP authentication headers.
-    """
-    
-    def __init__(self, did_document_path: str, private_key_path: str):
-        """
-        Initialize the DID authentication client.
-        
+    """Client helper for DID-WBA authentication headers and token caching."""
+
+    def __init__(
+        self,
+        did_document_path: str,
+        private_key_path: str,
+        auth_mode: str = "http_signatures",
+    ):
+        """Initialize the DID authentication client.
+
         Args:
-            did_document_path: Path to the DID document (absolute or relative path)
-            private_key_path: Path to the private key (absolute or relative path)
+            did_document_path: Path to the DID document file.
+            private_key_path: Path to the private key file.
+            auth_mode: Authentication mode. Supported values are:
+                - "http_signatures": Use HTTP Message Signatures (default)
+                - "legacy_didwba": Use the legacy Authorization header scheme
+                - "auto": Alias of "http_signatures" for forward compatibility
         """
         self.did_document_path = did_document_path
         self.private_key_path = private_key_path
-        
-        # State variables
+        self.auth_mode = auth_mode
+
         self.did_document = None
-        self.auth_headers = {}  # Store DID authentication headers by domain
-        self.tokens = {}  # Store tokens by domain
-        
-        logging.info("DIDWbaAuthHeader initialized")
-    
+        self.tokens: Dict[str, str] = {}
+
+        logging.info("DIDWbaAuthHeader initialized with auth mode %s", auth_mode)
+
     def _get_domain(self, server_url: str) -> str:
-        """Extract domain from URL"""
+        """Extract domain from URL."""
         parsed_url = urlparse(server_url)
-        domain = parsed_url.netloc.split(':')[0]
-        return domain
-    
-    def _load_did_document(self) -> Dict:
-        """Load DID document"""
+        return parsed_url.netloc.split(":")[0]
+
+    @staticmethod
+    def _get_header_case_insensitive(
+        headers: Dict[str, str], name: str
+    ) -> Optional[str]:
+        lower_name = name.lower()
+        for key, value in headers.items():
+            if key.lower() == lower_name:
+                return value
+        return None
+
+    def _load_did_document(self) -> Dict[str, Any]:
+        """Load and cache the DID document from disk."""
+        if self.did_document is not None:
+            return self.did_document
+
         try:
-            if self.did_document:
-                return self.did_document
-            
-            # Use the provided path directly, without resolving absolute path
-            did_path = self.did_document_path
-            
-            with open(did_path, 'r') as f:
-                did_document = json.load(f)
-            
-            self.did_document = did_document
-            logging.info(f"Loaded DID document: {did_path}")
-            return did_document
-        except Exception as e:
-            logging.error(f"Error loading DID document: {e}")
+            with open(self.did_document_path, "r", encoding="utf-8") as file_obj:
+                import json
+
+                self.did_document = json.load(file_obj)
+            logging.info("Loaded DID document from %s", self.did_document_path)
+            return self.did_document
+        except Exception as exc:
+            logging.error("Error loading DID document: %s", exc)
             raise
-    
-    def _load_private_key(self) -> ec.EllipticCurvePrivateKey:
-        """Load private key"""
+
+    def _load_private_key(self) -> Any:
+        """Load the private key from disk."""
         try:
-            # Use the provided path directly, without resolving absolute path
-            key_path = self.private_key_path
-            
-            with open(key_path, 'rb') as f:
-                private_key_data = f.read()
-            
-            private_key = serialization.load_pem_private_key(
-                private_key_data,
-                password=None
-            )
-            
-            logging.debug(f"Loaded private key: {key_path}")
-            return private_key
-        except Exception as e:
-            logging.error(f"Error loading private key: {e}")
+            with open(self.private_key_path, "rb") as file_obj:
+                private_key_data = file_obj.read()
+            return serialization.load_pem_private_key(private_key_data, password=None)
+        except Exception as exc:
+            logging.error("Error loading private key: %s", exc)
             raise
-    
+
     def _sign_callback(self, content: bytes, method_fragment: str) -> bytes:
-        """Sign callback function"""
+        """Sign arbitrary bytes with the loaded private key."""
         try:
             private_key = self._load_private_key()
-            signature = private_key.sign(
-                content,
-                ec.ECDSA(hashes.SHA256())
+            if isinstance(private_key, ec.EllipticCurvePrivateKey):
+                signature = private_key.sign(content, ec.ECDSA(hashes.SHA256()))
+            elif isinstance(private_key, ed25519.Ed25519PrivateKey):
+                signature = private_key.sign(content)
+            else:
+                raise TypeError(
+                    f"Unsupported private key type: {type(private_key).__name__}"
+                )
+            logging.debug(
+                "Signed authentication content with method fragment %s",
+                method_fragment,
             )
-            
-            logging.debug(f"Signed content with method fragment: {method_fragment}")
             return signature
-        except Exception as e:
-            logging.error(f"Error signing content: {e}")
+        except Exception as exc:
+            logging.error("Error signing content: %s", exc)
             raise
-    
-    def _generate_auth_header(self, domain: str) -> str:
-        """Generate DID authentication header"""
-        try:
-            did_document = self._load_did_document()
-            
-            auth_header = generate_auth_header(
-                did_document,
-                domain,
-                self._sign_callback
-            )
-            
-            logging.info(f"Generated authentication header for domain {domain}: {auth_header[:30]}...")
-            return auth_header
-        except Exception as e:
-            logging.error(f"Error generating authentication header: {e}")
-            raise
-    
-    def get_auth_header(self, server_url: str, force_new: bool = False) -> Dict[str, str]:
-        """
-        Get authentication header.
-        
-        Args:
-            server_url: Server URL
-            force_new: Whether to force generate a new DID authentication header
-            
-        Returns:
-            Dict[str, str]: HTTP header dictionary
+
+    def _generate_legacy_auth_header(self, domain: str) -> Dict[str, str]:
+        """Generate a legacy DIDWba Authorization header."""
+        did_document = self._load_did_document()
+        auth_header = generate_auth_header(did_document, domain, self._sign_callback)
+        logging.info("Generated legacy DIDWba Authorization header for %s", domain)
+        return {"Authorization": auth_header}
+
+    def _generate_http_signature_header(
+        self,
+        server_url: str,
+        method: str,
+        headers: Optional[Dict[str, str]] = None,
+        body: Any = None,
+    ) -> Dict[str, str]:
+        """Generate HTTP Message Signatures headers for a request."""
+        did_document = self._load_did_document()
+        auth_headers = generate_http_signature_headers(
+            did_document=did_document,
+            request_url=server_url,
+            request_method=method,
+            sign_callback=self._sign_callback,
+            headers=headers,
+            body=body,
+        )
+        logging.info("Generated HTTP signature headers for %s %s", method, server_url)
+        return auth_headers
+
+    def get_auth_header(
+        self,
+        server_url: str,
+        force_new: bool = False,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        body: Any = None,
+    ) -> Dict[str, str]:
+        """Get authentication headers for a request.
+
+        When a token is cached and force_new is False, this method returns
+        an Authorization Bearer header. Otherwise it generates either new HTTP
+        signature headers or a legacy DIDWba Authorization header depending on
+        auth_mode.
         """
         domain = self._get_domain(server_url)
-        
-        # If there is a token and not forcing a new authentication header, return the token
         if domain in self.tokens and not force_new:
             token = self.tokens[domain]
-            logging.info(f"Using existing token for domain {domain}")
+            logging.info("Using cached Bearer token for %s", domain)
             return {"Authorization": f"Bearer {token}"}
-        
-        # Otherwise, generate or use existing DID authentication header
-        if domain not in self.auth_headers or force_new:
-            self.auth_headers[domain] = self._generate_auth_header(domain)
-        
-        logging.info(f"Using DID authentication header for domain {domain}")
-        return {"Authorization": self.auth_headers[domain]}
-    
+
+        normalized_mode = self.auth_mode.lower()
+        if normalized_mode in {"http_signatures", "auto"}:
+            return self._generate_http_signature_header(
+                server_url=server_url,
+                method=method,
+                headers=headers,
+                body=body,
+            )
+        if normalized_mode == "legacy_didwba":
+            return self._generate_legacy_auth_header(domain)
+        raise ValueError(
+            "auth_mode must be one of: http_signatures, legacy_didwba, auto"
+        )
+
+    @staticmethod
+    def _parse_authentication_info(header_value: str) -> Dict[str, str]:
+        """Parse Authentication-Info key/value pairs."""
+        import re
+
+        parts = re.findall(r'(\w+)=("[^"]*"|[^,]+)', header_value)
+        result: Dict[str, str] = {}
+        for key, raw_value in parts:
+            value = raw_value.strip()
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            result[key] = value
+        return result
+
     def update_token(self, server_url: str, headers: Dict[str, str]) -> Optional[str]:
-        """
-        Update token from response headers.
-        
-        Args:
-            server_url: Server URL
-            headers: Response header dictionary
-            
-        Returns:
-            Optional[str]: Updated token, or None if no valid token is found
-        """
+        """Update the cached token from response headers."""
         domain = self._get_domain(server_url)
-        auth_header = headers.get("Authorization")
-        
+
+        authentication_info = self._get_header_case_insensitive(
+            headers, "Authentication-Info"
+        )
+        if authentication_info:
+            info = self._parse_authentication_info(authentication_info)
+            access_token = info.get("access_token")
+            token_type = info.get("token_type", "Bearer")
+            if access_token and token_type.lower() == "bearer":
+                self.tokens[domain] = access_token
+                logging.info(
+                    "Updated token from Authentication-Info for %s", domain
+                )
+                return access_token
+
+        auth_header = self._get_header_case_insensitive(headers, "Authorization")
         if auth_header and auth_header.lower().startswith("bearer "):
-            token = auth_header[7:]  # Remove "Bearer " prefix
+            token = auth_header[7:]
             self.tokens[domain] = token
-            logging.info(f"Updated token for domain {domain}: {token[:30]}...")
+            logging.info("Updated token from Authorization header for %s", domain)
             return token
-        else:
-            logging.debug(f"No valid token found in response headers for domain {domain}")
-            return None
-    
+
+        logging.debug("No bearer token found in response headers for %s", domain)
+        return None
+
     def clear_token(self, server_url: str) -> None:
-        """
-        Clear token for the specified domain.
-        
-        Args:
-            server_url: Server URL
-        """
+        """Clear token for the specified domain."""
         domain = self._get_domain(server_url)
         if domain in self.tokens:
             del self.tokens[domain]
-            logging.info(f"Cleared token for domain {domain}")
-        else:
-            logging.debug(f"No stored token for domain {domain}")
-    
+            logging.info("Cleared token for %s", domain)
+
     def clear_all_tokens(self) -> None:
-        """Clear all tokens for all domains"""
+        """Clear all cached tokens."""
         self.tokens.clear()
-        logging.info("Cleared all tokens for all domains")
-
-# # Example usage
-# async def example_usage():
-#     # Get current script directory
-#     current_dir = Path(__file__).parent
-#     # Get project root directory (parent of current directory)
-#     base_dir = current_dir.parent
-    
-#     # Create client with absolute paths
-#     client = DIDWbaAuthHeader(
-#         did_document_path=str(base_dir / "use_did_test_public/did.json"),
-#         private_key_path=str(base_dir / "use_did_test_public/key-1_private.pem")
-#     )
-    
-#     server_url = "http://localhost:9870"
-    
-#     # Get authentication header (first call, returns DID authentication header)
-#     headers = client.get_auth_header(server_url)
-    
-#     # Send request
-#     async with aiohttp.ClientSession() as session:
-#         async with session.get(
-#             f"{server_url}/agents/travel/hotel/ad/ph/12345/ad.json", 
-#             headers=headers
-#         ) as response:
-#             # Check response
-#             print(f"Status code: {response.status}")
-            
-#             # If authentication is successful, update token
-#             if response.status == 200:
-#                 token = client.update_token(server_url, dict(response.headers))
-#                 if token:
-#                     print(f"Received token: {token[:30]}...")
-#                 else:
-#                     print("No token received in response headers")
-            
-#             # If authentication fails and a token was used, clear the token and retry
-#             elif response.status == 401:
-#                 print("Invalid token, clearing and using DID authentication")
-#                 client.clear_token(server_url)
-#                 # Retry request here
-    
-#     # Get authentication header again (if a token was obtained in the previous step, this will return a token authentication header)
-#     headers = client.get_auth_header(server_url)
-#     print(f"Header for second request: {headers}")
-    
-#     # Force use of DID authentication header
-#     headers = client.get_auth_header(server_url, force_new=True)
-#     print(f"Forced use of DID authentication header: {headers}")
-    
-#     # Test different domain
-#     another_server_url = "http://api.example.com"
-#     headers = client.get_auth_header(another_server_url)
-#     print(f"Header for another domain: {headers}")
-
-# if __name__ == "__main__":
-#     asyncio.run(example_usage()) 
+        logging.info("Cleared all cached tokens")

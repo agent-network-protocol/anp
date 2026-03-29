@@ -6,12 +6,22 @@
 
 # DID-WBA身份认证示例
 
-本目录包含使用AgentConnect进行DID-WBA（Decentralized Identifier - Web-Based Authentication）身份认证的示例代码。
+本目录包含使用 AgentConnect 进行 DID-WBA 身份认证的示例代码。
+
+> **当前行为摘要**
+>
+> - 路径型 DID 默认创建为 `e1_` profile
+> - 默认客户端认证流程使用 HTTP Message Signatures
+> - 仍保留兼容旧 Authorization 认证流程客户端的模式
+> - `resolve_did_wba_document()` 会自动校验 `e1_` / `k1_` 绑定关系
+> - 对 `e1_`，DID Document proof 已经成为强绑定校验的一部分
 
 ## 文件说明
 
 ### 离线示例
-- `create_did_document.py` - 创建DID文档和密钥对
+- `create_did_document.py` - 创建 DID 文档和密钥对（路径型 DID 默认生成 `e1_...` 标识符）
+- `create_e1_did_document.py` - 显式创建 `e1_` DID 的示例
+- `create_k1_did_document.py` - 显式创建 `k1_` 兼容 DID 的示例
 - `authenticate_and_verify.py` - 完整的身份认证和验证流程演示
 - `validate_did_document.py` - 验证DID文档结构的有效性
 
@@ -51,8 +61,8 @@ uv sync
 **功能**：演示如何为智能体生成DID身份文档和相关密钥对
 
 **核心特性**：
-- 生成符合DID-WBA标准的身份文档
-- 创建secp256k1验证密钥对
+- 生成符合 DID-WBA 标准的身份文档
+- 默认创建 Ed25519 绑定密钥与 `e1_` 指纹路径
 - 自动配置验证方法和服务端点
 
 #### 运行示例
@@ -64,23 +74,32 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 ```
 DID document saved to .../generated/did.json
 Registered verification method key-1 → private key: key-1_private.pem public key: key-1_public.pem
-Generated DID identifier: did:wba:demo.agent-network:agents:demo
+Generated DID identifier: did:wba:demo.agent-network:agents:demo:e1_<fingerprint>
 ```
 
 #### 生成的文件
-- `generated/did.json` - DID文档
-- `generated/key-1_private.pem` - 私钥文件
-- `generated/key-1_public.pem` - 公钥文件
+- `generated/e1/did.json` - DID文档
+- `generated/e1/key-1_private.pem` - 私钥文件
+- `generated/e1/key-1_public.pem` - 公钥文件
+
+#### 显式 profile 示例
+```bash
+# 显式创建 e1 DID
+uv run python examples/python/did_wba_examples/create_e1_did_document.py
+
+# 显式创建 k1 兼容 DID
+uv run python examples/python/did_wba_examples/create_k1_did_document.py
+```
 
 ### 2. 身份认证验证 (`authenticate_and_verify.py`)
 
 **功能**：展示完整的DID-WBA身份认证流程，包括认证头生成和验证
 
 **核心流程**：
-1. 生成DID认证头
-2. 验证DID认证头
+1. 生成 DID 请求认证头（默认 HTTP Message Signatures）
+2. 验证 DID 请求签名
 3. 生成访问令牌
-4. 验证Bearer令牌
+4. 验证 Bearer 令牌
 
 #### 运行示例
 ```bash
@@ -89,14 +108,15 @@ uv run python examples/python/did_wba_examples/authenticate_and_verify.py
 
 #### 预期输出
 ```
-DID header verified. Issued bearer token.
+DID request verified. Auth scheme: http_signatures
+Issued bearer token.
 Bearer token verified. Associated DID: did:wba:...
 ```
 
 #### 技术要点
-- **DID解析**：本地模拟DID文档解析过程
+- **DID解析**：本地模拟 DID 文档解析过程
 - **JWT验证**：使用RS256算法进行令牌签名验证
-- **授权流程**：演示从DID认证到Bearer令牌的完整授权链
+- **授权流程**：演示从 DID 请求认证到 Bearer 令牌的完整授权链
 
 ### 4. HTTP端到端认证示例
 
@@ -128,8 +148,8 @@ Response: {'status': 'healthy', 'service': 'did-wba-http-server'}
 ============================================================
 Step 2: Access protected endpoint with DID authentication
 ============================================================
-Auth header type: DID WBA
-Authorization: DID-WBA did="did:wba:didhost.cc:public", nonce="...", timestamp=...
+Auth header type: HTTP Message Signatures
+Signature-Input: sig1=("...");created=...;keyid="did:wba:..."
 Status: 200
 Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': 'bearer'}
 Received Bearer token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
@@ -155,15 +175,15 @@ Demo completed successfully!
 
 #### 认证流程说明
 
-1. **首次请求（DID认证）**：客户端发送DID WBA认证头
-2. **服务端验证**：服务端验证签名，颁发JWT Bearer令牌
+1. **首次请求（DID认证）**：客户端默认发送 HTTP Message Signatures
+2. **服务端验证**：服务端验证 DID 绑定、proof 规则与请求签名，颁发 JWT Bearer 令牌
 3. **令牌缓存**：客户端缓存Bearer令牌用于后续请求
 4. **后续请求**：客户端使用缓存的Bearer令牌（更高效）
 
 #### 技术要点
 - **中间件架构**：使用FastAPI中间件统一处理认证
 - **本地DID解析**：为离线演示提供本地DID文档解析器
-- **令牌管理**：客户端自动管理DID认证头和Bearer令牌的切换
+- **令牌管理**：客户端自动管理请求认证头与 Bearer 令牌的切换
 
 ### 3. DID文档验证 (`validate_did_document.py`)
 
@@ -173,12 +193,16 @@ Demo completed successfully!
 - DID标识符格式（必须以`did:wba:`开头）
 - 必需的JSON-LD上下文
 - 验证方法完整性
-- 公钥JWK格式验证
+- DID 与 DID 文档中的绑定公钥是否一致
+- 对 `e1_`，proof 是否存在且有效
 - 服务端点有效性
 
 #### 运行示例
 ```bash
 uv run python examples/python/did_wba_examples/validate_did_document.py
+
+# 验证 k1 文档
+uv run python examples/python/did_wba_examples/validate_did_document.py --profile k1
 ```
 
 #### 预期输出
@@ -190,17 +214,24 @@ DID document validation succeeded.
 
 ### DID标识符结构
 ```
-did:wba:domain:path:segments
+did:wba:domain:path:segments:e1_<fingerprint>
 ```
 - `did:wba` - DID方法标识符
 - `domain` - 主域名
 - `path:segments` - 路径段，标识特定智能体
+- `e1_<fingerprint>` - 默认 profile 的 Ed25519 绑定指纹
 
-### 验证方法
-使用`EcdsaSecp256k1VerificationKey2019`类型：
-- **算法**：ECDSA with secp256k1 curve
-- **格式**：JWK (JSON Web Key)
-- **用途**：数字签名和身份验证
+### 默认验证方法
+默认 `e1_` profile 使用：
+- **类型**：`Multikey`
+- **算法**：Ed25519
+- **格式**：`publicKeyMultibase`
+- **用途**：DID 绑定、公钥证明、默认身份认证签名
+
+兼容 `k1_` profile 仍可使用：
+- **类型**：`EcdsaSecp256k1VerificationKey2019`
+- **格式**：JWK
+- **用途**：兼容旧版身份认证与钱包生态
 
 ### 服务端点
 - **类型**：`AgentDescription`
@@ -278,7 +309,12 @@ headers = authenticator.get_auth_header(server_url)
 
 # 3. 验证认证
 verifier = DidWbaVerifier(config)
-result = await verifier.verify_auth_header(authorization, domain)
+result = await verifier.verify_request(
+    method="GET",
+    url=server_url,
+    headers=headers,
+    body=b"",
+)
 ```
 
 ## 集成指南

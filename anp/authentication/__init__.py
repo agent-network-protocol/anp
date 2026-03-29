@@ -16,6 +16,12 @@ from .did_wba import (
 )
 from .did_wba_authenticator import DIDWbaAuthHeader
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
+from .http_signatures import (
+    build_content_digest,
+    extract_signature_metadata,
+    generate_http_signature_headers,
+    verify_http_message_signature,
+)
 
 # Define what should be exported when using "from anp.authentication import *"
 __all__ = ['VM_KEY_AUTH', \
@@ -35,6 +41,9 @@ __all__ = ['VM_KEY_AUTH', \
            'DIDWbaAuthHeader', \
            'DidWbaVerifier', \
            'DidWbaVerifierConfig', \
-           'DidWbaVerifierError'
+           'DidWbaVerifierError', \
+           'build_content_digest', \
+           'generate_http_signature_headers', \
+           'verify_http_message_signature', \
+           'extract_signature_metadata'
            ]
-

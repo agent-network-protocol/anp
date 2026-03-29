@@ -291,6 +291,8 @@ class Ed25519VerificationKey2018(VerificationMethod):
         if not multibase.startswith('z'):
             raise ValueError("Unsupported multibase encoding")
         key_bytes = base58.b58decode(multibase[1:])
+        if len(key_bytes) == 34 and key_bytes[:2] == b"\xed\x01":
+            key_bytes = key_bytes[2:]
         return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
 
     @staticmethod
@@ -318,6 +320,8 @@ def create_verification_method(method_dict: Dict) -> VerificationMethod:
         'EcdsaSecp256r1VerificationKey2019': EcdsaSecp256r1VerificationKey2019,
         'X25519KeyAgreementKey2019': X25519KeyAgreementKey2019,
         'Ed25519VerificationKey2018': Ed25519VerificationKey2018,
+        'Ed25519VerificationKey2020': Ed25519VerificationKey2018,
+        'Multikey': Ed25519VerificationKey2018,
     }
     
     method_class = method_mapping.get(method_type)

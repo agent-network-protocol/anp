@@ -20,6 +20,17 @@ The goal of Agent Network Protocol (ANP) is to become the **HTTP of the Intellig
 
 Want to add decentralized identity authentication to your agent? Check out the [DID WBA Authentication Integration Guide](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.en.md) to quickly add DID WBA authentication to any Python HTTP service.
 
+### Current DID-WBA defaults
+
+- **Path DID creation defaults to `e1_`**: `create_did_wba_document()` now creates path-based DIDs using an Ed25519 `Multikey` binding key by default.
+- **HTTP Message Signatures are the default request auth format**: `DIDWbaAuthHeader` now emits `Signature-Input` / `Signature` (and `Content-Digest` when needed) by default.
+- **Legacy compatibility mode remains supported**: use `auth_mode="legacy_didwba"` when interoperating with older clients that still rely on the previous Authorization-header flow.
+- **Access tokens are returned via `Authentication-Info`**: the server also emits a compatibility `Authorization: Bearer ...` response header during the migration window.
+- **Resolver behavior is stricter now**:
+  - `resolve_did_wba_document()` always validates DID/document key binding for `e1_` and `k1_`
+  - for `e1_`, proof is part of the binding check and must be a valid `DataIntegrityProof` using `eddsa-jcs-2022`
+  - for `k1_`, proof remains optional unless `verify_proof=True`; in strict mode, the proof verification method must also be the binding key
+
 ---
 
 ## 🚀 Quick Start - Build an ANP Agent in 30 Seconds

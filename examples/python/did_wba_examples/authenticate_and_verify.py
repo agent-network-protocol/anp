@@ -32,7 +32,7 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 
 async def run_demo() -> None:
-    """Generate a DID WBA header and verify it offline."""
+    """Generate DID auth headers and verify them offline."""
     root = project_root()
     did_document_path = root / "docs/did_public/public-did-doc.json"
     did_private_key_path = root / "docs/did_public/public-private-key.pem"
@@ -59,7 +59,6 @@ async def run_demo() -> None:
         server_url = "https://didhost.cc/public/resource"
         domain = urlparse(server_url).hostname or "didhost.cc"
         did_headers = authenticator.get_auth_header(server_url, force_new=True)
-        did_authorization = did_headers["Authorization"]
 
         verifier = DidWbaVerifier(
             DidWbaVerifierConfig(
@@ -70,16 +69,24 @@ async def run_demo() -> None:
             )
         )
 
-        verification_result = await verifier.verify_auth_header(
-            authorization=did_authorization,
+        verification_result = await verifier.verify_request(
+            method="GET",
+            url=server_url,
+            headers=did_headers,
+            body=b"",
             domain=domain,
         )
         access_token = verification_result["access_token"]
-        print("DID header verified. Issued bearer token.")
+        print(
+            "DID request verified.",
+            "Auth scheme:",
+            verification_result["auth_scheme"],
+        )
+        print("Issued bearer token.")
 
         authenticator.update_token(
             server_url,
-            {"Authorization": f"Bearer {access_token}"},
+            verification_result["response_headers"],
         )
         bearer_headers = authenticator.get_auth_header(server_url)
         bearer_authorization = bearer_headers["Authorization"]

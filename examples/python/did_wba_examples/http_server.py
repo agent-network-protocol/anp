@@ -129,9 +129,7 @@ def create_app() -> FastAPI:
         return {
             "did": did,
             "authenticated": did is not None,
-            "auth_method": (
-                "bearer" if auth_result and "access_token" not in auth_result else "did"
-            ),
+            "auth_method": auth_result.get("auth_scheme") if auth_result else None,
             "details": {
                 "did_method": did.split(":")[1] if did else None,
                 "did_identifier": did.split(":")[-1] if did else None,

@@ -2,22 +2,43 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 from anp.authentication import create_did_wba_document
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Create a DID WBA document and save generated artifacts.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("e1", "k1", "plain_legacy"),
+        default="e1",
+        help="DID profile to generate.",
+    )
+    parser.add_argument(
+        "--hostname",
+        default="demo.agent-network",
+        help="Hostname used in the DID.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Create a DID document and persist the generated artifacts."""
-    hostname = "demo.agent-network"
+    args = parse_args()
     did_document, keys = create_did_wba_document(
-        hostname=hostname,
+        hostname=args.hostname,
         path_segments=["agents", "demo"],
-        agent_description_url="https://demo.agent-network/agents/demo",
+        agent_description_url=f"https://{args.hostname}/agents/demo",
+        did_profile=args.profile,
     )
 
-    output_dir = Path(__file__).resolve().parent / "generated"
+    output_dir = Path(__file__).resolve().parent / "generated" / args.profile
     output_dir.mkdir(parents=True, exist_ok=True)
 
     did_path = output_dir / "did.json"
@@ -39,6 +60,13 @@ def main() -> None:
         )
 
     print(f"Generated DID identifier: {did_document['id']}")
+    proof = did_document.get("proof", {})
+    if proof:
+        print(
+            "Generated proof profile:",
+            proof.get("type"),
+            proof.get("cryptosuite", "<legacy>"),
+        )
 
 
 if __name__ == "__main__":

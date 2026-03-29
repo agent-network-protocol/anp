@@ -23,6 +23,8 @@ Flow:
 Supported Proof Types:
     - EcdsaSecp256k1Signature2019: ECDSA with secp256k1 curve + SHA-256
     - Ed25519Signature2020: Ed25519 (RFC 8032)
+    - DataIntegrityProof + eddsa-jcs-2022: Ed25519 + JCS
+    - DataIntegrityProof + didwba-jcs-ecdsa-secp256k1-2025: secp256k1 + JCS
 """
 
 import base64
@@ -34,11 +36,15 @@ from typing import Any, Dict, Optional, Union
 
 import jcs
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 
 # Proof type constants
 PROOF_TYPE_SECP256K1 = "EcdsaSecp256k1Signature2019"
 PROOF_TYPE_ED25519 = "Ed25519Signature2020"
+PROOF_TYPE_DATA_INTEGRITY = "DataIntegrityProof"
+
+CRYPTOSUITE_EDDSA_JCS_2022 = "eddsa-jcs-2022"
+CRYPTOSUITE_DIDWBA_SECP256K1_2025 = "didwba-jcs-ecdsa-secp256k1-2025"
 
 # Mapping from proof type to key type for validation
 _PROOF_TYPE_KEY_MAP = {
@@ -49,6 +55,16 @@ _PROOF_TYPE_KEY_MAP = {
 _PROOF_TYPE_PUBLIC_KEY_MAP = {
     PROOF_TYPE_SECP256K1: ec.EllipticCurvePublicKey,
     PROOF_TYPE_ED25519: ed25519.Ed25519PublicKey,
+}
+
+_CRYPTOSUITE_KEY_MAP = {
+    CRYPTOSUITE_EDDSA_JCS_2022: ed25519.Ed25519PrivateKey,
+    CRYPTOSUITE_DIDWBA_SECP256K1_2025: ec.EllipticCurvePrivateKey,
+}
+
+_CRYPTOSUITE_PUBLIC_KEY_MAP = {
+    CRYPTOSUITE_EDDSA_JCS_2022: ed25519.Ed25519PublicKey,
+    CRYPTOSUITE_DIDWBA_SECP256K1_2025: ec.EllipticCurvePublicKey,
 }
 
 
@@ -146,6 +162,7 @@ def generate_w3c_proof(
     verification_method: str,
     proof_purpose: str = "assertionMethod",
     proof_type: Optional[str] = None,
+    cryptosuite: Optional[str] = None,
     created: Optional[str] = None,
     domain: Optional[str] = None,
     challenge: Optional[str] = None,
@@ -170,6 +187,7 @@ def generate_w3c_proof(
             - "capabilityInvocation": Invoking a capability
             - "capabilityDelegation": Delegating a capability
         proof_type: Explicit proof type. If None, auto-detected from key type.
+        cryptosuite: Optional cryptosuite for DataIntegrityProof.
         created: ISO 8601 timestamp. If None, uses current UTC time.
         domain: Optional domain restriction for the proof.
         challenge: Optional challenge string for the proof.
@@ -205,13 +223,32 @@ def generate_w3c_proof(
                 f"Supported: EllipticCurvePrivateKey (secp256k1), Ed25519PrivateKey"
             )
 
-    # Validate key type matches proof type
-    expected_key_type = _PROOF_TYPE_KEY_MAP.get(proof_type)
-    if expected_key_type is None:
-        raise ValueError(
-            f"Unsupported proof type: {proof_type}. "
-            f"Supported: {PROOF_TYPE_SECP256K1}, {PROOF_TYPE_ED25519}"
-        )
+    # Validate key type matches proof type / cryptosuite
+    if proof_type == PROOF_TYPE_DATA_INTEGRITY:
+        if cryptosuite is None:
+            if isinstance(private_key, ed25519.Ed25519PrivateKey):
+                cryptosuite = CRYPTOSUITE_EDDSA_JCS_2022
+            elif isinstance(private_key, ec.EllipticCurvePrivateKey):
+                cryptosuite = CRYPTOSUITE_DIDWBA_SECP256K1_2025
+            else:
+                raise ValueError(
+                    f"Unsupported private key type: {type(private_key).__name__}"
+                )
+        expected_key_type = _CRYPTOSUITE_KEY_MAP.get(cryptosuite)
+        if expected_key_type is None:
+            raise ValueError(
+                f"Unsupported cryptosuite: {cryptosuite}. "
+                f"Supported: {CRYPTOSUITE_EDDSA_JCS_2022}, "
+                f"{CRYPTOSUITE_DIDWBA_SECP256K1_2025}"
+            )
+    else:
+        expected_key_type = _PROOF_TYPE_KEY_MAP.get(proof_type)
+        if expected_key_type is None:
+            raise ValueError(
+                f"Unsupported proof type: {proof_type}. "
+                f"Supported: {PROOF_TYPE_SECP256K1}, {PROOF_TYPE_ED25519}, "
+                f"{PROOF_TYPE_DATA_INTEGRITY}"
+            )
     if not isinstance(private_key, expected_key_type):
         raise ValueError(
             f"Key type mismatch: proof type '{proof_type}' requires "
@@ -229,6 +266,8 @@ def generate_w3c_proof(
         "verificationMethod": verification_method,
         "proofPurpose": proof_purpose,
     }
+    if cryptosuite is not None:
+        proof_options["cryptosuite"] = cryptosuite
     if domain is not None:
         proof_options["domain"] = domain
     if challenge is not None:
@@ -245,6 +284,13 @@ def generate_w3c_proof(
         signature = _sign_secp256k1(private_key, to_be_signed)
     elif proof_type == PROOF_TYPE_ED25519:
         signature = _sign_ed25519(private_key, to_be_signed)
+    elif proof_type == PROOF_TYPE_DATA_INTEGRITY:
+        if cryptosuite == CRYPTOSUITE_EDDSA_JCS_2022:
+            signature = _sign_ed25519(private_key, to_be_signed)
+        elif cryptosuite == CRYPTOSUITE_DIDWBA_SECP256K1_2025:
+            signature = _sign_secp256k1(private_key, to_be_signed)
+        else:
+            raise ValueError(f"Unsupported cryptosuite: {cryptosuite}")
 
     # Encode signature
     proof_value = _b64url_encode(signature)
@@ -304,10 +350,17 @@ def verify_w3c_proof(
             return False
 
         # Validate proof type
-        expected_key_type = _PROOF_TYPE_PUBLIC_KEY_MAP.get(proof_type)
-        if expected_key_type is None:
-            logging.error(f"Unsupported proof type: {proof_type}")
-            return False
+        cryptosuite = proof.get("cryptosuite")
+        if proof_type == PROOF_TYPE_DATA_INTEGRITY:
+            expected_key_type = _CRYPTOSUITE_PUBLIC_KEY_MAP.get(cryptosuite)
+            if expected_key_type is None:
+                logging.error("Unsupported DataIntegrity cryptosuite: %s", cryptosuite)
+                return False
+        else:
+            expected_key_type = _PROOF_TYPE_PUBLIC_KEY_MAP.get(proof_type)
+            if expected_key_type is None:
+                logging.error(f"Unsupported proof type: {proof_type}")
+                return False
 
         if not isinstance(public_key, expected_key_type):
             logging.error(
@@ -351,6 +404,12 @@ def verify_w3c_proof(
             return _verify_secp256k1(public_key, to_be_signed, signature)
         elif proof_type == PROOF_TYPE_ED25519:
             return _verify_ed25519(public_key, to_be_signed, signature)
+        elif proof_type == PROOF_TYPE_DATA_INTEGRITY:
+            if cryptosuite == CRYPTOSUITE_EDDSA_JCS_2022:
+                return _verify_ed25519(public_key, to_be_signed, signature)
+            if cryptosuite == CRYPTOSUITE_DIDWBA_SECP256K1_2025:
+                return _verify_secp256k1(public_key, to_be_signed, signature)
+            return False
 
         return False
 

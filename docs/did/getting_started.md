@@ -12,6 +12,13 @@
 - 使用DID私钥对HTTP请求进行签名
 - DID身份验证
 
+> **当前 SDK 重要默认行为**
+>
+> - 路径型 DID 默认创建为 `e1_` profile
+> - 默认请求认证格式为 HTTP Message Signatures，而不是旧版 `Authorization: DIDWba ...`
+> - `resolve_did_wba_document()` 会自动校验 `e1_` / `k1_` DID 绑定关系
+> - 对 `e1_` DID，DID Document proof 已纳入强绑定校验，必须存在且有效
+
 ## 2. DID文档和私钥创建
 
 ### 2.1 基本概念
@@ -41,7 +48,7 @@ did_document, keys = create_did_wba_document(
 # keys is a dictionary containing private and public keys in format {method_fragment: (private_key_bytes, public_key_bytes)}
 ```
 
-生成的DID将格式为: `did:wba:example.com:user:alice`
+生成的路径型 DID 默认格式为：`did:wba:example.com:user:alice:e1_<fingerprint>`
 
 ### 2.3 保存私钥和DID文档
 
@@ -153,10 +160,10 @@ if __name__ == '__main__':
 
 DID WBA身份验证过程包括：
 
-1. 客户端生成一个nonce（随机数）和时间戳
-2. 客户端使用私钥对包含nonce、时间戳、服务域名和DID的数据进行签名
-3. 客户端将DID、nonce、时间戳、验证方法ID和签名发送到服务器
-4. 服务器解析DID文档，验证签名
+1. 默认情况下，客户端构造 `Signature-Input` / `Signature`（如有消息体再加 `Content-Digest`）
+2. 客户端使用 DID 绑定私钥对 HTTP Message Signature base 进行签名
+3. 服务端解析 DID 文档，验证 DID 绑定关系与请求签名
+4. 首次认证成功后，服务端返回 access token，后续请求可直接使用 Bearer token
 
 ### 4.2 创建身份验证头
 
@@ -171,7 +178,7 @@ auth_client = DIDWbaAuthHeader(
     private_key_path="path/to/key-1_private.pem"
 )
 
-# Get authentication header for specific URL
+# Get authentication headers for a specific URL
 url = "https://example.com/resource"
 auth_headers = auth_client.get_auth_header(url)
 
@@ -182,7 +189,32 @@ async with aiohttp.ClientSession() as session:
         pass
 ```
 
-### 4.3 手动创建身份验证头
+### 4.3 当前默认头格式
+
+当前 SDK 默认生成的是 HTTP Message Signatures 相关头字段，例如：
+
+```http
+Signature-Input: sig1=("@method" "@target-uri" "@authority");created=...;expires=...;nonce="...";keyid="did:wba:example.com:user:alice:e1_<fingerprint>#key-1"
+Signature: sig1=:...:
+```
+
+如果客户端需要旧版兼容行为，可以显式指定：
+
+```python
+auth_client = DIDWbaAuthHeader(
+    did_document_path="path/to/did.json",
+    private_key_path="path/to/key-1_private.pem",
+    auth_mode="legacy_didwba",
+)
+```
+
+这时客户端将发送旧版：
+
+```http
+Authorization: DIDWba did="did:wba:example.com:user:alice:k1_<fingerprint>", nonce="...", timestamp="...", verification_method="key-1", signature="..."
+```
+
+### 4.4 手动创建旧版身份验证头（兼容）
 
 如果需要更精细的控制，可以手动创建身份验证头：
 

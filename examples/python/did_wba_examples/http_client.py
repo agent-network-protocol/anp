@@ -63,8 +63,12 @@ def main() -> None:
         print("Step 2: Access protected endpoint with DID authentication")
         print("=" * 60)
         headers = authenticator.get_auth_header(SERVER_URL, force_new=True)
-        print(f"Auth header type: DID WBA")
-        print(f"Authorization: {headers['Authorization'][:80]}...")
+        if "Signature-Input" in headers:
+            print("Auth header type: HTTP Message Signatures")
+            print(f"Signature-Input: {headers['Signature-Input'][:80]}...")
+        else:
+            print("Auth header type: Legacy DIDWba")
+            print(f"Authorization: {headers['Authorization'][:80]}...")
 
         response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
 
@@ -77,17 +81,13 @@ def main() -> None:
         print(f"Status: {response.status_code}")
         print(f"Response: {response.json()}")
 
-        auth_header = response.headers.get("authorization")
-        if auth_header:
-            token = authenticator.update_token(
-                SERVER_URL, {"Authorization": auth_header}
-            )
-            if token:
-                print(f"Received Bearer token: {token[:50]}...")
-            else:
-                print("No Bearer token received")
+        token = authenticator.update_token(
+            SERVER_URL, dict(response.headers)
+        )
+        if token:
+            print(f"Received Bearer token: {token[:50]}...")
         else:
-            print("No authorization header in response")
+            print("No Bearer token received")
 
         print("\n" + "=" * 60)
         print("Step 3: Access protected endpoint with cached Bearer token")

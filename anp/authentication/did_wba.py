@@ -28,7 +28,14 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from anp.proof import generate_w3c_proof, verify_w3c_proof
+from anp.proof import (
+    CRYPTOSUITE_DIDWBA_SECP256K1_2025,
+    CRYPTOSUITE_EDDSA_JCS_2022,
+    PROOF_TYPE_DATA_INTEGRITY,
+    PROOF_TYPE_SECP256K1,
+    generate_w3c_proof,
+    verify_w3c_proof,
+)
 
 from .verification_methods import CURVE_MAPPING, create_verification_method
 
@@ -50,6 +57,19 @@ def _is_ip_address(hostname: str) -> bool:
 def _encode_base64url(data: bytes) -> str:
     """Encode bytes data to base64url format"""
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
+
+
+def _jwk_thumbprint(jwk: Dict[str, str]) -> str:
+    """Compute RFC 7638 JWK thumbprint for a minimal JWK dict."""
+    ordered = {key: jwk[key] for key in sorted(jwk.keys())}
+    canonical = json.dumps(
+        ordered,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).digest()
+    return _encode_base64url(digest)
 
 def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
     """
@@ -73,9 +93,12 @@ def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
     x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
     y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
     # Canonical JSON with fixed field order (alphabetical, matching RFC 7638)
-    canonical = f'{{"crv":"secp256k1","kty":"EC","x":"{x}","y":"{y}"}}'
-    digest = hashlib.sha256(canonical.encode('ascii')).digest()
-    return _encode_base64url(digest)
+    return _jwk_thumbprint({
+        "crv": "secp256k1",
+        "kty": "EC",
+        "x": x,
+        "y": y,
+    })
 
 
 def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
@@ -91,6 +114,88 @@ def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
         "x": x,
         "y": y,
         "kid": kid
+    }
+
+
+def _ed25519_public_key_to_multibase(
+    public_key: ed25519.Ed25519PublicKey,
+) -> str:
+    """Convert an Ed25519 public key to multibase format."""
+    raw = public_key.public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+    return "z" + base58.b58encode(b"\xed\x01" + raw).decode("ascii")
+
+
+def _ed25519_public_key_to_jwk(
+    public_key: ed25519.Ed25519PublicKey,
+) -> Dict[str, str]:
+    """Convert an Ed25519 public key to JWK format."""
+    raw = public_key.public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+    return {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": _encode_base64url(raw),
+    }
+
+
+def compute_multikey_fingerprint(public_key: ed25519.Ed25519PublicKey) -> str:
+    """Compute the RFC 7638 thumbprint for an Ed25519 key."""
+    return _jwk_thumbprint(_ed25519_public_key_to_jwk(public_key))
+
+
+def _build_service_entries(
+    did: str,
+    agent_description_url: Optional[str],
+    services: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Build service entries for a DID document."""
+    all_services: List[Dict[str, Any]] = []
+    if agent_description_url is not None:
+        all_services.append({
+            "id": f"{did}#ad",
+            "type": "AgentDescription",
+            "serviceEndpoint": agent_description_url,
+        })
+    if services:
+        for svc in services:
+            svc_id = svc.get("id", "")
+            if svc_id.startswith("#"):
+                svc = {**svc, "id": f"{did}{svc_id}"}
+            all_services.append(svc)
+    return all_services
+
+
+def _build_did_base(hostname: str, port: Optional[int]) -> str:
+    """Build the base DID string without path segments."""
+    did_base = f"did:wba:{hostname}"
+    if port is not None:
+        encoded_port = urllib.parse.quote(f":{port}")
+        did_base = f"{did_base}{encoded_port}"
+    return did_base
+
+
+def _build_ed25519_binding_entry(
+    did: str,
+    public_key: ed25519.Ed25519PublicKey,
+) -> Dict[str, Any]:
+    """Build an e1 binding verification method."""
+    return {
+        "id": f"{did}#{VM_KEY_AUTH}",
+        "type": "Multikey",
+        "controller": did,
+        "publicKeyMultibase": _ed25519_public_key_to_multibase(public_key),
+    }
+
+
+def _build_secp256k1_binding_entry(
+    did: str,
+    public_key: ec.EllipticCurvePublicKey,
+) -> Dict[str, Any]:
+    """Build a k1/plain legacy binding verification method."""
+    return {
+        "id": f"{did}#{VM_KEY_AUTH}",
+        "type": "EcdsaSecp256k1VerificationKey2019",
+        "controller": did,
+        "publicKeyJwk": _public_key_to_jwk(public_key),
     }
 
 
@@ -202,9 +307,10 @@ def create_did_wba_document(
     created: Optional[str] = None,
     # --- E2EE 参数 ---
     enable_e2ee: bool = True,
+    did_profile: str = "e1",
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
-    Generate DID document and corresponding private key dictionary
+    Generate a DID document and corresponding private key dictionary.
 
     Args:
         hostname: Hostname
@@ -222,6 +328,10 @@ def create_did_wba_document(
         created: Optional ISO 8601 timestamp for proof
         enable_e2ee: If True (default), add secp256r1 (#key-2) and X25519
             (#key-3) verification methods for E2EE support.
+        did_profile: DID profile. Supported values:
+            - "e1": Default profile using Ed25519 + Multikey for path binding.
+            - "k1": Compatibility profile using secp256k1 + JWK for path binding.
+            - "plain_legacy": Legacy compatibility profile without path binding.
 
     Returns:
         Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
@@ -238,105 +348,133 @@ def create_did_wba_document(
     if _is_ip_address(hostname):
         raise ValueError("Hostname cannot be an IP address")
 
-    logging.info(f"Creating DID WBA document for hostname: {hostname}")
-
-    # Build base DID
-    did_base = f"did:wba:{hostname}"
-    if port is not None:
-        encoded_port = urllib.parse.quote(f":{port}")
-        did_base = f"{did_base}{encoded_port}"
-        logging.debug(f"Added port to DID base: {did_base}")
-
-    did = did_base
-    if path_segments:
-        did_path = ":".join(path_segments)
-        did = f"{did_base}:{did_path}"
-        logging.debug(f"Added path segments to DID: {did}")
-
-    # Generate secp256k1 key pair
-    logging.debug("Generating secp256k1 key pair")
-    secp256k1_private_key = ec.generate_private_key(ec.SECP256K1())
-    secp256k1_public_key = secp256k1_private_key.public_key()
-
-    # Build verification method
-    vm_entry = {
-        "id": f"{did}#{VM_KEY_AUTH}",
-        "type": "EcdsaSecp256k1VerificationKey2019",
-        "controller": did,
-        "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
-    }
-
-    verification_methods = [vm_entry]
-    contexts = [
-        "https://www.w3.org/ns/did/v1",
-        "https://w3id.org/security/suites/jws-2020/v1",
-        "https://w3id.org/security/suites/secp256k1-2019/v1",
-    ]
-
-    # Build keys dictionary with both private and public keys in PEM format
-    keys = {
-        VM_KEY_AUTH: (
-            secp256k1_private_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption()
-            ),
-            secp256k1_public_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo
-            )
+    if did_profile not in {"e1", "k1", "plain_legacy"}:
+        raise ValueError(
+            "did_profile must be one of: e1, k1, plain_legacy"
         )
-    }
 
-    # Build DID document
-    did_document = {
-        "@context": contexts,
-        "id": did,
-        "verificationMethod": verification_methods,
-        "authentication": [vm_entry["id"]],
-    }
+    logging.info(
+        "Creating DID WBA document for hostname %s using profile %s",
+        hostname,
+        did_profile,
+    )
 
-    # Add E2EE keys if enabled
+    did_base = _build_did_base(hostname, port)
+    effective_path_segments = list(path_segments or [])
+    contexts = ["https://www.w3.org/ns/did/v1"]
+    did_document: Dict[str, Any]
+    keys: Dict[str, Tuple[bytes, bytes]]
+
+    if did_profile == "e1":
+        auth_private_key = ed25519.Ed25519PrivateKey.generate()
+        auth_public_key = auth_private_key.public_key()
+        if effective_path_segments:
+            effective_path_segments.append(
+                f"e1_{compute_multikey_fingerprint(auth_public_key)}"
+            )
+        did = did_base if not effective_path_segments else (
+            f"{did_base}:{':'.join(effective_path_segments)}"
+        )
+        vm_entry = _build_ed25519_binding_entry(did, auth_public_key)
+        verification_methods = [vm_entry]
+        contexts.extend([
+            "https://w3id.org/security/data-integrity/v2",
+            "https://w3id.org/security/multikey/v1",
+        ])
+        keys = {
+            VM_KEY_AUTH: (
+                auth_private_key.private_bytes(
+                    encoding=Encoding.PEM,
+                    format=PrivateFormat.PKCS8,
+                    encryption_algorithm=NoEncryption(),
+                ),
+                auth_public_key.public_bytes(
+                    encoding=Encoding.PEM,
+                    format=PublicFormat.SubjectPublicKeyInfo,
+                ),
+            )
+        }
+        did_document = {
+            "@context": contexts,
+            "id": did,
+            "verificationMethod": verification_methods,
+            "authentication": [vm_entry["id"]],
+            "assertionMethod": [vm_entry["id"]],
+        }
+        proof_type = PROOF_TYPE_DATA_INTEGRITY
+        cryptosuite = CRYPTOSUITE_EDDSA_JCS_2022
+        proof_private_key = auth_private_key
+    else:
+        auth_private_key = ec.generate_private_key(ec.SECP256K1())
+        auth_public_key = auth_private_key.public_key()
+        if effective_path_segments and did_profile == "k1":
+            effective_path_segments.append(
+                f"k1_{compute_jwk_fingerprint(auth_public_key)}"
+            )
+        did = did_base if not effective_path_segments else (
+            f"{did_base}:{':'.join(effective_path_segments)}"
+        )
+        vm_entry = _build_secp256k1_binding_entry(did, auth_public_key)
+        verification_methods = [vm_entry]
+        contexts.extend([
+            "https://w3id.org/security/suites/jws-2020/v1",
+            "https://w3id.org/security/suites/secp256k1-2019/v1",
+        ])
+        if did_profile == "k1":
+            contexts.append("https://w3id.org/security/data-integrity/v2")
+        keys = {
+            VM_KEY_AUTH: (
+                auth_private_key.private_bytes(
+                    encoding=Encoding.PEM,
+                    format=PrivateFormat.PKCS8,
+                    encryption_algorithm=NoEncryption(),
+                ),
+                auth_public_key.public_bytes(
+                    encoding=Encoding.PEM,
+                    format=PublicFormat.SubjectPublicKeyInfo,
+                ),
+            )
+        }
+        did_document = {
+            "@context": contexts,
+            "id": did,
+            "verificationMethod": verification_methods,
+            "authentication": [vm_entry["id"]],
+        }
+        if did_profile == "k1":
+            did_document["assertionMethod"] = [vm_entry["id"]]
+            proof_type = PROOF_TYPE_DATA_INTEGRITY
+            cryptosuite = CRYPTOSUITE_DIDWBA_SECP256K1_2025
+        else:
+            proof_type = PROOF_TYPE_SECP256K1
+            cryptosuite = None
+        proof_private_key = auth_private_key
+
     if enable_e2ee:
         e2ee_vms, ka_refs, e2ee_keys = _build_e2ee_entries(did)
-        verification_methods.extend(e2ee_vms)
+        did_document["verificationMethod"].extend(e2ee_vms)
         did_document["keyAgreement"] = ka_refs
         contexts.append("https://w3id.org/security/suites/x25519-2019/v1")
         keys.update(e2ee_keys)
 
-    # 合并所有 service 条目
-    all_services = []
-    if agent_description_url is not None:
-        all_services.append({
-            "id": f"{did}#ad",
-            "type": "AgentDescription",
-            "serviceEndpoint": agent_description_url,
-        })
-    if services:
-        for svc in services:
-            svc_id = svc.get("id", "")
-            if svc_id.startswith("#"):
-                svc = {**svc, "id": f"{did}{svc_id}"}
-            all_services.append(svc)
+    all_services = _build_service_entries(did, agent_description_url, services)
     if all_services:
         did_document["service"] = all_services
 
-    # Self-sign the DID document with W3C Data Integrity Proof
-    proof_vm = verification_method
-    if proof_vm is None:
-        proof_vm = did_document["verificationMethod"][0]["id"]
-
+    proof_vm = verification_method or vm_entry["id"]
     did_document = generate_w3c_proof(
         document=did_document,
-        private_key=secp256k1_private_key,
+        private_key=proof_private_key,
         verification_method=proof_vm,
         proof_purpose=proof_purpose,
+        proof_type=proof_type,
+        cryptosuite=cryptosuite,
         domain=domain,
         challenge=challenge,
         created=created,
     )
 
-    logging.info(f"Successfully created DID document with ID: {did}")
+    logging.info("Successfully created DID document with ID: %s", did)
     return did_document, keys
 
 
@@ -355,16 +493,7 @@ def create_did_wba_document_with_key_binding(
     enable_e2ee: bool = True,
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
-    Generate a key-bound DID document where the DID identifier contains a
-    cryptographic fingerprint of the public key (JWK Thumbprint per RFC 7638).
-
-    The DID format is: did:wba:{domain}:{path_prefix}:k1_{fingerprint}
-    where k1_ is a version prefix for secp256k1 + SHA-256, and fingerprint
-    is a 43-character base64url-encoded JWK Thumbprint.
-
-    This binding prevents the hosting provider from replacing the public key
-    in the DID document, since any such change would invalidate the fingerprint
-    embedded in the DID itself.
+    Create a compatibility key-bound DID document using the k1 profile.
 
     Args:
         hostname: Hostname
@@ -393,133 +522,44 @@ def create_did_wba_document_with_key_binding(
     Raises:
         ValueError: If hostname is empty or is an IP address
     """
-    if not hostname:
-        raise ValueError("Hostname cannot be empty")
-
-    if _is_ip_address(hostname):
-        raise ValueError("Hostname cannot be an IP address")
-
     if path_prefix is None:
         path_prefix = ["user"]
 
-    logging.info(f"Creating key-bound DID WBA document for hostname: {hostname}")
-
-    # Generate secp256k1 key pair
-    secp256k1_private_key = ec.generate_private_key(ec.SECP256K1())
-    secp256k1_public_key = secp256k1_private_key.public_key()
-
-    # Compute JWK Thumbprint fingerprint
-    fp = compute_jwk_fingerprint(secp256k1_public_key)
-    unique_id = f"k1_{fp}"
-
-    # Build path segments: path_prefix + key-bound ID
-    path_segments = path_prefix + [unique_id]
-
-    # Build base DID
-    did_base = f"did:wba:{hostname}"
-    if port is not None:
-        encoded_port = urllib.parse.quote(f":{port}")
-        did_base = f"{did_base}{encoded_port}"
-
-    did_path = ":".join(path_segments)
-    did = f"{did_base}:{did_path}"
-
-    # Build verification method
-    vm_entry = {
-        "id": f"{did}#{VM_KEY_AUTH}",
-        "type": "EcdsaSecp256k1VerificationKey2019",
-        "controller": did,
-        "publicKeyJwk": _public_key_to_jwk(secp256k1_public_key)
-    }
-
-    verification_methods = [vm_entry]
-    contexts = [
-        "https://www.w3.org/ns/did/v1",
-        "https://w3id.org/security/suites/jws-2020/v1",
-        "https://w3id.org/security/suites/secp256k1-2019/v1",
-    ]
-
-    # Build keys dictionary with both private and public keys in PEM format
-    keys = {
-        VM_KEY_AUTH: (
-            secp256k1_private_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption()
-            ),
-            secp256k1_public_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo
-            )
-        )
-    }
-
-    # Build DID document
-    did_document = {
-        "@context": contexts,
-        "id": did,
-        "verificationMethod": verification_methods,
-        "authentication": [vm_entry["id"]],
-    }
-
-    # Add E2EE keys if enabled
-    if enable_e2ee:
-        e2ee_vms, ka_refs, e2ee_keys = _build_e2ee_entries(did)
-        verification_methods.extend(e2ee_vms)
-        did_document["keyAgreement"] = ka_refs
-        contexts.append("https://w3id.org/security/suites/x25519-2019/v1")
-        keys.update(e2ee_keys)
-
-    # Merge all service entries
-    all_services = []
-    if agent_description_url is not None:
-        all_services.append({
-            "id": f"{did}#ad",
-            "type": "AgentDescription",
-            "serviceEndpoint": agent_description_url,
-        })
-    if services:
-        for svc in services:
-            svc_id = svc.get("id", "")
-            if svc_id.startswith("#"):
-                svc = {**svc, "id": f"{did}{svc_id}"}
-            all_services.append(svc)
-    if all_services:
-        did_document["service"] = all_services
-
-    # Self-sign the DID document with W3C Data Integrity Proof
-    proof_vm = verification_method
-    if proof_vm is None:
-        proof_vm = did_document["verificationMethod"][0]["id"]
-
-    did_document = generate_w3c_proof(
-        document=did_document,
-        private_key=secp256k1_private_key,
-        verification_method=proof_vm,
+    return create_did_wba_document(
+        hostname=hostname,
+        port=port,
+        path_segments=path_prefix,
+        agent_description_url=agent_description_url,
+        services=services,
         proof_purpose=proof_purpose,
+        verification_method=verification_method,
         domain=domain,
         challenge=challenge,
         created=created,
+        enable_e2ee=enable_e2ee,
+        did_profile="k1",
     )
 
-    logging.info(f"Successfully created key-bound DID document with ID: {did}")
-    return did_document, keys
 
-
-def verify_did_key_binding(did: str, public_key_jwk: Dict) -> bool:
+def verify_did_key_binding(did: str, binding_material: Dict[str, Any]) -> bool:
     """
     Verify that the fingerprint in a key-bound DID matches the public key.
 
-    For DIDs with a k1_ prefix in the last segment, this function recomputes
-    the JWK Thumbprint from the provided public key JWK and compares it with
-    the fingerprint embedded in the DID.
+    For DIDs with an e1_ prefix in the last segment, this function recomputes
+    the Ed25519 RFC 7638 thumbprint from the provided binding material and
+    compares it with the fingerprint embedded in the DID.
 
-    For DIDs without a recognized key-binding prefix (e.g. u1_ or plain IDs),
-    this function returns True (no binding to verify).
+    For DIDs with a k1_ prefix in the last segment, this function recomputes
+    the secp256k1 JWK thumbprint from the provided binding material and compares
+    it with the fingerprint embedded in the DID.
+
+    For DIDs without a recognized key-binding prefix, this function returns
+    True (no binding to verify).
 
     Args:
         did: DID string, e.g. did:wba:example.com:user:k1_{fingerprint}
-        public_key_jwk: The publicKeyJwk from the DID document's verification method
+        binding_material: Verification method dict, JWK dict, or multibase dict
+            from the DID document's binding verification method.
 
     Returns:
         bool: True if fingerprint matches or if DID has no key-binding prefix
@@ -531,19 +571,168 @@ def verify_did_key_binding(did: str, public_key_jwk: Dict) -> bool:
 
     last_segment = parts[-1]
 
-    # Only verify k1_ prefixed segments
+    try:
+        if last_segment.startswith("k1_"):
+            fp_from_did = last_segment[3:]
+            public_key_jwk = binding_material.get("publicKeyJwk", binding_material)
+            public_key = _extract_ec_public_key_from_jwk(public_key_jwk)
+            return compute_jwk_fingerprint(public_key) == fp_from_did
+
+        if last_segment.startswith("e1_"):
+            fp_from_did = last_segment[3:]
+            if "publicKeyMultibase" in binding_material:
+                public_key = _extract_ed25519_public_key_from_multibase(
+                    binding_material["publicKeyMultibase"]
+                )
+            elif binding_material.get("kty") == "OKP":
+                public_key = ed25519.Ed25519PublicKey.from_public_bytes(
+                    base64.urlsafe_b64decode(
+                        binding_material["x"] + "=" * (-len(binding_material["x"]) % 4)
+                    )
+                )
+            elif "publicKeyJwk" in binding_material:
+                public_key = ed25519.Ed25519PublicKey.from_public_bytes(
+                    base64.urlsafe_b64decode(
+                        binding_material["publicKeyJwk"]["x"]
+                        + "=" * (-len(binding_material["publicKeyJwk"]["x"]) % 4)
+                    )
+                )
+            else:
+                return False
+            return compute_multikey_fingerprint(public_key) == fp_from_did
+        return True
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
+def _is_authentication_authorized_in_document(
+    did_document: Dict[str, Any],
+    verification_method_id: str,
+) -> bool:
+    """Check whether a verification method is authorized for authentication."""
+    authentication = did_document.get("authentication", [])
+    verification_methods = {
+        method.get("id"): method
+        for method in did_document.get("verificationMethod", [])
+        if isinstance(method, dict) and method.get("id")
+    }
+    for entry in authentication:
+        if isinstance(entry, str) and entry == verification_method_id:
+            return True
+        if isinstance(entry, dict) and entry.get("id") == verification_method_id:
+            return True
+        if (
+            isinstance(entry, str)
+            and entry in verification_methods
+            and entry == verification_method_id
+        ):
+            return True
+    return False
+
+
+def _validate_e1_proof_binding(did_document: Dict[str, Any], did: str) -> bool:
+    """Validate strict e1 proof binding for an e1 DID document."""
+    proof = did_document.get("proof")
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("type") != PROOF_TYPE_DATA_INTEGRITY:
+        return False
+    if proof.get("cryptosuite") != CRYPTOSUITE_EDDSA_JCS_2022:
+        return False
+
+    verification_method_id = proof.get("verificationMethod")
+    if not isinstance(verification_method_id, str) or not verification_method_id:
+        return False
+
+    method = _find_verification_method(did_document, verification_method_id)
+    if not method:
+        return False
+    if method.get("type") not in {
+        "Multikey",
+        "Ed25519VerificationKey2020",
+        "Ed25519VerificationKey2018",
+    }:
+        return False
+
+    try:
+        public_key = _extract_public_key(method)
+    except ValueError:
+        return False
+    if not isinstance(public_key, ed25519.Ed25519PublicKey):
+        return False
+    if not verify_w3c_proof(
+        did_document,
+        public_key,
+        expected_purpose="assertionMethod",
+    ):
+        return False
+
+    expected_fingerprint = did.split(":")[-1][3:]
+    return compute_multikey_fingerprint(public_key) == expected_fingerprint
+
+
+def _validate_k1_proof_binding(did_document: Dict[str, Any], did: str) -> bool:
+    """Validate strict k1 proof binding when proof verification is requested."""
+    proof = did_document.get("proof")
+    if not isinstance(proof, dict):
+        return False
+
+    verification_method_id = proof.get("verificationMethod")
+    if not isinstance(verification_method_id, str) or not verification_method_id:
+        return False
+
+    method = _find_verification_method(did_document, verification_method_id)
+    if not method:
+        return False
+    if method.get("type") != "EcdsaSecp256k1VerificationKey2019":
+        return False
+
+    try:
+        public_key = _extract_public_key(method)
+    except ValueError:
+        return False
+    if not isinstance(public_key, ec.EllipticCurvePublicKey):
+        return False
+    if not isinstance(public_key.curve, ec.SECP256K1):
+        return False
+    if not verify_w3c_proof(
+        did_document,
+        public_key,
+        expected_purpose="assertionMethod",
+    ):
+        return False
+
+    expected_fingerprint = did.split(":")[-1][3:]
+    return compute_jwk_fingerprint(public_key) == expected_fingerprint
+
+
+def validate_did_document_binding(
+    did_document: Dict[str, Any],
+    verify_proof: bool = False,
+) -> bool:
+    """Validate e1/k1 DID binding against authorized DID document keys."""
+    did = did_document.get("id")
+    if not did:
+        return False
+
+    last_segment = did.split(":")[-1] if ":" in did else did
+    if last_segment.startswith("e1_"):
+        return _validate_e1_proof_binding(did_document, did)
     if not last_segment.startswith("k1_"):
         return True
 
-    fp_from_did = last_segment[3:]  # Remove "k1_" prefix
+    if verify_proof:
+        return _validate_k1_proof_binding(did_document, did)
 
-    # Reconstruct public key from JWK and compute fingerprint
-    try:
-        public_key = _extract_ec_public_key_from_jwk(public_key_jwk)
-        fp_computed = compute_jwk_fingerprint(public_key)
-        return fp_computed == fp_from_did
-    except (ValueError, KeyError):
-        return False
+    for method in did_document.get("verificationMethod", []):
+        if not isinstance(method, dict) or not method.get("id"):
+            continue
+        if not _is_authentication_authorized_in_document(did_document, method["id"]):
+            continue
+        if verify_did_key_binding(did, method):
+            return True
+
+    return False
 
 
 async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict:
@@ -570,7 +759,7 @@ async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict
 
     # Extract domain and path from DID
     did_parts = did.split(":", 3)
-    if len(did_parts) < 4:
+    if len(did_parts) < 3:
         raise ValueError("Invalid DID format: missing domain")
 
     domain = urllib.parse.unquote(did_parts[2])
@@ -609,6 +798,13 @@ async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict
                         f"DID document ID mismatch. Expected: {did}, "
                         f"Got: {did_document.get('id')}"
                     )
+
+                if not validate_did_document_binding(
+                    did_document,
+                    verify_proof=verify_proof,
+                ):
+                    logging.warning("DID document binding verification failed")
+                    return None
 
                 logging.info(f"Successfully resolved DID document for: {did}")
 
@@ -873,6 +1069,8 @@ def _extract_ed25519_public_key_from_multibase(multibase: str) -> ed25519.Ed2551
         raise ValueError("Unsupported multibase encoding")
     try:
         key_bytes = base58.b58decode(multibase[1:])
+        if len(key_bytes) == 34 and key_bytes[:2] == b"\xed\x01":
+            key_bytes = key_bytes[2:]
         return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
     except Exception as e:
         logging.error(f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
@@ -937,8 +1135,10 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
     
     Supported verification method types:
     - EcdsaSecp256k1VerificationKey2019 (JWK, Multibase)
+    - EcdsaSecp256r1VerificationKey2019 (JWK)
     - Ed25519VerificationKey2020 (JWK, Base58, Multibase)
     - Ed25519VerificationKey2018 (JWK, Base58, Multibase)
+    - Multikey (Ed25519 publicKeyMultibase)
     - JsonWebKey2020 (JWK)
     
     Args:
@@ -975,7 +1175,7 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
             return _extract_ec_public_key_from_jwk(jwk)
 
     # Handle Ed25519 verification methods
-    elif method_type in ['Ed25519VerificationKey2020', 'Ed25519VerificationKey2018']:
+    elif method_type in ['Ed25519VerificationKey2020', 'Ed25519VerificationKey2018', 'Multikey']:
         if 'publicKeyJwk' in verification_method:
             jwk = verification_method['publicKeyJwk']
             if jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519':

@@ -12,31 +12,37 @@ DID WBA (Web-Based Agent) is a decentralized identity authentication method base
 
 Key characteristics:
 - Asymmetric cryptography: client holds private key, server obtains public key from the DID document to verify signatures
-- After initial authentication, the server issues a JWT Bearer Token for subsequent requests without repeated signing
+- The current SDK defaults to **HTTP Message Signatures**; the old `Authorization: DIDWba ...` header remains available for compatibility
+- After initial authentication, the server issues an access token; the standard response header is `Authentication-Info`, with a compatibility `Authorization: Bearer ...` header during migration
 - Works with HTTPS: client verifies server via TLS certificate, server verifies client via DID signature
+
+> **Important current defaults**
+>
+> - `create_did_wba_document()` creates `e1_` path-based DIDs by default
+> - `DIDWbaAuthHeader` emits `Signature-Input` / `Signature` by default
+> - `resolve_did_wba_document()` always validates `e1_` / `k1_` DID binding
+> - for `e1_`, DID Document proof is part of binding validation and is therefore required
 
 ### 1.2 Authentication Flow
 
 ```
-First Request:
+First Request (default HTTP Message Signatures):
 Client                              Server                    Client DID Server
   |                                    |                            |
   |-- HTTP Request ------------------>|                            |
-  |   Authorization: DIDWba           |                            |
-  |   did="did:wba:...",              |-- GET /user/alice/did.json-->|
-  |   nonce="random_string",          |                            |
-  |   timestamp="2024-12-05T...",     |<-- DID Document -----------|
-  |   verification_method="key-1",    |                            |
-  |   signature="base64url(...)"      |                            |
+  |   Signature-Input: sig1=(...)     |                            |
+  |   Signature: sig1=:...:           |-- GET /user/alice/...----->|
+  |   Content-Digest: sha-256=:...:   |<-- DID Document -----------|
   |                                   |                            |
-  |                                   |  1. Verify timestamp not expired
-  |                                   |  2. Verify nonce not replayed
-  |                                   |  3. Get public key from DID document
-  |                                   |  4. Verify signature with public key
+  |                                   |  1. Verify DID document id / binding / proof
+  |                                   |  2. Verify created / expires / nonce
+  |                                   |  3. Verify HTTP Message Signature
+  |                                   |  4. Verify Content-Digest
   |                                   |  5. Valid → generate JWT
   |                                   |
   |<-- HTTP Response -----------------|
-  |    Authorization: bearer <JWT>    |
+  |    Authentication-Info: access_token="..." |
+  |    Authorization: Bearer <JWT>    |  (compatibility)
   |                                   |
 
 Subsequent Requests (using JWT, faster):
@@ -48,32 +54,46 @@ Client                              Server
   |<-- HTTP Response -----------------|
 ```
 
-### 1.3 Authorization Header Format
+### 1.3 Default Request Format (HTTP Message Signatures)
 
-For initial authentication, the client sends the following in the `Authorization` header:
+By default, the client sends the following headers:
 
+```http
+POST /orders HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+Content-Digest: sha-256=:BASE64_SHA256_DIGEST:
+Signature-Input: sig1=("@method" "@target-uri" "@authority" "content-digest");created=1733402096;expires=1733402156;nonce="abc123";keyid="did:wba:example.com:user:alice:e1_<fingerprint>#key-1"
+Signature: sig1=:BASE64_SIGNATURE:
 ```
-Authorization: DIDWba did="did:wba:example.com:user:alice", nonce="abc123", timestamp="2024-12-05T12:34:56Z", verification_method="key-1", signature="base64url(signature_value)"
-```
 
-Field descriptions:
-- `did`: Client's DID identifier
-- `nonce`: Random string to prevent replay attacks (recommended: 16-byte random value)
-- `timestamp`: Request time in ISO 8601 UTC format, accurate to seconds
-- `verification_method`: Fragment of the verification method in the DID document (e.g., `key-1`)
-- `signature`: Sign `{nonce, timestamp, aud, did}` → JCS canonicalization → SHA-256 hash → private key signature → base64url encoding
+Key fields:
+- `keyid`: full DID URL of the signing verification method
+- `created` / `expires`: signature validity window
+- `nonce`: anti-replay value
+- `Signature`: signature over the RFC 9421 signature base
+- `Content-Digest`: integrity binding for the request body
+
+### 1.3.1 Compatibility Format (Legacy DIDWba Header)
+
+If the client explicitly uses `auth_mode="legacy_didwba"`, or when interoperating with old clients, it can still send:
+
+```http
+Authorization: DIDWba did="did:wba:example.com:user:alice:k1_<fingerprint>", nonce="abc123", timestamp="2024-12-05T12:34:56Z", verification_method="key-1", signature="base64url(signature_value)"
+```
 
 ### 1.4 Signature Verification Process
 
-Upon receiving a request, the server performs these steps:
+In the default HTTP Message Signatures flow, the server:
 
-1. Extract `did`, `nonce`, `timestamp`, `verification_method`, `signature` from the `Authorization` header
-2. Verify `timestamp` is within the acceptable range (default: ±5 minutes)
-3. Verify `nonce` has not been used before (anti-replay)
-4. Resolve the DID document by fetching it from the HTTPS URL derived from the client's DID
-5. Find the public key matching `verification_method` in the DID document
-6. Verify the signature using the public key
-7. On success, generate an RS256 JWT Token and return it to the client
+1. Parses `Signature-Input` / `Signature` / `Content-Digest`
+2. Verifies the time window and `nonce`
+3. Resolves the DID document based on `keyid`
+4. Verifies the DID document `id`
+5. Verifies `e1_` / `k1_` binding against the DID document public key
+6. For `e1_`, enforces DID Document proof validation and requires the proof key to be the binding key
+7. Verifies the request signature using the matching DID document public key
+8. On success, issues an RS256 JWT token
 
 ## 2. Installation
 
@@ -189,10 +209,11 @@ The `auth_middleware` workflow:
 1. Check if the request path is in `exempt_paths` (supports wildcards like `*/ad.json`, `/info/*`)
 2. If exempt, pass through directly
 3. If authentication is required, extract the `Authorization` header
-4. If it starts with `DIDWba`, perform DID WBA verification. On success:
+4. If the request contains `Signature-Input` / `Signature`, run the default HTTP Message Signatures verification flow; if it starts with `DIDWba`, run the compatibility verification flow. On success:
    - Store auth result in `request.state.auth_result`
    - Store DID in `request.state.did`
-   - Return `bearer <JWT>` in the response `Authorization` header
+   - Return the access token in the response `Authentication-Info` header
+   - During migration, also return `Authorization: Bearer <JWT>` for old clients
 5. If it starts with `Bearer`, verify the JWT Token
 6. On authentication failure, return a 401 or 403 JSON response
 
@@ -230,8 +251,8 @@ async def get_data(request: Request):
 
     # Get the full authentication result
     auth_result: dict = request.state.auth_result
-    # DID WBA first auth: {"access_token": "...", "token_type": "bearer", "did": "..."}
-    # Bearer Token auth:  {"did": "..."}
+    # First auth: {"access_token": "...", "token_type": "bearer", "did": "...", "auth_scheme": "...", "response_headers": {...}}
+    # Bearer Token auth: {"did": "...", "auth_scheme": "bearer", "response_headers": {}}
 
     return {"did": did, "data": "..."}
 ```
@@ -250,9 +271,14 @@ config = DidWbaVerifierConfig(
 verifier = DidWbaVerifier(config)
 
 # Use in any HTTP framework
-async def handle_request(authorization_header: str, server_domain: str):
+async def handle_request(method: str, url: str, headers: dict, body: bytes):
     try:
-        result = await verifier.verify_auth_header(authorization_header, server_domain)
+        result = await verifier.verify_request(
+            method=method,
+            url=url,
+            headers=headers,
+            body=body,
+        )
         did = result["did"]
         access_token = result.get("access_token")  # Only present for first DID auth
         return did, access_token
@@ -281,17 +307,16 @@ authenticator = DIDWbaAuthHeader(
 
 server_url = "https://example.com"
 
-# 2. First request: auto-generates DID WBA auth header
+# 2. First request: auto-generates HTTP Message Signatures by default
 headers = authenticator.get_auth_header(server_url, force_new=True)
-# headers = {"Authorization": "DIDWba did=\"...\", nonce=\"...\", ..."}
+# Default: {"Signature-Input": "...", "Signature": "..."}
+# With auth_mode="legacy_didwba": {"Authorization": "DIDWba ..."}
 
 with httpx.Client() as client:
     response = client.get(f"{server_url}/api/data", headers=headers)
 
     # 3. Extract and cache Bearer Token from response
-    auth_header = response.headers.get("authorization")
-    if auth_header:
-        authenticator.update_token(server_url, {"Authorization": auth_header})
+    authenticator.update_token(server_url, dict(response.headers))
 
     # 4. Subsequent requests: automatically uses cached Bearer Token
     headers = authenticator.get_auth_header(server_url)
@@ -303,7 +328,7 @@ with httpx.Client() as client:
 
 | Method | Description |
 |--------|-------------|
-| `get_auth_header(server_url, force_new=False)` | Get auth header. Returns cached Bearer header if available, otherwise generates DID WBA header. `force_new=True` forces a new DID WBA header |
+| `get_auth_header(server_url, force_new=False)` | Get auth header. Returns a cached Bearer header if available; otherwise generates HTTP Message Signatures by default, or the legacy DIDWba header when `auth_mode=\"legacy_didwba\"` |
 | `update_token(server_url, headers)` | Extract Bearer Token from response headers and cache it |
 | `clear_token(server_url)` | Clear cached token for the specified domain |
 | `clear_all_tokens()` | Clear all cached tokens |
@@ -320,9 +345,7 @@ if response.status_code == 401:
     response = client.get(f"{server_url}/api/data", headers=headers)
 
     # Cache the new token
-    auth_header = response.headers.get("authorization")
-    if auth_header:
-        authenticator.update_token(server_url, {"Authorization": auth_header})
+    authenticator.update_token(server_url, dict(response.headers))
 ```
 
 ## 5. DID Document and Key Preparation
@@ -338,7 +361,7 @@ did_document, private_keys = create_did_wba_document(
     hostname="example.com",
     path_segments=["user", "alice"],
 )
-# did_document["id"] = "did:wba:example.com:user:alice"
+# Default path DID shape: did:wba:example.com:user:alice:e1_<fingerprint>
 # private_keys contains the generated private key objects
 
 import json

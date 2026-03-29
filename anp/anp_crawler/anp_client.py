@@ -23,6 +23,19 @@ from ..authentication import DIDWbaAuthHeader
 logger = logging.getLogger(__name__)
 
 
+def _remove_auth_headers(headers: Dict[str, str]) -> None:
+    """Remove authentication-related headers in place."""
+    auth_header_names = {
+        "authorization",
+        "signature-input",
+        "signature",
+        "content-digest",
+    }
+    for header_name in list(headers.keys()):
+        if header_name.lower() in auth_header_names:
+            headers.pop(header_name, None)
+
+
 class ANPClient:
     """
     HTTP client for ANP protocol with DID authentication.
@@ -114,10 +127,24 @@ class ANPClient:
         if "Content-Type" not in headers and method in ["POST", "PUT", "PATCH"]:
             headers["Content-Type"] = "application/json"
 
+        serialized_body = None
+        if body is not None and method in ["POST", "PUT", "PATCH"]:
+            serialized_body = json.dumps(
+                body,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+
         # Add DID authentication
         if self.auth_client:
             try:
-                auth_headers = self.auth_client.get_auth_header(url)
+                _remove_auth_headers(headers)
+                auth_headers = self.auth_client.get_auth_header(
+                    server_url=url,
+                    method=method,
+                    headers=headers,
+                    body=serialized_body,
+                )
                 headers.update(auth_headers)
             except Exception as e:
                 logger.error(f"Failed to get authentication header: {str(e)}")
@@ -133,8 +160,8 @@ class ANPClient:
             }
 
             # If there is a request body and the method supports it, add the request body
-            if body is not None and method in ["POST", "PUT", "PATCH"]:
-                request_kwargs["json"] = body
+            if serialized_body is not None and method in ["POST", "PUT", "PATCH"]:
+                request_kwargs["data"] = serialized_body
 
             # Execute request
             http_method = getattr(session, method.lower())
@@ -154,9 +181,16 @@ class ANPClient:
                         )
                         # If authentication fails and a token was used, clear the token and retry
                         self.auth_client.clear_token(url)
+                        _remove_auth_headers(headers)
                         # Get authentication header again
                         headers.update(
-                            self.auth_client.get_auth_header(url, force_new=True)
+                            self.auth_client.get_auth_header(
+                                server_url=url,
+                                force_new=True,
+                                method=method,
+                                headers=headers,
+                                body=serialized_body,
+                            )
                         )
                         # Execute request again
                         request_kwargs["headers"] = headers

@@ -6,12 +6,22 @@
 
 # DID-WBA Authentication Examples
 
-This directory showcases how to build, validate, and verify `did:wba` identities with AgentConnect. All scripts operate locally—no HTTP services are required—making them ideal for learning or offline testing.
+This directory showcases how to build, validate, and verify `did:wba` identities with AgentConnect.
+
+> **Current behavior summary**
+>
+> - Path-based DID creation now defaults to the `e1_` profile
+> - The default client auth flow uses HTTP Message Signatures
+> - Legacy compatibility mode is still available for older Authorization-header clients
+> - `resolve_did_wba_document()` now always validates `e1_` / `k1_` DID binding
+> - For `e1_`, DID Document proof is mandatory as part of strong binding validation
 
 ## Contents
 
 ### Offline Examples
-- `create_did_document.py`: Generates a DID document and secp256k1 key pair.
+- `create_did_document.py`: Generates a DID document; path DIDs now default to an `e1_` identifier and Ed25519 binding key.
+- `create_e1_did_document.py`: Explicit e1 example.
+- `create_k1_did_document.py`: Explicit k1 compatibility example.
 - `validate_did_document.py`: Confirms the generated document matches DID-WBA requirements.
 - `authenticate_and_verify.py`: Produces a DID authentication header, verifies it, and validates the issued bearer token using demo credentials.
 
@@ -50,22 +60,36 @@ Expected output:
 ```
 DID document saved to .../generated/did.json
 Registered verification method key-1 → private key: key-1_private.pem public key: key-1_public.pem
-Generated DID identifier: did:wba:demo.agent-network:agents:demo
+Generated DID identifier: did:wba:demo.agent-network:agents:demo:e1_<fingerprint>
 ```
 Generated files:
-- `generated/did.json`
-- `generated/key-1_private.pem`
-- `generated/key-1_public.pem`
+- `generated/e1/did.json`
+- `generated/e1/key-1_private.pem`
+- `generated/e1/key-1_public.pem`
+
+Explicit profile examples:
+
+```bash
+# Explicit e1 profile
+uv run --python .venv/bin/python python examples/python/did_wba_examples/create_e1_did_document.py
+
+# Explicit k1 compatibility profile
+uv run --python .venv/bin/python python examples/python/did_wba_examples/create_k1_did_document.py
+```
 
 ### 2. Validate the DID Document
 ```bash
 uv run --python .venv/bin/python python examples/python/did_wba_examples/validate_did_document.py
+
+# Validate an explicit k1 document
+uv run --python .venv/bin/python python examples/python/did_wba_examples/validate_did_document.py --profile k1
 ```
 The script checks:
 - Identifier format (`did:wba:` prefix)
 - Required JSON-LD contexts
-- Verification method wiring and JWK integrity
-- Authentication entry referencing `key-1`
+- Verification method wiring and key integrity
+- DID/document binding consistency
+- For `e1_`, presence and validity of the DID Document proof
 - Optional HTTPS service endpoint
 
 Expected output:
@@ -78,13 +102,14 @@ DID document validation succeeded.
 uv run --python .venv/bin/python python examples/python/did_wba_examples/authenticate_and_verify.py
 ```
 Flow overview:
-1. `DIDWbaAuthHeader` signs a DID header with the public demo credentials.
-2. `DidWbaVerifier` resolves the local DID document, verifies the signature, and issues a bearer token (RS256).
+1. `DIDWbaAuthHeader` signs the request using the current default flow (HTTP Message Signatures unless legacy mode is requested).
+2. `DidWbaVerifier` resolves the local DID document, validates DID binding and proof rules, verifies the request signature, and issues a bearer token (RS256).
 3. The bearer token is validated to confirm the `did:wba` subject.
 
 Expected output:
 ```
-DID header verified. Issued bearer token.
+DID request verified. Auth scheme: http_signatures
+Issued bearer token.
 Bearer token verified. Associated DID: did:wba:didhost.cc:public
 ```
 
@@ -117,8 +142,8 @@ Response: {'status': 'healthy', 'service': 'did-wba-http-server'}
 ============================================================
 Step 2: Access protected endpoint with DID authentication
 ============================================================
-Auth header type: DID WBA
-Authorization: DID-WBA did="did:wba:didhost.cc:public", nonce="...", timestamp=...
+Auth header type: HTTP Message Signatures
+Signature-Input: sig1=("...");created=...;keyid="did:wba:..."
 Status: 200
 Response: {'message': 'Authentication successful!', 'did': 'did:wba:didhost.cc:public', 'token_type': 'bearer'}
 Received Bearer token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
@@ -143,8 +168,8 @@ Demo completed successfully!
 ```
 
 #### Authentication Flow
-1. **First Request (DID Auth)**: Client sends DID WBA authentication header
-2. **Server Verification**: Server verifies signature, issues JWT Bearer token
+1. **First Request (DID Auth)**: Client sends HTTP Message Signatures by default
+2. **Server Verification**: Server verifies DID binding, proof rules, request signature, then issues a JWT bearer token
 3. **Token Caching**: Client caches the Bearer token for subsequent requests
 4. **Subsequent Requests**: Client uses cached Bearer token (more efficient)
 
@@ -162,5 +187,5 @@ For a comprehensive guide on integrating DID WBA authentication into your own HT
 
 ## Next Steps
 - Swap the sample credentials for your own DID material.
-- Integrate `DIDWbaAuthHeader` into HTTP clients to call remote services that expect DID WBA headers.
+- Integrate `DIDWbaAuthHeader` into HTTP clients to call remote services that expect DID-WBA authentication.
 - Pair the verifier with actual DID resolution logic once your documents are hosted publicly.

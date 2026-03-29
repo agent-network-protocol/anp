@@ -55,15 +55,22 @@ async def verify_auth_header(
 
     Raises HTTPException if authentication fails.
     """
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        raise HTTPException(status_code=401, detail="Missing authorization header")
-
     domain = _get_and_validate_domain(request, allowed_domains)
+    body = await request.body()
     try:
-        return await verifier.verify_auth_header(auth_header, domain)
+        return await verifier.verify_request(
+            method=request.method,
+            url=str(request.url),
+            headers=dict(request.headers),
+            body=body,
+            domain=domain,
+        )
     except DidWbaVerifierError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+            headers=exc.headers,
+        )
 
 
 async def authenticate_request(
@@ -107,10 +114,11 @@ async def auth_middleware(
         response = await call_next(request)
 
         # Add authorization header to response if applicable
-        if response_auth is not None and response_auth.get("token_type") == "bearer":
-            response.headers["authorization"] = (
-                "bearer " + response_auth["access_token"]
-            )
+        if response_auth is not None:
+            for header_name, header_value in response_auth.get(
+                "response_headers", {}
+            ).items():
+                response.headers[header_name] = header_value
 
         return response
 
@@ -118,7 +126,8 @@ async def auth_middleware(
         logger.error("Authentication error: %s", exc.detail)
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": exc.detail}
+            content={"detail": exc.detail},
+            headers=exc.headers,
         )
     except Exception as exc:
         logger.error("Unexpected error in auth middleware: %s", exc)
