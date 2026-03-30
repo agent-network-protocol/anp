@@ -70,10 +70,12 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@noble/curves": "^1.8.2",
+    "bs58": "^6.0.0",
     "canonicalize": "^2.1.0",
-    "xstate": "^5.0.0"
+    "jose": "^6.1.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

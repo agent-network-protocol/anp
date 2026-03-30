@@ -1,207 +1,157 @@
-# Getting Started with ANP TypeScript SDK
+# Getting Started with the ANP TypeScript SDK
 
-This guide will help you get started with the Agent Network Protocol (ANP) TypeScript SDK.
+This SDK now focuses on three stable modules:
+
+- `authentication`
+- `proof`
+- `wns`
+
+Runtime target: **Node 20+**
 
 ## Installation
-
-Install the SDK using npm:
 
 ```bash
 npm install @anp/typescript-sdk
 ```
 
-Or using yarn:
+## Stable Public API
 
-```bash
-yarn add @anp/typescript-sdk
+The recommended public API uses short, stable aliases and namespace objects:
+
+```ts
+import {
+  authentication,
+  createDidDocument,
+  createLegacyAuthHeader,
+  createProof,
+  verifyProof,
+  verifyBinding,
+  wns,
+} from '@anp/typescript-sdk';
 ```
 
-## Quick Start
+You can choose either style:
 
-### 1. Create an ANP Client
+- flat aliases such as `createDidDocument()`
+- grouped namespaces such as `authentication.didDocuments.create()` or `wns.parseUri()`
 
-```typescript
-import { ANPClient } from '@anp/typescript-sdk';
+## 1. Create a DID document
 
-const client = new ANPClient({
-  debug: true, // Enable debug logging
+```ts
+import { DidProfile, createDidDocument } from '@anp/typescript-sdk';
+
+const bundle = createDidDocument('example.com', {
+  pathSegments: ['agents', 'demo'],
+  didProfile: DidProfile.K1,
 });
+
+console.log(bundle.didDocument.id);
+console.log(bundle.keys['key-1'].privateKeyPem);
 ```
 
-### 2. Create a DID Identity
+## 2. Create authentication headers
 
-```typescript
-// Create a new DID:WBA identity
-const identity = await client.did.create({
-  domain: 'example.com',
-  path: 'agent1',
-});
+### Legacy DIDWba header
 
-console.log('Created DID:', identity.did);
-// Output: did:wba:example.com:agent1
-```
+```ts
+import { createLegacyAuthHeader } from '@anp/typescript-sdk';
 
-### 3. Create an Agent Description
-
-```typescript
-// Create agent description
-const description = client.agent.createDescription({
-  name: 'My First Agent',
-  description: 'A simple ANP agent',
-  protocolVersion: '0.1.0',
-});
-
-// Add an interface
-const descriptionWithInterface = client.agent.addInterface(description, {
-  type: 'Interface',
-  protocol: 'HTTP',
-  version: '1.1',
-  url: 'https://example.com/api',
-});
-
-// Sign the description
-const signedDescription = await client.agent.signDescription(
-  descriptionWithInterface,
-  identity,
-  'challenge-string',
-  'example.com'
+const header = createLegacyAuthHeader(
+  bundle.didDocument,
+  'api.example.com',
+  bundle.keys['key-1'].privateKeyPem
 );
 ```
 
-### 4. Discover Other Agents
+### HTTP Message Signatures
 
-```typescript
-// Discover agents from a domain
-const agents = await client.discovery.discoverAgents('example.com', identity);
+```ts
+import { createSignatureHeaders } from '@anp/typescript-sdk';
 
-console.log('Found agents:', agents);
+const headers = createSignatureHeaders(
+  bundle.didDocument,
+  'https://api.example.com/orders',
+  'POST',
+  bundle.keys['key-1'].privateKeyPem,
+  {},
+  JSON.stringify({ item: 'book' })
+);
 ```
 
-### 5. Negotiate Protocols
+## 3. Verify incoming requests
 
-```typescript
-// Create a protocol negotiation state machine
-const machine = client.protocol.createNegotiationMachine({
-  localIdentity: identity,
-  remoteDID: 'did:wba:other-agent.com:agent2',
-  candidateProtocols: 'JSON-RPC 2.0',
-  maxNegotiationRounds: 5,
-  onStateChange: (state) => {
-    console.log('Protocol state:', state.value);
-  },
+```ts
+import { DidWbaVerifier } from '@anp/typescript-sdk';
+
+const verifier = new DidWbaVerifier({
+  jwtPrivateKey: 'demo-secret',
+  jwtPublicKey: 'demo-secret',
+  jwtAlgorithm: 'HS256',
 });
 
-// Start the machine
-machine.start();
+const result = await verifier.verifyRequestWithDidDocument(
+  'GET',
+  'https://api.example.com/orders',
+  { Authorization: header },
+  bundle.didDocument
+);
+```
 
-// Initiate negotiation
-machine.send({
-  type: 'initiate',
-  remoteDID: 'did:wba:other-agent.com:agent2',
-  candidateProtocols: 'JSON-RPC 2.0',
+## 4. Create and verify proofs
+
+```ts
+import { createProof, verifyProof } from '@anp/typescript-sdk';
+
+const signedDocument = createProof(
+  {
+    id: 'did:wba:example.com:credential:alice',
+    type: 'VerifiableCredential',
+  },
+  bundle.keys['key-1'].privateKeyPem,
+  `${bundle.didDocument.id}#key-1`
+);
+
+const valid = verifyProof(signedDocument, bundle.keys['key-1'].publicKeyPem);
+```
+
+## 5. Work with WNS handles
+
+```ts
+import { parseUri, validateHandle, verifyBinding } from '@anp/typescript-sdk';
+
+const [localPart, domain] = validateHandle('Alice.Example.COM');
+const parsed = parseUri('wba://alice.example.com');
+
+const binding = await verifyBinding('alice.example.com', {
+  didDocument: {
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    id: 'did:wba:example.com:user:alice',
+    verificationMethod: [],
+    authentication: [],
+    service: [
+      {
+        id: 'did:wba:example.com:user:alice#handle',
+        type: 'HandleService',
+        serviceEndpoint: 'https://example.com/.well-known/handle/alice',
+      },
+    ],
+  },
 });
 ```
 
-## Configuration Options
+## Examples
 
-The ANPClient accepts the following configuration options:
+Build the SDK first, then run:
 
-```typescript
-const client = new ANPClient({
-  // DID configuration
-  did: {
-    cacheTTL: 300000, // Cache TTL in milliseconds (default: 5 minutes)
-    timeout: 10000, // Resolution timeout in milliseconds (default: 10 seconds)
-  },
-  
-  // Authentication configuration
-  auth: {
-    maxTokenAge: 3600000, // Max token age in milliseconds (default: 1 hour)
-    nonceLength: 32, // Nonce length in bytes (default: 32)
-    clockSkewTolerance: 300, // Clock skew tolerance in seconds (default: 5 minutes)
-  },
-  
-  // HTTP configuration
-  http: {
-    timeout: 10000, // Request timeout in milliseconds (default: 10 seconds)
-    maxRetries: 3, // Maximum number of retries (default: 3)
-    retryDelay: 1000, // Delay between retries in milliseconds (default: 1 second)
-  },
-  
-  // Debug mode
-  debug: false, // Enable debug logging (default: false)
-});
+```bash
+npm run build
+node examples/authentication.mjs
+node examples/proof.mjs
+node examples/wns.mjs
 ```
 
 ## Next Steps
 
-- Read the [API Reference](./api-reference.md) for detailed API documentation
-- Check out the [Configuration Guide](./configuration.md) for advanced configuration options
-- Learn about [Error Handling](./errors.md) to handle errors gracefully
-- Explore the [Examples](../examples/) directory for complete example applications
-
-## Common Patterns
-
-### Making Authenticated HTTP Requests
-
-```typescript
-// Make an authenticated GET request
-const response = await client.http.get(
-  'https://example.com/api/data',
-  identity
-);
-
-const data = await response.json();
-```
-
-### Signing and Verifying Data
-
-```typescript
-// Sign data
-const data = new TextEncoder().encode('Hello, ANP!');
-const signature = await client.did.sign(identity, data);
-
-// Verify signature
-const isValid = await client.did.verify(
-  identity.did,
-  data,
-  signature
-);
-
-console.log('Signature valid:', isValid);
-```
-
-### Resolving DIDs
-
-```typescript
-// Resolve a DID to its document
-const didDocument = await client.did.resolve('did:wba:example.com:agent1');
-
-console.log('DID Document:', didDocument);
-```
-
-## Troubleshooting
-
-### DID Resolution Fails
-
-If DID resolution fails, ensure:
-- The domain is accessible via HTTPS
-- The DID document is published at `https://{domain}/.well-known/did.json`
-- The DID document follows the did:wba specification
-
-### Authentication Errors
-
-If authentication fails, check:
-- The DID identity has valid keys
-- The timestamp is within the clock skew tolerance
-- The signature is generated correctly
-
-### Network Errors
-
-The SDK automatically retries failed requests with exponential backoff. You can configure retry behavior in the HTTP configuration.
-
-## Support
-
-For issues and questions:
-- GitHub Issues: https://github.com/chgaowei/AgentNetworkProtocol/issues
-- Documentation: https://github.com/chgaowei/AgentNetworkProtocol
+- Read the [API Reference](./api-reference.md)
+- Review [Configuration](./configuration.md)
+- Review [Error Handling](./errors.md)

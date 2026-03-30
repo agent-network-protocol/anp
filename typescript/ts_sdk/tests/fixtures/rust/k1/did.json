@@ -1,0 +1,64 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1",
+    "https://w3id.org/security/suites/secp256k1-2019/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/suites/x25519-2019/v1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-1"
+  ],
+  "authentication": [
+    "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-1"
+  ],
+  "id": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo",
+  "keyAgreement": [
+    "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-3"
+  ],
+  "proof": {
+    "created": "2026-03-30T01:16:57Z",
+    "cryptosuite": "didwba-jcs-ecdsa-secp256k1-2025",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "JivOKmxj79sbrt7URMyusq5GKALJTgt5rL6GGl2Bs1pgzqDiInSZvTgElQeKcFfRCRLuudYAgXdJ7bzClHt_Pg",
+    "type": "DataIntegrityProof",
+    "verificationMethod": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-1"
+  },
+  "service": [
+    {
+      "id": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#ad",
+      "serviceEndpoint": "https://example.com/agents/demo",
+      "type": "AgentDescription"
+    }
+  ],
+  "verificationMethod": [
+    {
+      "controller": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo",
+      "id": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-1",
+      "publicKeyJwk": {
+        "crv": "secp256k1",
+        "kty": "EC",
+        "x": "B_XrowZ9dELVIW8vhGks33Hrw5uBou3R2CqN8cS_1FE",
+        "y": "ft1CCTnrw653T5GYm2bgjB_csce-updWAiF64HINtX0"
+      },
+      "type": "EcdsaSecp256k1VerificationKey2019"
+    },
+    {
+      "controller": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo",
+      "id": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-2",
+      "publicKeyJwk": {
+        "crv": "P-256",
+        "kty": "EC",
+        "x": "E6h3HbgXcj4kZWkU76ePUiu7T7SsmgOGv5Tl6B5ROA4",
+        "y": "jJwK_awrgN-XRzeScJSaH2C-NjiQ-KT5d0fy-pb9dJ8"
+      },
+      "type": "EcdsaSecp256r1VerificationKey2019"
+    },
+    {
+      "controller": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo",
+      "id": "did:wba:example.com:agents:demo:k1_Xr72FJ9T0ylKYPjkm2FtAA4lrMkJVGAQ0BvylOPLRTo#key-3",
+      "publicKeyMultibase": "z6LStcSqm2XnASoyCna7j7hMGUemJeBZtrD3RAnzjKcXXZDJ",
+      "type": "X25519KeyAgreementKey2019"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1",
+    "https://w3id.org/security/suites/x25519-2019/v1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-1"
+  ],
+  "authentication": [
+    "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-1"
+  ],
+  "id": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ",
+  "keyAgreement": [
+    "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-3"
+  ],
+  "proof": {
+    "created": "2026-03-30T01:16:57Z",
+    "cryptosuite": "eddsa-jcs-2022",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "QNIcO_2_xhSgSnPXoC_3NR5pnNy5jL1J0ksAikKL-kSapSSI8zffuYsR-PW9VNJnebspiz_Jz_TxZdFuxAzaDw",
+    "type": "DataIntegrityProof",
+    "verificationMethod": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-1"
+  },
+  "service": [
+    {
+      "id": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#ad",
+      "serviceEndpoint": "https://example.com/agents/demo",
+      "type": "AgentDescription"
+    }
+  ],
+  "verificationMethod": [
+    {
+      "controller": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ",
+      "id": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-1",
+      "publicKeyMultibase": "z6Mkuw765SFY79EGmZVjVk8Khd87koUszrYmx2jzmm8ETDk8",
+      "type": "Multikey"
+    },
+    {
+      "controller": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ",
+      "id": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-2",
+      "publicKeyJwk": {
+        "crv": "P-256",
+        "kty": "EC",
+        "x": "dOnO9Qerhbipo98Q74Wi18pV_5ewQ0a50a0qXRK5xWo",
+        "y": "MvqeX_MNlugR3QnDiKU00_3anGaGVfSIUS5cj-OgTdA"
+      },
+      "type": "EcdsaSecp256r1VerificationKey2019"
+    },
+    {
+      "controller": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ",
+      "id": "did:wba:example.com:agents:demo:e1_nG-XhvbryhO6T9QFqzcFURHRJ19wIIu6LzbjMBPSCmQ#key-3",
+      "publicKeyMultibase": "z6LSeJZHnf9JoXVWWztK4KqVZpTFWP4e2sckqF5r5LC9PQoy",
+      "type": "X25519KeyAgreementKey2019"
+    }
+  ]
+}
