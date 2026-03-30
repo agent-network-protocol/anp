@@ -1,0 +1,47 @@
+name: Rust Python Interop
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust-python-interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Run Rust interoperability test suite
+        working-directory: rust
+        run: |
+          cargo test
+          cargo check --examples
+
+      - name: Run Python interoperability test suite
+        run: |
+          cd /tmp
+          uv run --python 3.13 --with-editable "$GITHUB_WORKSPACE" --with pytest \
+            python -m pytest "$GITHUB_WORKSPACE/anp/unittest/rust_interop" -q
+
+      - name: Smoke test Rust fixture example from Python
+        run: |
+          cd /tmp
+          uv run --python 3.13 --with-editable "$GITHUB_WORKSPACE" \
+            python "$GITHUB_WORKSPACE/examples/python/rust_interop_examples/verify_rust_fixture.py"

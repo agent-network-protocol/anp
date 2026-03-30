@@ -1,0 +1,37 @@
+[package]
+name = "anp-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for Agent Network Protocol (ANP)"
+license = "MIT"
+repository = "https://github.com/agent-network-protocol/AgentConnect"
+
+[lib]
+name = "anp"
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+bs58 = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+jsonwebtoken = "9"
+num-bigint = "0.4"
+k256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+p256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+percent-encoding = "2.3"
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+url = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+tiny_http = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
