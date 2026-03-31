@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
 import aiohttp
+from yarl import URL
 
 # Import configuration and utilities from the project structure
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -34,6 +35,22 @@ def _remove_auth_headers(headers: Dict[str, str]) -> None:
     for header_name in list(headers.keys()):
         if header_name.lower() in auth_header_names:
             headers.pop(header_name, None)
+
+
+def _get_header_case_insensitive(headers: Dict[str, str], name: str) -> Optional[str]:
+    """Return a header value using case-insensitive lookup."""
+    lower_name = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lower_name:
+            return value
+    return None
+
+
+def _build_request_url(url: str, params: Dict[str, Any]) -> str:
+    """Build the exact request URL, including the final query string."""
+    if not params:
+        return url
+    return str(URL(url).update_query(params))
 
 
 class ANPClient:
@@ -121,7 +138,8 @@ class ANPClient:
         if params is None:
             params = {}
 
-        logger.info(f"ANP request: {method} {url}")
+        request_url = _build_request_url(url, params)
+        logger.info(f"ANP request: {method} {request_url}")
 
         # Add basic request headers
         if "Content-Type" not in headers and method in ["POST", "PUT", "PATCH"]:
@@ -140,7 +158,7 @@ class ANPClient:
             try:
                 _remove_auth_headers(headers)
                 auth_headers = self.auth_client.get_auth_header(
-                    server_url=url,
+                    server_url=request_url,
                     method=method,
                     headers=headers,
                     body=serialized_body,
@@ -154,9 +172,8 @@ class ANPClient:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             # Prepare request parameters
             request_kwargs = {
-                "url": url,
+                "url": request_url,
                 "headers": headers,
-                "params": params,
             }
 
             # If there is a request body and the method supports it, add the request body
@@ -171,43 +188,69 @@ class ANPClient:
                     logger.info(f"ANP response: status code {response.status}")
 
                     # Check response status
-                    if (
-                        response.status == 401
-                        and "Authorization" in headers
-                        and self.auth_client
-                    ):
-                        logger.warning(
-                            "Authentication failed (401), trying to get authentication again"
+                    if response.status == 401 and self.auth_client:
+                        response_headers = dict(response.headers)
+                        authorization = _get_header_case_insensitive(
+                            headers,
+                            "Authorization",
                         )
-                        # If authentication fails and a token was used, clear the token and retry
-                        self.auth_client.clear_token(url)
-                        _remove_auth_headers(headers)
-                        # Get authentication header again
-                        headers.update(
-                            self.auth_client.get_auth_header(
-                                server_url=url,
-                                force_new=True,
-                                method=method,
-                                headers=headers,
-                                body=serialized_body,
-                            )
+                        used_bearer = bool(
+                            authorization
+                            and authorization.lower().startswith("bearer ")
                         )
-                        # Execute request again
-                        request_kwargs["headers"] = headers
-                        async with http_method(**request_kwargs) as retry_response:
-                            logger.info(
-                                f"ANP retry response: status code {retry_response.status}"
+                        used_did_auth = bool(
+                            authorization
+                            or _get_header_case_insensitive(
+                                headers,
+                                "Signature-Input",
                             )
-                            return await self._process_response(retry_response, url)
+                            or _get_header_case_insensitive(headers, "Signature")
+                        )
 
-                    return await self._process_response(response, url)
+                        should_retry = False
+                        if used_bearer:
+                            logger.warning(
+                                "Bearer authentication failed (401), retrying with DID authentication"
+                            )
+                            self.auth_client.clear_token(request_url)
+                            should_retry = True
+                        elif used_did_auth and self.auth_client.should_retry_after_401(
+                            response_headers
+                        ):
+                            logger.warning(
+                                "Authentication challenge received (401), retrying with refreshed DID authentication"
+                            )
+                            should_retry = True
+
+                        if should_retry:
+                            _remove_auth_headers(headers)
+                            headers.update(
+                                self.auth_client.get_challenge_auth_header(
+                                    server_url=request_url,
+                                    response_headers=response_headers,
+                                    method=method,
+                                    headers=headers,
+                                    body=serialized_body,
+                                )
+                            )
+                            request_kwargs["headers"] = headers
+                            async with http_method(**request_kwargs) as retry_response:
+                                logger.info(
+                                    f"ANP retry response: status code {retry_response.status}"
+                                )
+                                return await self._process_response(
+                                    retry_response,
+                                    request_url,
+                                )
+
+                    return await self._process_response(response, request_url)
             except aiohttp.ClientError as e:
                 logger.error(f"HTTP request failed: {str(e)}")
                 return {
                     "success": False,
                     "error": f"HTTP request failed: {str(e)}",
                     "status_code": 500,
-                    "url": url,
+                    "url": request_url,
                     "text": "",
                     "content_type": "",
                     "encoding": "utf-8"

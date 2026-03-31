@@ -10,6 +10,7 @@ import asyncio
 import json
 import socket
 from pathlib import Path
+from typing import Any, Dict, Tuple
 
 from aiohttp import ClientSession
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -63,6 +64,32 @@ def get_local_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
+
+
+def build_signed_json_request(
+    auth_handler: DIDWbaAuthHeader,
+    url: str,
+    payload: Dict[str, Any],
+    *,
+    force_new: bool = False,
+) -> Tuple[bytes, Dict[str, str]]:
+    """Build headers and body bytes for a signed JSON request."""
+    body = json.dumps(
+        payload,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    headers.update(
+        auth_handler.get_auth_header(
+            url,
+            force_new=force_new,
+            method="POST",
+            headers=headers,
+            body=body,
+        )
+    )
+    return body, headers
 
 
 class ShopperAgent:
@@ -130,19 +157,29 @@ class ShopperAgent:
             to=merchant_did,
             data=request_data,
         )
+        create_cart_endpoint = (
+            f"{merchant_url.rstrip('/')}/ap2/merchant/create_cart_mandate"
+        )
+        create_cart_payload = message.model_dump(by_alias=True, exclude_none=True)
+        create_cart_body, create_cart_headers = build_signed_json_request(
+            self.auth_handler,
+            create_cart_endpoint,
+            create_cart_payload,
+            force_new=True,
+        )
 
         async with ClientSession(trust_env=False) as session:
-            auth_header = self.auth_handler.get_auth_header(
-                merchant_url, force_new=True
-            )
             print("[Shopper] Step 2: POST /ap2/merchant/create_cart_mandate")
             async with session.post(
-                f"{merchant_url}/ap2/merchant/create_cart_mandate",
-                json=message.model_dump(by_alias=True, exclude_none=True),
-                headers=auth_header,
+                create_cart_endpoint,
+                data=create_cart_body,
+                headers=create_cart_headers,
             ) as response:
                 response.raise_for_status()
-                self.auth_handler.update_token(merchant_url, dict(response.headers))
+                self.auth_handler.update_token(
+                    create_cart_endpoint,
+                    dict(response.headers),
+                )
                 cart_response = await response.json()
 
         received_cart = CartMandate(**cart_response["data"])
@@ -202,13 +239,21 @@ class ShopperAgent:
             to=merchant_did,
             data=payment_mandate,
         )
-        auth_header = self.auth_handler.get_auth_header(merchant_url)
+        payment_endpoint = (
+            f"{merchant_url.rstrip('/')}/ap2/merchant/send_payment_mandate"
+        )
+        payment_payload = payment_message.model_dump(by_alias=True, exclude_none=True)
+        payment_body, payment_headers = build_signed_json_request(
+            self.auth_handler,
+            payment_endpoint,
+            payment_payload,
+        )
         async with ClientSession(trust_env=False) as session:
             print("[Shopper] Step 4: POST /ap2/merchant/send_payment_mandate")
             async with session.post(
-                f"{merchant_url}/ap2/merchant/send_payment_mandate",
-                json=payment_message.model_dump(by_alias=True, exclude_none=True),
-                headers=auth_header,
+                payment_endpoint,
+                data=payment_body,
+                headers=payment_headers,
             ) as response:
                 response.raise_for_status()
                 result = await response.json()
@@ -280,4 +325,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

@@ -12,6 +12,7 @@ The Shopper Agent handles the client-side workflow:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Optional, Union
 
@@ -257,22 +258,18 @@ class ShopperAgent:
             },
         }
 
-        # Get DID WBA authentication header if available
-        auth_headers = (
-            self.auth_header.get_auth_header(endpoint, force_new=True)
-            if self.auth_header
-            else {}
+        request_body, request_headers = self._build_signed_json_request(
+            endpoint,
+            request_data,
+            force_new=True,
         )
 
         # Send HTTP POST request
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 endpoint,
-                json=request_data,
-                headers={
-                    **auth_headers,
-                    "Content-Type": "application/json",
-                },
+                data=request_body,
+                headers=request_headers,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -298,6 +295,32 @@ class ShopperAgent:
                      Takes one argument: the credential object (PaymentReceipt or FulfillmentReceipt)
         """
         self.credential_callback = callback
+
+    def _build_signed_json_request(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        *,
+        force_new: bool = False,
+    ) -> tuple[bytes, dict[str, str]]:
+        """Build headers and body bytes for a signed JSON request."""
+        body = json.dumps(
+            payload,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.auth_header is not None:
+            headers.update(
+                self.auth_header.get_auth_header(
+                    endpoint,
+                    force_new=force_new,
+                    method="POST",
+                    headers=headers,
+                    body=body,
+                )
+            )
+        return body, headers
 
     def create_fastapi_router(
         self,

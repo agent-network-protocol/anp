@@ -78,6 +78,11 @@ export interface ParsedAuthHeader {
   version: string;
 }
 
+export interface LegacyAuthOptions {
+  nonce?: string;
+  timestamp?: string;
+}
+
 export interface DidResolutionOptions {
   timeoutSeconds?: number;
   verifySsl?: boolean;

@@ -861,7 +861,9 @@ def generate_auth_header(
     did_document: Dict,
     service_domain: str,
     sign_callback: Callable[[bytes, str], bytes],
-    version: str = "1.1"
+    version: str = "1.1",
+    nonce: Optional[str] = None,
+    timestamp: Optional[str] = None,
 ) -> str:
     """
     Generate the Authorization header for DID authentication.
@@ -873,6 +875,8 @@ def generate_auth_header(
             callback(content_to_sign: bytes, verification_method_fragment: str) -> bytes.
             If ECDSA, return signature in DER format.
         version: Protocol version (default "1.1"). Versions >= 1.1 use "aud" field instead of "service" in signature.
+        nonce: Optional server-provided nonce override.
+        timestamp: Optional ISO 8601 UTC timestamp override.
 
     Returns:
         str: Value of the Authorization header. Do not include "Authorization:" prefix.
@@ -891,10 +895,10 @@ def generate_auth_header(
     method_dict, verification_method_fragment = _select_authentication_method(did_document)
 
     # Generate a 16-byte random nonce
-    nonce = secrets.token_hex(16)
+    nonce = nonce or secrets.token_hex(16)
 
     # Generate ISO 8601 formatted UTC timestamp
-    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    timestamp = timestamp or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     # Determine which field to use based on version
     # For version >= 1.1, use "aud" instead of "service"

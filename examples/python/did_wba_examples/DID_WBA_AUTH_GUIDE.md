@@ -308,29 +308,36 @@ authenticator = DIDWbaAuthHeader(
 )
 
 server_url = "https://example.com"
+data_url = f"{server_url}/api/data"
+other_url = f"{server_url}/api/other"
 
 # 2. 首次请求：默认自动生成 HTTP Message Signatures
-headers = authenticator.get_auth_header(server_url, force_new=True)
+headers = authenticator.get_auth_header(
+    data_url,
+    force_new=True,
+    method="GET",
+)
 # 默认返回 {"Signature-Input": "...", "Signature": "..."}
 # 如果 auth_mode="legacy_didwba"，则返回 {"Authorization": "DIDWba ..."}
 
 with httpx.Client() as client:
-    response = client.get(f"{server_url}/api/data", headers=headers)
+    response = client.get(data_url, headers=headers)
 
     # 3. 从响应中提取并缓存 Bearer Token
-    authenticator.update_token(server_url, dict(response.headers))
+    authenticator.update_token(data_url, dict(response.headers))
 
     # 4. 后续请求：自动使用缓存的 Bearer Token
-    headers = authenticator.get_auth_header(server_url)
+    headers = authenticator.get_auth_header(other_url)
     # headers = {"Authorization": "Bearer eyJ..."}
-    response = client.get(f"{server_url}/api/other", headers=headers)
+    response = client.get(other_url, headers=headers)
 ```
 
 ### 4.2 DIDWbaAuthHeader 关键方法
 
 | 方法 | 说明 |
 |------|------|
-| `get_auth_header(server_url, force_new=False)` | 获取认证头。有缓存 Token 时返回 Bearer 头；否则默认生成 HTTP Message Signatures 头；若 `auth_mode=\"legacy_didwba\"` 则生成旧版 DIDWba 头 |
+| `get_auth_header(server_url, force_new=False, method="GET", headers=None, body=None)` | 获取认证头。有缓存 Token 时返回 Bearer 头；否则默认生成 HTTP Message Signatures 头。`server_url` 必须是最终请求 URL（含 path/query），`body` 必须是实际发送的字节串 |
+| `get_challenge_auth_header(server_url, response_headers, method="GET", headers=None, body=None)` | 根据 `401` 响应里的 `WWW-Authenticate` / `Accept-Signature` 重新生成认证头，自动使用服务端下发的 `nonce` |
 | `update_token(server_url, headers)` | 从响应头中提取 Bearer Token 并缓存 |
 | `clear_token(server_url)` | 清除指定域名的缓存 Token |
 | `clear_all_tokens()` | 清除所有缓存 Token |
@@ -338,17 +345,24 @@ with httpx.Client() as client:
 ### 4.3 处理 Token 过期
 
 ```python
-response = client.get(f"{server_url}/api/data", headers=headers)
+data_url = f"{server_url}/api/data"
+response = client.get(data_url, headers=headers)
 
 if response.status_code == 401:
-    # Token 过期或无效，清除缓存，重新进行 DID 认证
-    authenticator.clear_token(server_url)
-    headers = authenticator.get_auth_header(server_url, force_new=True)
-    response = client.get(f"{server_url}/api/data", headers=headers)
+    # Token 过期、nonce 失效，或服务端返回了新的 challenge
+    authenticator.clear_token(data_url)
+    headers = authenticator.get_challenge_auth_header(
+        data_url,
+        dict(response.headers),
+        method="GET",
+    )
+    response = client.get(data_url, headers=headers)
 
     # 缓存新 Token
-    authenticator.update_token(server_url, dict(response.headers))
+    authenticator.update_token(data_url, dict(response.headers))
 ```
+
+如果你使用的是封装好的 `ANPClient`，上述 Bearer 失效与 `401 + WWW-Authenticate/nonce` 的重试流程会自动处理。
 
 ## 5. DID 文档和密钥准备
 

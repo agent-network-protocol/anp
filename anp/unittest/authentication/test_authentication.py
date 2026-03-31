@@ -12,6 +12,7 @@ from anp.authentication import (
     DIDWbaAuthHeader,
     create_did_wba_document,
     create_did_wba_document_with_key_binding,
+    extract_signature_metadata,
     generate_auth_header,
     generate_http_signature_headers,
     verify_auth_header_signature,
@@ -264,6 +265,99 @@ class TestDIDWbaAuthHeader(unittest.TestCase):
 
         self.assertIn("Authorization", headers)
         self.assertTrue(headers["Authorization"].startswith("DIDWba"))
+
+    def test_get_challenge_auth_header_reuses_server_nonce(self):
+        """Challenge retries should reuse the nonce and requested components."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+        )
+        did_document_path, private_key_path = self._write_auth_files(
+            did_document,
+            keys["key-1"][0],
+        )
+        auth_client = DIDWbaAuthHeader(did_document_path, private_key_path)
+
+        headers = auth_client.get_challenge_auth_header(
+            "https://api.example.com/orders",
+            {
+                "WWW-Authenticate": (
+                    'DIDWba realm="api.example.com", '
+                    'error="invalid_nonce", '
+                    'error_description="Nonce mismatch", '
+                    'nonce="server-nonce-123"'
+                ),
+                "Accept-Signature": (
+                    'sig1=("@method" "@target-uri" "@authority" '
+                    '"content-digest" "content-type");created;expires;nonce;keyid'
+                ),
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+            body=b'{"item":"book"}',
+        )
+
+        metadata = extract_signature_metadata(headers)
+        self.assertEqual(metadata["params"]["nonce"], "server-nonce-123")
+        self.assertIn("content-type", metadata["components"])
+        self.assertIn("Content-Digest", headers)
+
+    def test_should_retry_after_401_rejects_invalid_did(self):
+        """Non-retryable challenge errors should not trigger another auth attempt."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+        )
+        did_document_path, private_key_path = self._write_auth_files(
+            did_document,
+            keys["key-1"][0],
+        )
+        auth_client = DIDWbaAuthHeader(did_document_path, private_key_path)
+
+        self.assertFalse(
+            auth_client.should_retry_after_401(
+                {
+                    "WWW-Authenticate": (
+                        'DIDWba realm="api.example.com", '
+                        'error="invalid_did", '
+                        'error_description="DID is unknown."'
+                    )
+                }
+            )
+        )
+
+    def test_get_challenge_auth_header_ignores_content_digest_for_get(self):
+        """GET challenge retries should not force content-digest without a body."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+        )
+        did_document_path, private_key_path = self._write_auth_files(
+            did_document,
+            keys["key-1"][0],
+        )
+        auth_client = DIDWbaAuthHeader(did_document_path, private_key_path)
+
+        headers = auth_client.get_challenge_auth_header(
+            "https://api.example.com/profile",
+            {
+                "WWW-Authenticate": (
+                    'DIDWba realm="api.example.com", '
+                    'error="invalid_nonce", '
+                    'nonce="retry-nonce"'
+                ),
+                "Accept-Signature": (
+                    'sig1=("@method" "@target-uri" "@authority" "content-digest");'
+                    'created;expires;nonce;keyid'
+                ),
+            },
+            method="GET",
+            body=b"",
+        )
+
+        metadata = extract_signature_metadata(headers)
+        self.assertEqual(metadata["params"]["nonce"], "retry-nonce")
+        self.assertNotIn("content-digest", metadata["components"])
 
 
 if __name__ == "__main__":

@@ -623,7 +623,14 @@ pub fn generate_auth_header(
     private_key: &PrivateKeyMaterial,
     version: &str,
 ) -> Result<String, AuthenticationError> {
-    let parsed = generate_auth_payload(did_document, service_domain, private_key, version)?;
+    let parsed = generate_auth_payload(
+        did_document,
+        service_domain,
+        private_key,
+        version,
+        None,
+        None,
+    )?;
     Ok(format!(
         "DIDWba v=\"{}\", did=\"{}\", nonce=\"{}\", timestamp=\"{}\", verification_method=\"{}\", signature=\"{}\"",
         parsed.version,
@@ -641,7 +648,14 @@ pub fn generate_auth_json(
     private_key: &PrivateKeyMaterial,
     version: &str,
 ) -> Result<String, AuthenticationError> {
-    let parsed = generate_auth_payload(did_document, service_domain, private_key, version)?;
+    let parsed = generate_auth_payload(
+        did_document,
+        service_domain,
+        private_key,
+        version,
+        None,
+        None,
+    )?;
     serde_json::to_string(&json!({
         "v": parsed.version,
         "did": parsed.did,
@@ -651,6 +665,33 @@ pub fn generate_auth_json(
         "signature": parsed.signature,
     }))
     .map_err(|_| AuthenticationError::JsonFailure)
+}
+
+pub(crate) fn generate_auth_header_with_overrides(
+    did_document: &Value,
+    service_domain: &str,
+    private_key: &PrivateKeyMaterial,
+    version: &str,
+    nonce: Option<&str>,
+    timestamp: Option<&str>,
+) -> Result<String, AuthenticationError> {
+    let parsed = generate_auth_payload(
+        did_document,
+        service_domain,
+        private_key,
+        version,
+        nonce,
+        timestamp,
+    )?;
+    Ok(format!(
+        "DIDWba v=\"{}\", did=\"{}\", nonce=\"{}\", timestamp=\"{}\", verification_method=\"{}\", signature=\"{}\"",
+        parsed.version,
+        parsed.did,
+        parsed.nonce,
+        parsed.timestamp,
+        parsed.verification_method,
+        parsed.signature,
+    ))
 }
 
 pub fn extract_auth_header_parts(
@@ -873,14 +914,21 @@ fn generate_auth_payload(
     service_domain: &str,
     private_key: &PrivateKeyMaterial,
     version: &str,
+    nonce_override: Option<&str>,
+    timestamp_override: Option<&str>,
 ) -> Result<ParsedAuthHeader, AuthenticationError> {
     let did = did_document
         .get("id")
         .and_then(Value::as_str)
         .ok_or(AuthenticationError::InvalidDidDocument)?;
     let (method_dict, method_fragment) = select_authentication_method(did_document)?;
-    let nonce = base64url_encode(&rand::random::<[u8; 16]>());
-    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let nonce = nonce_override
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| base64url_encode(&rand::random::<[u8; 16]>()))
+        ;
+    let timestamp = timestamp_override
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
     let domain_field = domain_field_for_version(version);
 
     let payload = json!({

@@ -6,7 +6,8 @@
 # This project is open-sourced under the MIT License. For details, please see the LICENSE file.
 
 import logging
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -147,6 +148,13 @@ class DIDWbaAuthHeader:
         an Authorization Bearer header. Otherwise it generates either new HTTP
         signature headers or a legacy DIDWba Authorization header depending on
         auth_mode.
+
+        Args:
+            server_url: Exact request URL, including the final path and query string.
+            force_new: If True, bypass the cached Bearer token and sign a new request.
+            method: Exact HTTP method for the outgoing request.
+            headers: Request headers that should be covered when applicable.
+            body: Exact request bytes or string that will be sent on the wire.
         """
         domain = self._get_domain(server_url)
         if domain in self.tokens and not force_new:
@@ -171,8 +179,6 @@ class DIDWbaAuthHeader:
     @staticmethod
     def _parse_authentication_info(header_value: str) -> Dict[str, str]:
         """Parse Authentication-Info key/value pairs."""
-        import re
-
         parts = re.findall(r'(\w+)=("[^"]*"|[^,]+)', header_value)
         result: Dict[str, str] = {}
         for key, raw_value in parts:
@@ -181,6 +187,151 @@ class DIDWbaAuthHeader:
                 value = value[1:-1]
             result[key] = value
         return result
+
+    @staticmethod
+    def _parse_www_authenticate(header_value: str) -> Dict[str, str]:
+        """Parse DIDWba WWW-Authenticate challenge fields."""
+        value = header_value.strip()
+        if " " in value:
+            scheme, remainder = value.split(" ", 1)
+            if scheme.lower() == "didwba":
+                value = remainder
+        parts = re.findall(r'([\w-]+)=("[^"]*"|[^,]+)', value)
+        result: Dict[str, str] = {}
+        for key, raw_value in parts:
+            parsed_value = raw_value.strip()
+            if parsed_value.startswith('"') and parsed_value.endswith('"'):
+                parsed_value = parsed_value[1:-1]
+            result[key] = parsed_value
+        return result
+
+    @staticmethod
+    def _parse_accept_signature(header_value: str) -> List[str]:
+        """Parse covered components from an Accept-Signature header."""
+        return re.findall(r'"([^"]+)"', header_value)
+
+    @staticmethod
+    def _normalize_covered_components(
+        covered_components: Optional[List[str]],
+        headers: Optional[Dict[str, str]],
+        body: Any,
+    ) -> Optional[List[str]]:
+        """Drop challenge components that cannot be satisfied for this request."""
+        if covered_components is None:
+            return None
+
+        normalized_headers = {key.lower(): value for key, value in (headers or {}).items()}
+        body_present = body not in (None, b"", "")
+        normalized_components: List[str] = []
+        for component in covered_components:
+            component_lower = component.lower()
+            if component_lower == "content-digest" and not body_present:
+                continue
+            if (
+                component_lower == "content-length"
+                and not body_present
+                and "content-length" not in normalized_headers
+            ):
+                continue
+            if component_lower == "content-type" and "content-type" not in normalized_headers:
+                continue
+            if (
+                not component_lower.startswith("@")
+                and component_lower not in normalized_headers
+                and component_lower != "content-length"
+                and component_lower != "content-digest"
+            ):
+                continue
+            normalized_components.append(component)
+        return normalized_components
+
+    def should_retry_after_401(self, response_headers: Dict[str, str]) -> bool:
+        """Return whether a 401 response should trigger one authentication retry."""
+        www_authenticate = self._get_header_case_insensitive(
+            response_headers,
+            "WWW-Authenticate",
+        )
+        if not www_authenticate:
+            return False
+
+        challenge = self._parse_www_authenticate(www_authenticate)
+        error = challenge.get("error", "").lower()
+        if challenge.get("nonce"):
+            return True
+        return error not in {
+            "invalid_did",
+            "invalid_verification_method",
+            "forbidden_did",
+        }
+
+    def get_challenge_auth_header(
+        self,
+        server_url: str,
+        response_headers: Dict[str, str],
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        body: Any = None,
+    ) -> Dict[str, str]:
+        """Generate DID authentication headers for a 401 challenge response."""
+        www_authenticate = self._get_header_case_insensitive(
+            response_headers,
+            "WWW-Authenticate",
+        )
+        accept_signature = self._get_header_case_insensitive(
+            response_headers,
+            "Accept-Signature",
+        )
+        challenge = (
+            self._parse_www_authenticate(www_authenticate)
+            if www_authenticate
+            else {}
+        )
+        covered_components = self._normalize_covered_components(
+            self._parse_accept_signature(accept_signature)
+            if accept_signature
+            else None,
+            headers,
+            body,
+        )
+        nonce = challenge.get("nonce")
+
+        normalized_mode = self.auth_mode.lower()
+        if normalized_mode in {"http_signatures", "auto"}:
+            did_document = self._load_did_document()
+            auth_headers = generate_http_signature_headers(
+                did_document=did_document,
+                request_url=server_url,
+                request_method=method,
+                sign_callback=self._sign_callback,
+                headers=headers,
+                body=body,
+                nonce=nonce,
+                covered_components=covered_components,
+            )
+            logging.info(
+                "Generated HTTP challenge response headers for %s %s",
+                method,
+                server_url,
+            )
+            return auth_headers
+
+        if normalized_mode == "legacy_didwba":
+            did_document = self._load_did_document()
+            auth_header = generate_auth_header(
+                did_document,
+                self._get_domain(server_url),
+                self._sign_callback,
+                nonce=nonce,
+            )
+            logging.info(
+                "Generated legacy challenge response header for %s",
+                server_url,
+            )
+            return {"Authorization": auth_header}
+
+        raise ValueError(
+            "auth_mode must be one of: http_signatures, legacy_didwba, auto"
+        )
 
     def update_token(self, server_url: str, headers: Dict[str, str]) -> Optional[str]:
         """Update the cached token from response headers."""

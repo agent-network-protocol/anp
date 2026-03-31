@@ -9,6 +9,7 @@ import {
   DidWbaVerifier,
   DIDWbaAuthHeader,
   createDidWbaDocument,
+  extractSignatureMetadata,
   extractAuthHeaderParts,
   generateAuthHeader,
   generateHttpSignatureHeaders,
@@ -143,6 +144,49 @@ describe('authentication', () => {
     });
     const cachedHeaders = await authHelper.getAuthHeaders('https://api.example.com/orders');
     expect(cachedHeaders.Authorization).toBe('Bearer cached-token');
+  });
+
+  test('file-based authenticator reuses server nonce for challenge headers', async () => {
+    const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/k1');
+    const authHelper = new DIDWbaAuthHeader(
+      join(fixtureDir, 'did.json'),
+      join(fixtureDir, 'key-1_private.pem'),
+      AuthMode.HttpSignatures
+    );
+
+    const headers = await authHelper.getChallengeAuthHeaders(
+      'https://api.example.com/orders',
+      {
+        'WWW-Authenticate':
+          'DIDWba realm="api.example.com", error="invalid_nonce", error_description="Retry", nonce="server-nonce-xyz"',
+        'Accept-Signature':
+          'sig1=("@method" "@target-uri" "@authority" "content-digest" "content-type");created;expires;nonce;keyid',
+      },
+      'POST',
+      { 'Content-Type': 'application/json' },
+      '{"item":"book"}'
+    );
+
+    const metadata = extractSignatureMetadata(headers);
+    expect(metadata.nonce).toBe('server-nonce-xyz');
+    expect(metadata.components).toContain('content-type');
+    expect(headers['Content-Digest']).toBeDefined();
+  });
+
+  test('file-based authenticator skips retry for invalid DID challenge', async () => {
+    const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/k1');
+    const authHelper = new DIDWbaAuthHeader(
+      join(fixtureDir, 'did.json'),
+      join(fixtureDir, 'key-1_private.pem'),
+      AuthMode.HttpSignatures
+    );
+
+    expect(
+      authHelper.shouldRetryAfter401({
+        'WWW-Authenticate':
+          'DIDWba realm="api.example.com", error="invalid_did", error_description="Unknown DID"',
+      })
+    ).toBe(false);
   });
 
   test('verifies Rust-generated fixtures', () => {

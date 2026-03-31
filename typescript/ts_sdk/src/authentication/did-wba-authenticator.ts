@@ -82,6 +82,65 @@ export class DIDWbaAuthHeader {
     this.tokens.clear();
   }
 
+  shouldRetryAfter401(responseHeaders: Record<string, string>): boolean {
+    const wwwAuthenticate = getHeaderCaseInsensitive(responseHeaders, 'WWW-Authenticate');
+    if (!wwwAuthenticate) {
+      return false;
+    }
+    const challenge = parseWwwAuthenticate(wwwAuthenticate);
+    if (challenge.nonce) {
+      return true;
+    }
+    return !['invalid_did', 'invalid_verification_method', 'forbidden_did'].includes(
+      challenge.error ?? ''
+    );
+  }
+
+  async getChallengeAuthHeaders(
+    serverUrl: string,
+    responseHeaders: Record<string, string>,
+    method = 'GET',
+    headers?: Record<string, string>,
+    body?: Uint8Array | string
+  ): Promise<Record<string, string>> {
+    const wwwAuthenticate = getHeaderCaseInsensitive(responseHeaders, 'WWW-Authenticate');
+    const acceptSignature = getHeaderCaseInsensitive(responseHeaders, 'Accept-Signature');
+    const challenge = wwwAuthenticate ? parseWwwAuthenticate(wwwAuthenticate) : {};
+    const coveredComponents = normalizeCoveredComponents(
+      acceptSignature ? parseAcceptSignature(acceptSignature) : undefined,
+      headers,
+      body
+    );
+
+    const [didDocument, privateKeyPem] = await Promise.all([
+      this.loadDidDocument(),
+      readFile(this.privateKeyPath, 'utf8'),
+    ]);
+
+    if (this.authMode === AuthMode.LegacyDidWba) {
+      return {
+        Authorization: generateAuthHeader(didDocument, extractDomain(serverUrl), privateKeyPem, '1.1', {
+          nonce: challenge.nonce,
+        }),
+      };
+    }
+
+    return generateHttpSignatureHeaders(didDocument, serverUrl, method, privateKeyPem, headers, body, {
+      nonce: challenge.nonce,
+      coveredComponents,
+    });
+  }
+
+  async getChallengeAuthHeader(
+    serverUrl: string,
+    responseHeaders: Record<string, string>,
+    method = 'GET',
+    headers?: Record<string, string>,
+    body?: Uint8Array | string
+  ): Promise<Record<string, string>> {
+    return this.getChallengeAuthHeaders(serverUrl, responseHeaders, method, headers, body);
+  }
+
   private async loadDidDocument(): Promise<DidDocument> {
     if (!this.didDocumentCache) {
       this.didDocumentCache = JSON.parse(await readFile(this.didDocumentPath, 'utf8')) as DidDocument;
@@ -115,4 +174,58 @@ function parseAuthenticationInfo(value: string): Record<string, string> {
       }
       return result;
     }, {});
+}
+
+function parseWwwAuthenticate(value: string): Record<string, string> {
+  const normalized = value.replace(/^DIDWba\s+/i, '').trim();
+  const matches = [...normalized.matchAll(/([\w-]+)=("[^"]*"|[^,]+)/g)];
+  return matches.reduce<Record<string, string>>((result, match) => {
+    result[match[1]] = match[2].trim().replace(/^"|"$/g, '');
+    return result;
+  }, {});
+}
+
+function parseAcceptSignature(value: string): string[] {
+  return [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+}
+
+function normalizeCoveredComponents(
+  coveredComponents: string[] | undefined,
+  headers: Record<string, string> | undefined,
+  body: Uint8Array | string | undefined
+): string[] | undefined {
+  if (!coveredComponents) {
+    return undefined;
+  }
+  const normalizedHeaders = Object.fromEntries(
+    Object.entries(headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+  );
+  const bodyPresent =
+    body !== undefined &&
+    !(
+      (typeof body === 'string' && body.length === 0) ||
+      (body instanceof Uint8Array && body.byteLength === 0)
+    );
+
+  return coveredComponents.filter((component) => {
+    const normalized = component.toLowerCase();
+    if (normalized === 'content-digest' && !bodyPresent) {
+      return false;
+    }
+    if (normalized === 'content-length' && !bodyPresent && !('content-length' in normalizedHeaders)) {
+      return false;
+    }
+    if (normalized === 'content-type' && !('content-type' in normalizedHeaders)) {
+      return false;
+    }
+    if (
+      !normalized.startsWith('@') &&
+      normalized !== 'content-length' &&
+      normalized !== 'content-digest' &&
+      !(normalized in normalizedHeaders)
+    ) {
+      return false;
+    }
+    return true;
+  });
 }

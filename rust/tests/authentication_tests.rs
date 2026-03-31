@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::fs;
 
 use anp::authentication::{
-    create_did_wba_document, generate_auth_header, generate_http_signature_headers,
+    create_did_wba_document, extract_signature_metadata, generate_auth_header, generate_http_signature_headers,
     verify_auth_header_signature, verify_http_message_signature, AuthMode,
     DIDWbaAuthHeader, DidDocumentOptions, DidProfile, DidWbaVerifier,
     DidWbaVerifierConfig,
@@ -121,6 +122,63 @@ fn test_did_wba_auth_header_reads_files_and_generates_headers() {
         .expect("header generation should succeed");
     assert!(headers.contains_key("Signature-Input"));
     assert!(headers.contains_key("Signature"));
+}
+
+#[test]
+fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir().expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "WWW-Authenticate".to_string(),
+        "DIDWba realm=\"api.example.com\", error=\"invalid_nonce\", error_description=\"Retry\", nonce=\"server-nonce-123\"".to_string(),
+    );
+    response_headers.insert(
+        "Accept-Signature".to_string(),
+        "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-digest\" \"content-type\");created;expires;nonce;keyid".to_string(),
+    );
+    let mut request_headers = BTreeMap::new();
+    request_headers.insert("Content-Type".to_string(), "application/json".to_string());
+
+    let headers = helper
+        .get_challenge_auth_header(
+            "https://api.example.com/orders",
+            &response_headers,
+            "POST",
+            Some(&request_headers),
+            Some(br#"{"item":"book"}"#),
+        )
+        .expect("challenge auth headers should be generated");
+    let metadata = extract_signature_metadata(&headers).expect("metadata should parse");
+    assert_eq!(metadata.nonce.as_deref(), Some("server-nonce-123"));
+    assert!(metadata.components.iter().any(|value| value == "content-type"));
+    assert!(headers.contains_key("Content-Digest"));
+}
+
+#[test]
+fn test_did_wba_auth_header_should_not_retry_invalid_did() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir().expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "WWW-Authenticate".to_string(),
+        "DIDWba realm=\"api.example.com\", error=\"invalid_did\", error_description=\"Unknown DID\"".to_string(),
+    );
+    assert!(!helper.should_retry_after_401(&response_headers));
 }
 
 #[tokio::test]

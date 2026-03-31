@@ -52,6 +52,9 @@ def main() -> None:
     )
 
     with httpx.Client(timeout=30.0) as client:
+        protected_url = f"{SERVER_URL}/api/protected"
+        user_info_url = f"{SERVER_URL}/api/user-info"
+
         print("\n" + "=" * 60)
         print("Step 1: Access health endpoint (no authentication required)")
         print("=" * 60)
@@ -62,7 +65,11 @@ def main() -> None:
         print("\n" + "=" * 60)
         print("Step 2: Access protected endpoint with DID authentication")
         print("=" * 60)
-        headers = authenticator.get_auth_header(SERVER_URL, force_new=True)
+        headers = authenticator.get_auth_header(
+            protected_url,
+            force_new=True,
+            method="GET",
+        )
         if "Signature-Input" in headers:
             print("Auth header type: HTTP Message Signatures")
             print(f"Signature-Input: {headers['Signature-Input'][:80]}...")
@@ -70,20 +77,22 @@ def main() -> None:
             print("Auth header type: Legacy DIDWba")
             print(f"Authorization: {headers['Authorization'][:80]}...")
 
-        response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
+        response = client.get(protected_url, headers=headers)
 
         if response.status_code == 401:
-            print("Received 401, clearing expired token and re-authenticating...")
-            authenticator.clear_token(SERVER_URL)
-            headers = authenticator.get_auth_header(SERVER_URL, force_new=True)
-            response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
+            print("Received 401, retrying DID authentication with challenge headers...")
+            authenticator.clear_token(protected_url)
+            headers = authenticator.get_challenge_auth_header(
+                protected_url,
+                dict(response.headers),
+                method="GET",
+            )
+            response = client.get(protected_url, headers=headers)
 
         print(f"Status: {response.status_code}")
         print(f"Response: {response.json()}")
 
-        token = authenticator.update_token(
-            SERVER_URL, dict(response.headers)
-        )
+        token = authenticator.update_token(protected_url, dict(response.headers))
         if token:
             print(f"Received Bearer token: {token[:50]}...")
         else:
@@ -92,19 +101,40 @@ def main() -> None:
         print("\n" + "=" * 60)
         print("Step 3: Access protected endpoint with cached Bearer token")
         print("=" * 60)
-        headers = authenticator.get_auth_header(SERVER_URL)
+        headers = authenticator.get_auth_header(protected_url)
         print(f"Auth header type: Bearer")
         print(f"Authorization: {headers['Authorization'][:80]}...")
 
-        response = client.get(f"{SERVER_URL}/api/protected", headers=headers)
+        response = client.get(protected_url, headers=headers)
+        if response.status_code == 401:
+            print("Received 401 for Bearer token, retrying with challenge-aware DID auth...")
+            authenticator.clear_token(protected_url)
+            headers = authenticator.get_challenge_auth_header(
+                protected_url,
+                dict(response.headers),
+                method="GET",
+            )
+            response = client.get(protected_url, headers=headers)
+            token = authenticator.update_token(protected_url, dict(response.headers))
+            if token:
+                headers = authenticator.get_auth_header(protected_url)
         print(f"Status: {response.status_code}")
         print(f"Response: {response.json()}")
 
         print("\n" + "=" * 60)
         print("Step 4: Access user-info endpoint with Bearer token")
         print("=" * 60)
-        headers = authenticator.get_auth_header(SERVER_URL)
-        response = client.get(f"{SERVER_URL}/api/user-info", headers=headers)
+        headers = authenticator.get_auth_header(user_info_url)
+        response = client.get(user_info_url, headers=headers)
+        if response.status_code == 401:
+            print("Received 401 for Bearer token, retrying with challenge-aware DID auth...")
+            authenticator.clear_token(user_info_url)
+            headers = authenticator.get_challenge_auth_header(
+                user_info_url,
+                dict(response.headers),
+                method="GET",
+            )
+            response = client.get(user_info_url, headers=headers)
         print(f"Status: {response.status_code}")
         print(f"Response: {response.json()}")
 

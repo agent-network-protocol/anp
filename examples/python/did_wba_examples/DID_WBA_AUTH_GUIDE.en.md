@@ -306,29 +306,36 @@ authenticator = DIDWbaAuthHeader(
 )
 
 server_url = "https://example.com"
+data_url = f"{server_url}/api/data"
+other_url = f"{server_url}/api/other"
 
 # 2. First request: auto-generates HTTP Message Signatures by default
-headers = authenticator.get_auth_header(server_url, force_new=True)
+headers = authenticator.get_auth_header(
+    data_url,
+    force_new=True,
+    method="GET",
+)
 # Default: {"Signature-Input": "...", "Signature": "..."}
 # With auth_mode="legacy_didwba": {"Authorization": "DIDWba ..."}
 
 with httpx.Client() as client:
-    response = client.get(f"{server_url}/api/data", headers=headers)
+    response = client.get(data_url, headers=headers)
 
     # 3. Extract and cache Bearer Token from response
-    authenticator.update_token(server_url, dict(response.headers))
+    authenticator.update_token(data_url, dict(response.headers))
 
     # 4. Subsequent requests: automatically uses cached Bearer Token
-    headers = authenticator.get_auth_header(server_url)
+    headers = authenticator.get_auth_header(other_url)
     # headers = {"Authorization": "Bearer eyJ..."}
-    response = client.get(f"{server_url}/api/other", headers=headers)
+    response = client.get(other_url, headers=headers)
 ```
 
 ### 4.2 DIDWbaAuthHeader Key Methods
 
 | Method | Description |
 |--------|-------------|
-| `get_auth_header(server_url, force_new=False)` | Get auth header. Returns a cached Bearer header if available; otherwise generates HTTP Message Signatures by default, or the legacy DIDWba header when `auth_mode=\"legacy_didwba\"` |
+| `get_auth_header(server_url, force_new=False, method="GET", headers=None, body=None)` | Get auth header. Returns a cached Bearer header if available; otherwise generates HTTP Message Signatures by default. `server_url` must be the final request URL (including path/query), and `body` must be the exact outbound bytes |
+| `get_challenge_auth_header(server_url, response_headers, method="GET", headers=None, body=None)` | Rebuild auth headers from a `401` response using `WWW-Authenticate` / `Accept-Signature`, automatically reusing the server-provided `nonce` |
 | `update_token(server_url, headers)` | Extract Bearer Token from response headers and cache it |
 | `clear_token(server_url)` | Clear cached token for the specified domain |
 | `clear_all_tokens()` | Clear all cached tokens |
@@ -336,17 +343,24 @@ with httpx.Client() as client:
 ### 4.3 Handling Token Expiry
 
 ```python
-response = client.get(f"{server_url}/api/data", headers=headers)
+data_url = f"{server_url}/api/data"
+response = client.get(data_url, headers=headers)
 
 if response.status_code == 401:
-    # Token expired or invalid — clear cache and re-authenticate with DID
-    authenticator.clear_token(server_url)
-    headers = authenticator.get_auth_header(server_url, force_new=True)
-    response = client.get(f"{server_url}/api/data", headers=headers)
+    # Token expired, nonce became invalid, or the server returned a fresh challenge
+    authenticator.clear_token(data_url)
+    headers = authenticator.get_challenge_auth_header(
+        data_url,
+        dict(response.headers),
+        method="GET",
+    )
+    response = client.get(data_url, headers=headers)
 
     # Cache the new token
-    authenticator.update_token(server_url, dict(response.headers))
+    authenticator.update_token(data_url, dict(response.headers))
 ```
+
+If you use the higher-level `ANPClient`, the Bearer refresh and `401 + WWW-Authenticate/nonce` retry flow is handled automatically.
 
 ## 5. DID Document and Key Preparation
 

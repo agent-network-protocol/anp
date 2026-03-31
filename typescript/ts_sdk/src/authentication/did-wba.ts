@@ -32,6 +32,7 @@ import type {
   DidDocumentOptions,
   DidProfile,
   DidResolutionOptions,
+  LegacyAuthOptions,
   ParsedAuthHeader,
   ServiceRecord,
   VerificationMethodRecord,
@@ -264,9 +265,16 @@ export function generateAuthHeader(
   didDocument: DidDocument,
   serviceDomain: string,
   privateKeyInput: string,
-  version = '1.1'
+  version = '1.1',
+  options: LegacyAuthOptions = {}
 ): string {
-  const payload = generateAuthPayload(didDocument, serviceDomain, privateKeyInput, version);
+  const payload = generateAuthPayload(
+    didDocument,
+    serviceDomain,
+    privateKeyInput,
+    version,
+    options
+  );
   return `DIDWba v="${payload.version}", did="${payload.did}", nonce="${payload.nonce}", timestamp="${payload.timestamp}", verification_method="${payload.verificationMethod}", signature="${payload.signature}"`;
 }
 
@@ -274,9 +282,16 @@ export function generateAuthJson(
   didDocument: DidDocument,
   serviceDomain: string,
   privateKeyInput: string,
-  version = '1.1'
+  version = '1.1',
+  options: LegacyAuthOptions = {}
 ): string {
-  const payload = generateAuthPayload(didDocument, serviceDomain, privateKeyInput, version);
+  const payload = generateAuthPayload(
+    didDocument,
+    serviceDomain,
+    privateKeyInput,
+    version,
+    options
+  );
   return JSON.stringify({
     v: payload.version,
     did: payload.did,
@@ -390,12 +405,13 @@ function generateAuthPayload(
   didDocument: DidDocument,
   serviceDomain: string,
   privateKeyInput: string,
-  version: string
+  version: string,
+  options: LegacyAuthOptions = {}
 ): ParsedAuthHeader {
   const did = didDocument.id;
   const [method, fragment] = selectAuthenticationMethod(didDocument);
-  const nonce = encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-  const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const nonce = options.nonce ?? encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+  const timestamp = options.timestamp ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const payload = {
     nonce,
     timestamp,

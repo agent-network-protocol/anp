@@ -122,15 +122,18 @@ class HotelBookingClient:
         """记录失败结果。"""
         self.reporter.failure(message)
     
-    def _get_auth_headers(self) -> dict:
+    def _get_auth_headers(self, prepared_request: requests.PreparedRequest) -> dict:
         """获取认证 headers"""
         if not self.use_auth or not self.authenticator:
             return {}
-        
-        # Generate auth header for this request
-        server_url = f"{self.base_url}/resource"
-        auth_headers = self.authenticator.get_auth_header(server_url, force_new=True)
-        return auth_headers
+
+        return self.authenticator.get_auth_header(
+            prepared_request.url,
+            force_new=True,
+            method=prepared_request.method,
+            headers=dict(prepared_request.headers),
+            body=prepared_request.body,
+        )
 
     def _make_request(self, method: str, path: str, with_auth: bool = True, **kwargs) -> requests.Response:
         """
@@ -145,17 +148,22 @@ class HotelBookingClient:
         Returns:
             HTTP 响应
         """
-        # Add auth headers if needed
-        if with_auth:
-            auth_headers = self._get_auth_headers()
-            if 'headers' in kwargs:
-                kwargs['headers'].update(auth_headers)
-            else:
-                kwargs['headers'] = auth_headers
-        
-        # 发送请求
         url = f"{self.base_url}{path}"
-        return self.session.request(method, url, **kwargs)
+        if not with_auth or not self.use_auth or not self.authenticator:
+            return self.session.request(method, url, **kwargs)
+
+        request = requests.Request(method=method, url=url, **kwargs)
+        prepared_request = self.session.prepare_request(request)
+        prepared_request.headers.update(self._get_auth_headers(prepared_request))
+
+        send_kwargs = self.session.merge_environment_settings(
+            prepared_request.url,
+            {},
+            None,
+            None,
+            None,
+        )
+        return self.session.send(prepared_request, **send_kwargs)
 
     def test_ad_json_endpoints(self):
         """测试 ad.json 端点"""

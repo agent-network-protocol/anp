@@ -300,18 +300,19 @@ did_document, keys = create_did_wba_document(
     agent_description_url="https://your-domain.com/agents/your-agent"
 )
 
-# 2. 生成认证头
+# 2. 生成认证头（使用最终请求 URL）
 authenticator = DIDWbaAuthHeader(
     did_document_path="path/to/did.json",
     private_key_path="path/to/private.pem"
 )
-headers = authenticator.get_auth_header(server_url)
+request_url = "https://example.com/resource"
+headers = authenticator.get_auth_header(request_url, method="GET")
 
 # 3. 验证认证
 verifier = DidWbaVerifier(config)
 result = await verifier.verify_request(
     method="GET",
-    url=server_url,
+    url=request_url,
     headers=headers,
     body=b"",
 )
