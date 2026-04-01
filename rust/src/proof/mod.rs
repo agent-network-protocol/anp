@@ -1,5 +1,6 @@
 //! W3C Data Integrity Proof support for ANP.
 
+pub mod group_receipt;
 pub mod im;
 
 use chrono::Utc;
@@ -11,6 +12,7 @@ use thiserror::Error;
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
+pub use group_receipt::*;
 pub use im::*;
 
 pub const PROOF_TYPE_SECP256K1: &str = "EcdsaSecp256k1Signature2019";
@@ -111,8 +113,11 @@ pub fn generate_w3c_proof(
         object.remove("proof");
     }
 
-    let signing_input = compute_signing_input(&signing_document, &Value::Object(proof_object.clone()))?;
-    let signature = private_key.sign_message(&signing_input).map_err(|_| ProofError::SigningError)?;
+    let signing_input =
+        compute_signing_input(&signing_document, &Value::Object(proof_object.clone()))?;
+    let signature = private_key
+        .sign_message(&signing_input)
+        .map_err(|_| ProofError::SigningError)?;
     proof_object.insert(
         "proofValue".to_string(),
         Value::String(crate::keys::base64url_encode(&signature)),
@@ -196,13 +201,17 @@ pub fn verify_w3c_proof_detailed(
         object.remove("proof");
     }
     let signing_input = compute_signing_input(&signing_document, &Value::Object(proof_options))?;
-    let signature = crate::keys::base64url_decode(proof_value).map_err(|_| ProofError::InvalidProofValue)?;
+    let signature =
+        crate::keys::base64url_decode(proof_value).map_err(|_| ProofError::InvalidProofValue)?;
     public_key
         .verify_message(&signing_input, &signature)
         .map_err(|_| ProofError::VerificationFailed)
 }
 
-pub(crate) fn compute_signing_input(document: &Value, proof_options: &Value) -> Result<Vec<u8>, ProofError> {
+pub(crate) fn compute_signing_input(
+    document: &Value,
+    proof_options: &Value,
+) -> Result<Vec<u8>, ProofError> {
     let document_hash = hash_bytes(&canonicalize_json(document)?);
     let proof_hash = hash_bytes(&canonicalize_json(proof_options)?);
     let mut output = Vec::with_capacity(document_hash.len() + proof_hash.len());
@@ -249,7 +258,10 @@ fn validate_key_compatibility(
     }
 }
 
-fn validate_cryptosuite(private_key: &PrivateKeyMaterial, cryptosuite: &str) -> Result<(), ProofError> {
+fn validate_cryptosuite(
+    private_key: &PrivateKeyMaterial,
+    cryptosuite: &str,
+) -> Result<(), ProofError> {
     match cryptosuite {
         CRYPTOSUITE_EDDSA_JCS_2022 => match private_key {
             PrivateKeyMaterial::Ed25519(_) => Ok(()),

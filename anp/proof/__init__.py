@@ -29,6 +29,12 @@ from .proof import (
     CRYPTOSUITE_EDDSA_JCS_2022,
     CRYPTOSUITE_DIDWBA_SECP256K1_2025,
 )
+from .group_receipt import (
+    GROUP_RECEIPT_PROOF_PURPOSE,
+    GROUP_RECEIPT_REQUIRED_FIELDS,
+    generate_group_receipt_proof,
+    verify_group_receipt_proof,
+)
 from .im import (
     IM_PROOF_DEFAULT_COMPONENTS,
     ImProofError,
@@ -52,6 +58,10 @@ __all__ = [
     "PROOF_TYPE_DATA_INTEGRITY",
     "CRYPTOSUITE_EDDSA_JCS_2022",
     "CRYPTOSUITE_DIDWBA_SECP256K1_2025",
+    "GROUP_RECEIPT_PROOF_PURPOSE",
+    "GROUP_RECEIPT_REQUIRED_FIELDS",
+    "generate_group_receipt_proof",
+    "verify_group_receipt_proof",
     "IM_PROOF_DEFAULT_COMPONENTS",
     "ImProofError",
     "ImProofVerificationResult",
