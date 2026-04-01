@@ -29,6 +29,20 @@ from .proof import (
     CRYPTOSUITE_EDDSA_JCS_2022,
     CRYPTOSUITE_DIDWBA_SECP256K1_2025,
 )
+from .im import (
+    IM_PROOF_DEFAULT_COMPONENTS,
+    ImProofError,
+    ImProofVerificationResult,
+    ParsedImSignatureInput,
+    build_im_content_digest,
+    verify_im_content_digest,
+    build_im_signature_input,
+    parse_im_signature_input,
+    encode_im_signature,
+    decode_im_signature,
+    generate_im_proof,
+    verify_im_proof,
+)
 
 __all__ = [
     "generate_w3c_proof",
@@ -38,4 +52,16 @@ __all__ = [
     "PROOF_TYPE_DATA_INTEGRITY",
     "CRYPTOSUITE_EDDSA_JCS_2022",
     "CRYPTOSUITE_DIDWBA_SECP256K1_2025",
+    "IM_PROOF_DEFAULT_COMPONENTS",
+    "ImProofError",
+    "ImProofVerificationResult",
+    "ParsedImSignatureInput",
+    "build_im_content_digest",
+    "verify_im_content_digest",
+    "build_im_signature_input",
+    "parse_im_signature_input",
+    "encode_im_signature",
+    "decode_im_signature",
+    "generate_im_proof",
+    "verify_im_proof",
 ]

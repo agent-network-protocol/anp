@@ -1,5 +1,7 @@
 //! W3C Data Integrity Proof support for ANP.
 
+pub mod im;
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -8,6 +10,8 @@ use thiserror::Error;
 
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
+
+pub use im::*;
 
 pub const PROOF_TYPE_SECP256K1: &str = "EcdsaSecp256k1Signature2019";
 pub const PROOF_TYPE_ED25519: &str = "Ed25519Signature2020";

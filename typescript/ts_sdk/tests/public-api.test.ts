@@ -42,6 +42,8 @@ describe('public API aliases', () => {
 
     expect(verifyProof(signed, bundle.keys['key-1'].publicKeyPem)).toBe(true);
     expect(proof.verify(signed, bundle.keys['key-1'].publicKeyPem)).toBe(true);
+    expect(proof.im.generateImProof).toBeTypeOf('function');
+    expect(proof.im.verifyImProof).toBeTypeOf('function');
   });
 
   test('exposes stable wns aliases and namespace', async () => {
