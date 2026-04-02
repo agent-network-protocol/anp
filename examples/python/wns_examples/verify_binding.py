@@ -15,10 +15,10 @@ from anp.wns import (
 async def main():
     handle = "alice.example.com"
 
-    # 1. Build a HandleService entry (for inclusion in a DID Document)
+    # 1. Build an ANPHandleService entry (for inclusion in a DID Document)
     did = "did:wba:example.com:user:alice"
     entry = build_handle_service_entry(did, "alice", "example.com")
-    print("HandleService entry for DID Document:")
+    print("ANPHandleService entry for DID Document:")
     import json
 
     print(json.dumps(entry, indent=2))
@@ -39,8 +39,8 @@ async def main():
         "service": [
             {
                 "id": f"{did}#handle",
-                "type": "HandleService",
-                "serviceEndpoint": "https://example.com/.well-known/handle/alice",
+                "type": "ANPHandleService",
+                "serviceEndpoint": "https://example.com/providers/wns",
             }
         ],
     }

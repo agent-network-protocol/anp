@@ -18,7 +18,7 @@ fn main() {
     let handle_service =
         build_handle_service_entry("did:wba:example.com:user:alice", &local_part, &domain);
     println!(
-        "handle service entry: {}",
+        "ANPHandleService entry: {}",
         serde_json::to_string_pretty(&handle_service).expect("service entry should serialize"),
     );
 }

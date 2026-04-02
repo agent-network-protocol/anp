@@ -1,6 +1,8 @@
 import type { DidResolutionOptions } from '../authentication/types.js';
 import type { DidDocument } from '../authentication/types.js';
 
+export const ANP_HANDLE_SERVICE_TYPE = 'ANPHandleService';
+
 export enum HandleStatus {
   Active = 'active',
   Suspended = 'suspended',

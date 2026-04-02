@@ -4,11 +4,15 @@ Implements the verification flow from WNS spec section 6.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-from .exceptions import HandleBindingError, HandleResolutionError
-from .models import HandleResolutionDocument, HandleStatus
+from .models import (
+    ANP_HANDLE_SERVICE_TYPE,
+    HandleResolutionDocument,
+    HandleStatus,
+)
 from .resolver import resolve_handle
 from .validator import build_resolution_url, validate_handle
 
@@ -38,8 +42,8 @@ async def verify_handle_binding(
       1. **Forward**: resolve the handle to obtain a DID; check status is active.
       2. **Domain consistency**: Handle domain must match DID domain.
       3. **Reverse**: fetch/use the DID Document and check that it contains a
-         ``HandleService`` entry whose ``serviceEndpoint`` points back to the
-         same Handle Resolution Endpoint.
+         ``ANPHandleService`` entry whose ``serviceEndpoint`` uses HTTPS and
+         declares the same Handle Provider domain.
 
     Args:
         handle: The handle to verify.  Accepts both bare handles
@@ -57,7 +61,6 @@ async def verify_handle_binding(
     bare_handle = handle[len("wba://"):] if handle.startswith("wba://") else handle
     local_part, domain = validate_handle(bare_handle)
     normalized_handle = f"{local_part}.{domain}"
-    expected_endpoint = build_resolution_url(local_part, domain)
 
     # -- Step 1: Forward resolution ----------------------------------------
     forward_verified = False
@@ -143,7 +146,10 @@ async def verify_handle_binding(
 
     handle_services = extract_handle_service_from_did_document(did_document)
     reverse_verified = any(
-        svc.get("serviceEndpoint", "").rstrip("/") == expected_endpoint.rstrip("/")
+        _matches_handle_service_domain(
+            service_endpoint=svc.get("serviceEndpoint", ""),
+            expected_domain=domain,
+        )
         for svc in handle_services
     )
 
@@ -155,8 +161,8 @@ async def verify_handle_binding(
             forward_verified=True,
             reverse_verified=False,
             error_message=(
-                "DID Document does not contain a HandleService entry "
-                f"pointing to '{expected_endpoint}'"
+                "DID Document does not contain an ANPHandleService entry "
+                f"whose HTTPS domain matches '{domain}'"
             ),
         )
 
@@ -175,19 +181,23 @@ async def verify_handle_binding(
 def build_handle_service_entry(
     did: str, local_part: str, domain: str
 ) -> Dict[str, str]:
-    """Build a HandleService entry for inclusion in a DID Document.
+    """Build an ANPHandleService entry for inclusion in a DID Document.
 
     Returns a dict matching the structure in WNS spec section 6.2::
 
         {
             "id": "did:wba:example.com:user:alice#handle",
-            "type": "HandleService",
+            "type": "ANPHandleService",
             "serviceEndpoint": "https://example.com/.well-known/handle/alice"
         }
+
+    The returned ``serviceEndpoint`` uses the canonical Handle Resolution URL
+    for convenience. Reverse verification only requires that the endpoint uses
+    HTTPS and that its domain matches the Handle Provider domain.
     """
     return {
         "id": f"{did}#handle",
-        "type": "HandleService",
+        "type": ANP_HANDLE_SERVICE_TYPE,
         "serviceEndpoint": build_resolution_url(local_part, domain),
     }
 
@@ -195,6 +205,18 @@ def build_handle_service_entry(
 def extract_handle_service_from_did_document(
     did_document: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Extract all HandleService entries from a DID Document."""
+    """Extract all ANPHandleService entries from a DID Document."""
     services = did_document.get("service", [])
-    return [svc for svc in services if svc.get("type") == "HandleService"]
+    return [svc for svc in services if svc.get("type") == ANP_HANDLE_SERVICE_TYPE]
+
+
+def _matches_handle_service_domain(
+    *, service_endpoint: str, expected_domain: str
+) -> bool:
+    """Return whether a service endpoint matches the expected Handle domain."""
+    if not isinstance(service_endpoint, str) or not service_endpoint:
+        return False
+
+    parsed = urlparse(service_endpoint)
+    hostname = parsed.hostname.lower() if parsed.hostname else None
+    return parsed.scheme.lower() == "https" and hostname == expected_domain.lower()

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use url::Url;
 
 use crate::authentication::{resolve_did_wba_document_with_options, DidResolutionOptions};
 
-use super::models::HandleStatus;
+use super::models::{HandleStatus, ANP_HANDLE_SERVICE_TYPE};
 use super::resolver::{resolve_handle_with_options, ResolveHandleOptions};
 use super::validator::{build_resolution_url, validate_handle};
 
@@ -57,7 +58,6 @@ pub async fn verify_handle_binding_with_options(
         }
     };
     let normalized_handle = format!("{}.{}", local_part, domain);
-    let expected_endpoint = build_resolution_url(&local_part, &domain);
 
     let resolution =
         match resolve_handle_with_options(&normalized_handle, &options.resolution_options).await {
@@ -144,7 +144,7 @@ pub async fn verify_handle_binding_with_options(
         service
             .get("serviceEndpoint")
             .and_then(Value::as_str)
-            .map(|value| value.trim_end_matches('/') == expected_endpoint.trim_end_matches('/'))
+            .map(|value| matches_handle_service_domain(value, &domain))
             .unwrap_or(false)
     });
     if !reverse_verified {
@@ -155,8 +155,8 @@ pub async fn verify_handle_binding_with_options(
             forward_verified: true,
             reverse_verified: false,
             error_message: Some(format!(
-                "DID Document does not contain a HandleService entry pointing to '{}'",
-                expected_endpoint
+                "DID Document does not contain an {} entry whose HTTPS domain matches '{}'",
+                ANP_HANDLE_SERVICE_TYPE, domain
             )),
         };
     }
@@ -174,7 +174,7 @@ pub async fn verify_handle_binding_with_options(
 pub fn build_handle_service_entry(did: &str, local_part: &str, domain: &str) -> Value {
     json!({
         "id": format!("{did}#handle"),
-        "type": "HandleService",
+        "type": ANP_HANDLE_SERVICE_TYPE,
         "serviceEndpoint": build_resolution_url(local_part, domain),
     })
 }
@@ -187,10 +187,22 @@ pub fn extract_handle_service_from_did_document(did_document: &Value) -> Vec<Val
             services
                 .iter()
                 .filter(|service| {
-                    service.get("type").and_then(Value::as_str) == Some("HandleService")
+                    service.get("type").and_then(Value::as_str) == Some(ANP_HANDLE_SERVICE_TYPE)
                 })
                 .cloned()
                 .collect::<Vec<Value>>()
         })
         .unwrap_or_default()
+}
+
+fn matches_handle_service_domain(service_endpoint: &str, expected_domain: &str) -> bool {
+    Url::parse(service_endpoint)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| {
+                url.scheme().eq_ignore_ascii_case("https")
+                    && host.eq_ignore_ascii_case(expected_domain)
+            })
+        })
+        .unwrap_or(false)
 }

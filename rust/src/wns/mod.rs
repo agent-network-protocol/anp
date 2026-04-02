@@ -12,7 +12,10 @@ pub use errors::{
     HandleBindingError, HandleGoneError, HandleMovedError, HandleNotFoundError,
     HandleResolutionError, HandleValidationError, WbaUriParseError, WnsError,
 };
-pub use models::{HandleResolutionDocument, HandleServiceEntry, HandleStatus, ParsedWbaUri};
+pub use models::{
+    HandleResolutionDocument, HandleServiceEntry, HandleStatus, ParsedWbaUri,
+    ANP_HANDLE_SERVICE_TYPE,
+};
 pub use resolver::{
     resolve_handle, resolve_handle_from_uri, resolve_handle_sync, resolve_handle_with_options,
     ResolveHandleOptions,

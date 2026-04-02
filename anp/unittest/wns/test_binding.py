@@ -38,8 +38,8 @@ ALICE_DID_DOCUMENT = {
     "service": [
         {
             "id": f"{ALICE_DID}#handle",
-            "type": "HandleService",
-            "serviceEndpoint": "https://example.com/.well-known/handle/alice",
+            "type": "ANPHandleService",
+            "serviceEndpoint": "https://example.com/wns",
         }
     ],
 }
@@ -152,7 +152,7 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             self._unpatch_urls(original)
 
     async def test_binding_fails_without_handle_service(self):
-        """Verification fails when DID Document lacks HandleService."""
+        """Verification fails when DID Document lacks ANPHandleService."""
         original = self._patch_urls()
         try:
             result = await verify_handle_binding(
@@ -163,7 +163,7 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             self.assertFalse(result.is_valid)
             self.assertTrue(result.forward_verified)
             self.assertFalse(result.reverse_verified)
-            self.assertIn("HandleService", result.error_message)
+            self.assertIn("ANPHandleService", result.error_message)
         finally:
             self._unpatch_urls(original)
 
@@ -181,13 +181,37 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
         finally:
             self._unpatch_urls(original)
 
+    async def test_reverse_verification_uses_domain_only(self):
+        """Verification accepts any HTTPS endpoint under the Handle domain."""
+        original = self._patch_urls()
+        try:
+            did_document = {
+                "id": ALICE_DID,
+                "service": [
+                    {
+                        "id": f"{ALICE_DID}#handle",
+                        "type": "ANPHandleService",
+                        "serviceEndpoint": "https://example.com/providers/wns",
+                    }
+                ],
+            }
+            result = await verify_handle_binding(
+                ALICE_HANDLE,
+                did_document=did_document,
+                verify_ssl=False,
+            )
+            self.assertTrue(result.is_valid)
+            self.assertTrue(result.reverse_verified)
+        finally:
+            self._unpatch_urls(original)
+
 
 class TestBuildHandleServiceEntry(unittest.TestCase):
 
     def test_basic(self):
         entry = build_handle_service_entry(ALICE_DID, "alice", "example.com")
         self.assertEqual(entry["id"], f"{ALICE_DID}#handle")
-        self.assertEqual(entry["type"], "HandleService")
+        self.assertEqual(entry["type"], "ANPHandleService")
         self.assertEqual(
             entry["serviceEndpoint"],
             "https://example.com/.well-known/handle/alice",
@@ -199,7 +223,7 @@ class TestExtractHandleService(unittest.TestCase):
     def test_extract(self):
         services = extract_handle_service_from_did_document(ALICE_DID_DOCUMENT)
         self.assertEqual(len(services), 1)
-        self.assertEqual(services[0]["type"], "HandleService")
+        self.assertEqual(services[0]["type"], "ANPHandleService")
 
     def test_no_services(self):
         services = extract_handle_service_from_did_document({})

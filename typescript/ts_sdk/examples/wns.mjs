@@ -12,6 +12,6 @@ console.log('Resolution URL:', buildResolutionUrl(localPart, domain));
 console.log('WBA URI:', wns.buildUri(localPart, domain));
 console.log('Parsed URI:', parseUri('wba://alice.example.com'));
 console.log(
-  'Handle service entry:',
+  'ANPHandleService entry:',
   createHandleServiceEntry('did:wba:example.com:user:alice', localPart, domain)
 );

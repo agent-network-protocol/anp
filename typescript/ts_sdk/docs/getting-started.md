@@ -131,8 +131,8 @@ const binding = await verifyBinding('alice.example.com', {
     service: [
       {
         id: 'did:wba:example.com:user:alice#handle',
-        type: 'HandleService',
-        serviceEndpoint: 'https://example.com/.well-known/handle/alice',
+        type: 'ANPHandleService',
+        serviceEndpoint: 'https://example.com/providers/wns',
       },
     ],
   },

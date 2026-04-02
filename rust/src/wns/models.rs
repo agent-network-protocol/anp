@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const ANP_HANDLE_SERVICE_TYPE: &str = "ANPHandleService";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum HandleStatus {
@@ -34,5 +36,5 @@ pub struct ParsedWbaUri {
 }
 
 fn default_handle_service_type() -> String {
-    "HandleService".to_string()
+    ANP_HANDLE_SERVICE_TYPE.to_string()
 }

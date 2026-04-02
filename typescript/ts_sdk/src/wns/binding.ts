@@ -9,6 +9,7 @@ import type {
 import { HandleStatus } from './types.js';
 import { resolveHandle } from './resolver.js';
 import { buildResolutionUrl, validateHandle } from './validator.js';
+import { ANP_HANDLE_SERVICE_TYPE as ANP_HANDLE_SERVICE_TYPE_VALUE } from './types.js';
 
 export async function verifyHandleBinding(
   handle: string,
@@ -31,7 +32,6 @@ export async function verifyHandleBinding(
   }
 
   const normalizedHandle = `${localPart}.${domain}`;
-  const expectedEndpoint = buildResolutionUrl(localPart, domain);
 
   try {
     const resolution = await resolveHandle(normalizedHandle, options.resolutionOptions);
@@ -74,7 +74,7 @@ export async function verifyHandleBinding(
       (await resolveDidWbaDocument(resolution.did, false, options.didResolutionOptions));
     const handleServices = extractHandleServiceFromDidDocument(didDocument);
     const reverseVerified = handleServices.some(
-      (service) => service.serviceEndpoint.replace(/\/$/, '') === expectedEndpoint.replace(/\/$/, '')
+      (service) => matchesHandleServiceDomain(service.serviceEndpoint, domain)
     );
     if (!reverseVerified) {
       return {
@@ -83,7 +83,9 @@ export async function verifyHandleBinding(
         did: resolution.did,
         forwardVerified: true,
         reverseVerified: false,
-        errorMessage: `DID Document does not contain a HandleService entry pointing to '${expectedEndpoint}'`,
+        errorMessage:
+          `DID Document does not contain an ${ANP_HANDLE_SERVICE_TYPE_VALUE} entry ` +
+          `whose HTTPS domain matches '${domain}'`,
       };
     }
 
@@ -116,17 +118,28 @@ export function buildHandleServiceEntry(
 ): HandleServiceEntry {
   return {
     id: `${did}#handle`,
-    type: 'HandleService',
+    type: ANP_HANDLE_SERVICE_TYPE_VALUE,
     serviceEndpoint: buildResolutionUrl(localPart, domain),
   };
 }
 
 export function extractHandleServiceFromDidDocument(didDocument: DidDocument): HandleServiceEntry[] {
   return (didDocument.service ?? [])
-    .filter((service) => service.type === 'HandleService')
+    .filter((service) => service.type === ANP_HANDLE_SERVICE_TYPE_VALUE)
     .map((service) => ({
       id: String(service.id),
       type: String(service.type),
       serviceEndpoint: String(service.serviceEndpoint),
     }));
+}
+
+function matchesHandleServiceDomain(serviceEndpoint: string, expectedDomain: string): boolean {
+  try {
+    const parsed = new URL(serviceEndpoint);
+    return (
+      parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === expectedDomain.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
 }

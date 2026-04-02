@@ -84,3 +84,45 @@ async fn test_verify_handle_binding_with_supplied_did_document() {
     assert!(result.forward_verified);
     assert!(result.reverse_verified);
 }
+
+#[tokio::test]
+async fn test_verify_handle_binding_accepts_matching_https_domain() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/handle/alice"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "handle": "alice.example.com",
+            "did": "did:wba:example.com:user:alice",
+            "status": "active",
+        })))
+        .mount(&server)
+        .await;
+
+    let did_document = json!({
+        "id": "did:wba:example.com:user:alice",
+        "service": [
+            {
+                "id": "did:wba:example.com:user:alice#handle",
+                "type": "ANPHandleService",
+                "serviceEndpoint": "https://example.com/providers/wns",
+            }
+        ],
+    });
+
+    let result = verify_handle_binding_with_options(
+        "alice.example.com",
+        BindingVerificationOptions {
+            did_document: Some(did_document),
+            resolution_options: ResolveHandleOptions {
+                base_url_override: Some(server.uri()),
+                verify_ssl: false,
+                timeout_seconds: 5.0,
+            },
+            ..BindingVerificationOptions::default()
+        },
+    )
+    .await;
+
+    assert!(result.is_valid);
+    assert!(result.reverse_verified);
+}

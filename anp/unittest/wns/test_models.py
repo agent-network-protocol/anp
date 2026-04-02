@@ -86,17 +86,17 @@ class TestHandleServiceEntry(unittest.TestCase):
     def test_valid_entry(self):
         entry = HandleServiceEntry(
             id="did:wba:example.com:user:alice#handle",
-            type="HandleService",
+            type="ANPHandleService",
             serviceEndpoint="https://example.com/.well-known/handle/alice",
         )
-        self.assertEqual(entry.type, "HandleService")
+        self.assertEqual(entry.type, "ANPHandleService")
 
     def test_default_type(self):
         entry = HandleServiceEntry(
             id="did:wba:example.com:user:alice#handle",
             serviceEndpoint="https://example.com/.well-known/handle/alice",
         )
-        self.assertEqual(entry.type, "HandleService")
+        self.assertEqual(entry.type, "ANPHandleService")
 
     def test_model_dump(self):
         entry = HandleServiceEntry(
@@ -105,7 +105,7 @@ class TestHandleServiceEntry(unittest.TestCase):
         )
         d = entry.model_dump()
         self.assertIn("serviceEndpoint", d)
-        self.assertEqual(d["type"], "HandleService")
+        self.assertEqual(d["type"], "ANPHandleService")
 
 
 class TestParsedWbaUri(unittest.TestCase):

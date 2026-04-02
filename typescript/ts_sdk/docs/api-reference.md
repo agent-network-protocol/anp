@@ -43,8 +43,8 @@ This draft documents the stable public API for the current TypeScript SDK.
 | `resolveHandle()` | Resolve a handle |
 | `resolveUri()` | Resolve a `wba://` URI |
 | `verifyBinding()` | Verify forward and reverse handle binding |
-| `createHandleServiceEntry()` | Create a DID `HandleService` entry |
-| `extractHandleServices()` | Extract `HandleService` entries from a DID document |
+| `createHandleServiceEntry()` | Create a DID `ANPHandleService` entry |
+| `extractHandleServices()` | Extract `ANPHandleService` entries from a DID document |
 
 ## Namespace objects
 

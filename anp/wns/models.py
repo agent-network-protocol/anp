@@ -6,6 +6,9 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+ANP_HANDLE_SERVICE_TYPE = "ANPHandleService"
+
+
 class HandleStatus(str, Enum):
     """Handle lifecycle status as defined in WNS spec section 4.7."""
 
@@ -35,9 +38,15 @@ class HandleServiceEntry(BaseModel):
     """
 
     id: str = Field(description="Service unique identifier, e.g. did:wba:...#handle")
-    type: str = Field(default="HandleService", description="Must be HandleService")
+    type: str = Field(
+        default=ANP_HANDLE_SERVICE_TYPE,
+        description=f"Must be {ANP_HANDLE_SERVICE_TYPE}",
+    )
     serviceEndpoint: str = Field(
-        description="URL pointing to Handle Resolution Endpoint"
+        description=(
+            "HTTPS URL under the Handle Provider domain used for reverse "
+            "binding verification"
+        )
     )
 
 

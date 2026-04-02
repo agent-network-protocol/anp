@@ -17,6 +17,7 @@ from .exceptions import (
 
 # Data models
 from .models import (
+    ANP_HANDLE_SERVICE_TYPE,
     HandleResolutionDocument,
     HandleServiceEntry,
     HandleStatus,
@@ -62,6 +63,7 @@ __all__ = [
     "HandleStatus",
     "HandleResolutionDocument",
     "HandleServiceEntry",
+    "ANP_HANDLE_SERVICE_TYPE",
     "ParsedWbaUri",
     # Validation
     "validate_local_part",
