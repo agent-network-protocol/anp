@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from anp.authentication import (
+    ANP_MESSAGE_SERVICE_TYPE,
+    build_agent_message_service,
+    build_group_message_service,
     create_did_wba_document,
     create_did_wba_document_with_key_binding,
 )
@@ -51,7 +54,7 @@ class TestE2eeDIDDocument(unittest.TestCase):
             "example.com",
             path_segments=["user", "alice"],
         )
-        self.assertEqual(doc["keyAgreement"], [f'{doc["id"]}#key-3'])
+        self.assertEqual(doc["keyAgreement"], [f"{doc['id']}#key-3"])
 
     def test_authentication_uses_binding_key(self):
         """authentication should only reference #key-1."""
@@ -59,8 +62,8 @@ class TestE2eeDIDDocument(unittest.TestCase):
             "example.com",
             path_segments=["user", "alice"],
         )
-        self.assertEqual(doc["authentication"], [f'{doc["id"]}#key-1'])
-        self.assertEqual(doc["assertionMethod"], [f'{doc["id"]}#key-1'])
+        self.assertEqual(doc["authentication"], [f"{doc['id']}#key-1"])
+        self.assertEqual(doc["assertionMethod"], [f"{doc['id']}#key-1"])
 
     def test_secp256r1_jwk_format(self):
         """key-2 should remain EcdsaSecp256r1VerificationKey2019."""
@@ -164,6 +167,48 @@ class TestE2eeDIDDocument(unittest.TestCase):
         self.assertEqual(len(doc["verificationMethod"]), 1)
         self.assertEqual(set(keys.keys()), {"key-1"})
         self.assertNotIn("keyAgreement", doc)
+
+    def test_build_agent_message_service_defaults(self):
+        """Agent helper should emit ANPMessageService with agent profiles."""
+        service = build_agent_message_service(
+            did="did:wba:example.com:user:alice",
+            service_endpoint="https://example.com/rpc",
+        )
+        self.assertEqual(service["type"], ANP_MESSAGE_SERVICE_TYPE)
+        self.assertEqual(service["id"], "did:wba:example.com:user:alice#message")
+        self.assertEqual(
+            service["profiles"],
+            [
+                "anp.core.binding.v1",
+                "anp.direct.base.v1",
+                "anp.direct.e2ee.v1",
+            ],
+        )
+        self.assertEqual(
+            service["securityProfiles"],
+            ["transport-protected", "direct-e2ee"],
+        )
+
+    def test_build_group_message_service_defaults(self):
+        """Group helper should emit ANPMessageService with group profiles."""
+        service = build_group_message_service(
+            did="did:wba:example.com:groups:test",
+            service_endpoint="https://example.com/rpc",
+        )
+        self.assertEqual(service["type"], ANP_MESSAGE_SERVICE_TYPE)
+        self.assertEqual(service["id"], "did:wba:example.com:groups:test#message")
+        self.assertEqual(
+            service["profiles"],
+            [
+                "anp.core.binding.v1",
+                "anp.group.base.v1",
+                "anp.group.e2ee.v1",
+            ],
+        )
+        self.assertEqual(
+            service["securityProfiles"],
+            ["transport-protected", "group-e2ee"],
+        )
 
 
 if __name__ == "__main__":

@@ -40,23 +40,25 @@ from anp.proof import (
 from .verification_methods import CURVE_MAPPING, create_verification_method
 
 # DID 文档中验证方法的 fragment 标识符（仅写入侧使用）
-VM_KEY_AUTH = "key-1"           # secp256k1, 用于 DID 认证（authentication）
-VM_KEY_E2EE_SIGNING = "key-2"   # secp256r1, 用于 E2EE 消息签名
-VM_KEY_E2EE_AGREEMENT = "key-3" # X25519, 用于 E2EE 密钥协商（keyAgreement）
+VM_KEY_AUTH = "key-1"  # secp256k1, 用于 DID 认证（authentication）
+VM_KEY_E2EE_SIGNING = "key-2"  # secp256r1, 用于 E2EE 消息签名
+VM_KEY_E2EE_AGREEMENT = "key-3"  # X25519, 用于 E2EE 密钥协商（keyAgreement）
+ANP_MESSAGE_SERVICE_TYPE = "ANPMessageService"
 
 
 def _is_ip_address(hostname: str) -> bool:
     """Check if a hostname is an IP address."""
     # IPv4 pattern
-    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    ipv4_pattern = r"^(\d{1,3}\.){3}\d{1,3}$"
     # IPv6 pattern (simplified)
-    ipv6_pattern = r'^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$'
-    
+    ipv6_pattern = r"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$"
+
     return bool(re.match(ipv4_pattern, hostname) or re.match(ipv6_pattern, hostname))
+
 
 def _encode_base64url(data: bytes) -> str:
     """Encode bytes data to base64url format"""
-    return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 def _jwk_thumbprint(jwk: Dict[str, str]) -> str:
@@ -70,6 +72,7 @@ def _jwk_thumbprint(jwk: Dict[str, str]) -> str:
     )
     digest = hashlib.sha256(canonical.encode("utf-8")).digest()
     return _encode_base64url(digest)
+
 
 def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
     """
@@ -90,31 +93,29 @@ def compute_jwk_fingerprint(public_key: ec.EllipticCurvePublicKey) -> str:
     """
     numbers = public_key.public_numbers()
     # Fixed 32-byte encoding per RFC 7518 Section 6.2.1.2 (SEC1 Section 2.3.5)
-    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
-    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
+    x = _encode_base64url(numbers.x.to_bytes(32, "big"))
+    y = _encode_base64url(numbers.y.to_bytes(32, "big"))
     # Canonical JSON with fixed field order (alphabetical, matching RFC 7638)
-    return _jwk_thumbprint({
-        "crv": "secp256k1",
-        "kty": "EC",
-        "x": x,
-        "y": y,
-    })
+    return _jwk_thumbprint(
+        {
+            "crv": "secp256k1",
+            "kty": "EC",
+            "x": x,
+            "y": y,
+        }
+    )
 
 
 def _public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
     """Convert secp256k1 public key to JWK format"""
     numbers = public_key.public_numbers()
-    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
-    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
-    compressed = public_key.public_bytes(encoding=Encoding.X962, format=PublicFormat.CompressedPoint)
+    x = _encode_base64url(numbers.x.to_bytes(32, "big"))
+    y = _encode_base64url(numbers.y.to_bytes(32, "big"))
+    compressed = public_key.public_bytes(
+        encoding=Encoding.X962, format=PublicFormat.CompressedPoint
+    )
     kid = _encode_base64url(hashlib.sha256(compressed).digest())
-    return {
-        "kty": "EC",
-        "crv": "secp256k1",
-        "x": x,
-        "y": y,
-        "kid": kid
-    }
+    return {"kty": "EC", "crv": "secp256k1", "x": x, "y": y, "kid": kid}
 
 
 def _ed25519_public_key_to_multibase(
@@ -150,11 +151,13 @@ def _build_service_entries(
     """Build service entries for a DID document."""
     all_services: List[Dict[str, Any]] = []
     if agent_description_url is not None:
-        all_services.append({
-            "id": f"{did}#ad",
-            "type": "AgentDescription",
-            "serviceEndpoint": agent_description_url,
-        })
+        all_services.append(
+            {
+                "id": f"{did}#ad",
+                "type": "AgentDescription",
+                "serviceEndpoint": agent_description_url,
+            }
+        )
     if services:
         for svc in services:
             svc_id = svc.get("id", "")
@@ -162,6 +165,102 @@ def _build_service_entries(
                 svc = {**svc, "id": f"{did}{svc_id}"}
             all_services.append(svc)
     return all_services
+
+
+def build_anp_message_service(
+    *,
+    did: str,
+    service_endpoint: str,
+    fragment: str = "message",
+    profiles: Optional[List[str]] = None,
+    security_profiles: Optional[List[str]] = None,
+    accepts: Optional[List[str]] = None,
+    priority: Optional[Union[int, str]] = None,
+    auth_schemes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build an ANPMessageService entry for a DID document."""
+    service: Dict[str, Any] = {
+        "id": f"{did}#{fragment}",
+        "type": ANP_MESSAGE_SERVICE_TYPE,
+        "serviceEndpoint": service_endpoint,
+    }
+    if profiles:
+        service["profiles"] = profiles
+    if security_profiles:
+        service["securityProfiles"] = security_profiles
+    if accepts:
+        service["accepts"] = accepts
+    if priority is not None:
+        service["priority"] = priority
+    if auth_schemes:
+        service["authSchemes"] = auth_schemes
+    return service
+
+
+def build_agent_message_service(
+    *,
+    did: str,
+    service_endpoint: str,
+    fragment: str = "message",
+    profiles: Optional[List[str]] = None,
+    security_profiles: Optional[List[str]] = None,
+    accepts: Optional[List[str]] = None,
+    priority: Optional[Union[int, str]] = None,
+    auth_schemes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build a user/agent-oriented ANPMessageService entry."""
+    default_profiles = [
+        "anp.core.binding.v1",
+        "anp.direct.base.v1",
+        "anp.direct.e2ee.v1",
+    ]
+    default_security_profiles = [
+        "transport-protected",
+        "direct-e2ee",
+    ]
+    return build_anp_message_service(
+        did=did,
+        service_endpoint=service_endpoint,
+        fragment=fragment,
+        profiles=profiles or default_profiles,
+        security_profiles=security_profiles or default_security_profiles,
+        accepts=accepts,
+        priority=priority,
+        auth_schemes=auth_schemes,
+    )
+
+
+def build_group_message_service(
+    *,
+    did: str,
+    service_endpoint: str,
+    fragment: str = "message",
+    profiles: Optional[List[str]] = None,
+    security_profiles: Optional[List[str]] = None,
+    accepts: Optional[List[str]] = None,
+    priority: Optional[Union[int, str]] = None,
+    auth_schemes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build a group-oriented ANPMessageService entry."""
+    default_profiles = [
+        "anp.core.binding.v1",
+        "anp.group.base.v1",
+        "anp.group.e2ee.v1",
+    ]
+    default_security_profiles = [
+        "transport-protected",
+        "group-e2ee",
+    ]
+    return build_anp_message_service(
+        did=did,
+        service_endpoint=service_endpoint,
+        fragment=fragment,
+        profiles=profiles or default_profiles,
+        security_profiles=security_profiles or default_security_profiles,
+        accepts=accepts,
+        priority=priority,
+        auth_schemes=auth_schemes,
+    )
 
 
 def _build_did_base(hostname: str, port: Optional[int]) -> str:
@@ -202,8 +301,8 @@ def _build_secp256k1_binding_entry(
 def _secp256r1_public_key_to_jwk(public_key: ec.EllipticCurvePublicKey) -> Dict:
     """Convert secp256r1 (P-256) public key to JWK format."""
     numbers = public_key.public_numbers()
-    x = _encode_base64url(numbers.x.to_bytes(32, 'big'))
-    y = _encode_base64url(numbers.y.to_bytes(32, 'big'))
+    x = _encode_base64url(numbers.x.to_bytes(32, "big"))
+    y = _encode_base64url(numbers.y.to_bytes(32, "big"))
     return {
         "kty": "EC",
         "crv": "P-256",
@@ -293,6 +392,7 @@ def _build_e2ee_entries(
 
     return vm_entries, ka_refs, keys_dict
 
+
 def create_did_wba_document(
     hostname: str,
     port: Optional[int] = None,
@@ -349,9 +449,7 @@ def create_did_wba_document(
         raise ValueError("Hostname cannot be an IP address")
 
     if did_profile not in {"e1", "k1", "plain_legacy"}:
-        raise ValueError(
-            "did_profile must be one of: e1, k1, plain_legacy"
-        )
+        raise ValueError("did_profile must be one of: e1, k1, plain_legacy")
 
     logging.info(
         "Creating DID WBA document for hostname %s using profile %s",
@@ -372,15 +470,19 @@ def create_did_wba_document(
             effective_path_segments.append(
                 f"e1_{compute_multikey_fingerprint(auth_public_key)}"
             )
-        did = did_base if not effective_path_segments else (
-            f"{did_base}:{':'.join(effective_path_segments)}"
+        did = (
+            did_base
+            if not effective_path_segments
+            else (f"{did_base}:{':'.join(effective_path_segments)}")
         )
         vm_entry = _build_ed25519_binding_entry(did, auth_public_key)
         verification_methods = [vm_entry]
-        contexts.extend([
-            "https://w3id.org/security/data-integrity/v2",
-            "https://w3id.org/security/multikey/v1",
-        ])
+        contexts.extend(
+            [
+                "https://w3id.org/security/data-integrity/v2",
+                "https://w3id.org/security/multikey/v1",
+            ]
+        )
         keys = {
             VM_KEY_AUTH: (
                 auth_private_key.private_bytes(
@@ -411,15 +513,19 @@ def create_did_wba_document(
             effective_path_segments.append(
                 f"k1_{compute_jwk_fingerprint(auth_public_key)}"
             )
-        did = did_base if not effective_path_segments else (
-            f"{did_base}:{':'.join(effective_path_segments)}"
+        did = (
+            did_base
+            if not effective_path_segments
+            else (f"{did_base}:{':'.join(effective_path_segments)}")
         )
         vm_entry = _build_secp256k1_binding_entry(did, auth_public_key)
         verification_methods = [vm_entry]
-        contexts.extend([
-            "https://w3id.org/security/suites/jws-2020/v1",
-            "https://w3id.org/security/suites/secp256k1-2019/v1",
-        ])
+        contexts.extend(
+            [
+                "https://w3id.org/security/suites/jws-2020/v1",
+                "https://w3id.org/security/suites/secp256k1-2019/v1",
+            ]
+        )
         if did_profile == "k1":
             contexts.append("https://w3id.org/security/data-integrity/v2")
         keys = {
@@ -771,29 +877,27 @@ async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict
         async with aiohttp.ClientSession(timeout=timeout) as session:
             url = f"https://{domain}"
             if path_segments:
-                url += '/' + '/'.join(path_segments) + '/did.json'
+                url += "/" + "/".join(path_segments) + "/did.json"
             else:
-                url += '/.well-known/did.json'
-            
+                url += "/.well-known/did.json"
+
             logging.debug(f"Requesting DID document from URL: {url}")
-            
+
             # TODO: Add DNS-over-HTTPS support
             # resolver = aiohttp.AsyncResolver(nameservers=['8.8.8.8'])
             # connector = aiohttp.TCPConnector(resolver=resolver)
-            
+
             async with session.get(
                 url,
-                headers={
-                    'Accept': 'application/json'
-                },
-                ssl=True
+                headers={"Accept": "application/json"},
+                ssl=True,
                 # connector=connector
             ) as response:
                 response.raise_for_status()
                 did_document = await response.json()
 
                 # Verify document ID
-                if did_document.get('id') != did:
+                if did_document.get("id") != did:
                     raise ValueError(
                         f"DID document ID mismatch. Expected: {did}, "
                         f"Got: {did_document.get('id')}"
@@ -836,11 +940,16 @@ async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict
                 return did_document
 
     except aiohttp.ClientError as e:
-        logging.error(f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         return None
     except Exception as e:
-        logging.error(f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         return None
+
 
 # Add a sync wrapper for backward compatibility
 def resolve_did_wba_document_sync(did: str, verify_proof: bool = False) -> Dict:
@@ -856,6 +965,7 @@ def resolve_did_wba_document_sync(did: str, verify_proof: bool = False) -> Dict:
         Dict: Resolved DID document
     """
     return asyncio.run(resolve_did_wba_document(did, verify_proof=verify_proof))
+
 
 def generate_auth_header(
     did_document: Dict,
@@ -884,21 +994,25 @@ def generate_auth_header(
     Raises:
         ValueError: If the DID document format is invalid.
     """
-    logging.info(f"Starting to generate DID authentication header with version {version}.")
+    logging.info(
+        f"Starting to generate DID authentication header with version {version}."
+    )
 
     # Validate DID document
-    did = did_document.get('id')
+    did = did_document.get("id")
     if not did:
         raise ValueError("DID document is missing the id field.")
 
     # Select authentication method
-    method_dict, verification_method_fragment = _select_authentication_method(did_document)
+    method_dict, verification_method_fragment = _select_authentication_method(
+        did_document
+    )
 
     # Generate a 16-byte random nonce
     nonce = nonce or secrets.token_hex(16)
 
     # Generate ISO 8601 formatted UTC timestamp
-    timestamp = timestamp or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Determine which field to use based on version
     # For version >= 1.1, use "aud" instead of "service"
@@ -908,14 +1022,16 @@ def generate_auth_header(
     except ValueError:
         # If version is not a valid float, default to "service" for backward compatibility
         domain_field = "service"
-        logging.warning(f"Invalid version format '{version}', using 'service' field for backward compatibility")
+        logging.warning(
+            f"Invalid version format '{version}', using 'service' field for backward compatibility"
+        )
 
     # Construct the data to sign
     data_to_sign = {
         "nonce": nonce,
         "timestamp": timestamp,
         domain_field: service_domain,
-        "did": did
+        "did": did,
     }
 
     # Normalize JSON using JCS
@@ -945,131 +1061,143 @@ def generate_auth_header(
 
     return auth_header
 
-def _find_verification_method(did_document: Dict, verification_method_id: str) -> Optional[Dict]:
+
+def _find_verification_method(
+    did_document: Dict, verification_method_id: str
+) -> Optional[Dict]:
     """
     Find verification method in DID document by ID.
     Searches in both verificationMethod and authentication arrays.
-    
+
     Args:
         did_document: DID document
         verification_method_id: Full verification method ID
-        
+
     Returns:
         Optional[Dict]: Verification method if found, None otherwise
     """
     # Search in verificationMethod array
-    for method in did_document.get('verificationMethod', []):
-        if method['id'] == verification_method_id:
+    for method in did_document.get("verificationMethod", []):
+        if method["id"] == verification_method_id:
             return method
-            
+
     # Search in authentication array
-    for auth in did_document.get('authentication', []):
+    for auth in did_document.get("authentication", []):
         # Handle both reference string and embedded verification method
         if isinstance(auth, str):
             if auth == verification_method_id:
                 # If it's a reference, look up in verificationMethod
-                for method in did_document.get('verificationMethod', []):
-                    if method['id'] == verification_method_id:
+                for method in did_document.get("verificationMethod", []):
+                    if method["id"] == verification_method_id:
                         return method
-        elif isinstance(auth, dict) and auth.get('id') == verification_method_id:
+        elif isinstance(auth, dict) and auth.get("id") == verification_method_id:
             return auth
-            
+
     return None
 
 
 def _select_authentication_method(did_document: Dict) -> Tuple[Dict, str]:
     """
     Select an authentication method from DID document.
-    
+
     Args:
         did_document: DID document dictionary
-        
+
     Returns:
         Tuple[Dict, str]: A tuple containing:
             - The verification method dictionary
             - The verification method fragment
-            
+
     Raises:
         ValueError: If no valid authentication method is found
     """
     # Get authentication methods
-    authentication = did_document.get('authentication', [])
+    authentication = did_document.get("authentication", [])
     if not authentication:
         raise ValueError("DID document is missing authentication methods.")
-    
+
     # Get the first authentication method
     auth_method = authentication[0]
-    
+
     # Extract verification method
     if isinstance(auth_method, str):
         # If auth_method is a string (reference), find the verification method
         method_dict = _find_verification_method(did_document, auth_method)
         if not method_dict:
             raise ValueError(f"Referenced verification method not found: {auth_method}")
-        verification_method_fragment = auth_method.split('#')[-1]
+        verification_method_fragment = auth_method.split("#")[-1]
     else:
         # If auth_method is an object (embedded verification method)
         method_dict = auth_method
-        if 'id' not in method_dict:
+        if "id" not in method_dict:
             raise ValueError("Embedded verification method missing 'id' field")
-        verification_method_fragment = method_dict['id'].split('#')[-1]
-    
+        verification_method_fragment = method_dict["id"].split("#")[-1]
+
     if not method_dict:
         raise ValueError("Could not find valid verification method")
-        
+
     return method_dict, verification_method_fragment
 
 
 def _extract_ec_public_key_from_jwk(jwk: Dict) -> ec.EllipticCurvePublicKey:
     """
     Extract EC public key from JWK format.
-    
+
     Args:
         jwk: JWK dictionary
-        
+
     Returns:
         ec.EllipticCurvePublicKey: Public key
-        
+
     Raises:
         ValueError: If JWK format is invalid or curve is unsupported
     """
-    if jwk.get('kty') != 'EC':
+    if jwk.get("kty") != "EC":
         raise ValueError("Invalid JWK: kty must be EC")
-        
-    crv = jwk.get('crv')
+
+    crv = jwk.get("crv")
     if not crv:
         raise ValueError("Missing curve parameter in JWK")
-        
+
     curve = CURVE_MAPPING.get(crv)
     if curve is None:
-        raise ValueError(f"Unsupported curve: {crv}. Supported curves: {', '.join(CURVE_MAPPING.keys())}")
-        
+        raise ValueError(
+            f"Unsupported curve: {crv}. Supported curves: {', '.join(CURVE_MAPPING.keys())}"
+        )
+
     try:
         # Decode using base64url
-        x = int.from_bytes(base64.urlsafe_b64decode(
-            jwk['x'] + '=' * (-len(jwk['x']) % 4)), 'big')
-        y = int.from_bytes(base64.urlsafe_b64decode(
-            jwk['y'] + '=' * (-len(jwk['y']) % 4)), 'big')
+        x = int.from_bytes(
+            base64.urlsafe_b64decode(jwk["x"] + "=" * (-len(jwk["x"]) % 4)), "big"
+        )
+        y = int.from_bytes(
+            base64.urlsafe_b64decode(jwk["y"] + "=" * (-len(jwk["y"]) % 4)), "big"
+        )
         public_numbers = ec.EllipticCurvePublicNumbers(x, y, curve)
         return public_numbers.public_key()
     except Exception as e:
-        logging.error(f"Invalid JWK parameters: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Invalid JWK parameters: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         raise ValueError(f"Invalid JWK parameters: {str(e)}")
 
-def _extract_ed25519_public_key_from_multibase(multibase: str) -> ed25519.Ed25519PublicKey:
+
+def _extract_ed25519_public_key_from_multibase(
+    multibase: str,
+) -> ed25519.Ed25519PublicKey:
     """
     Extract Ed25519 public key from multibase format.
-    
+
     Args:
         multibase: Multibase encoded string
-        
+
     Returns:
         ed25519.Ed25519PublicKey: Public key
-        
+
     Raises:
         ValueError: If multibase format is invalid
     """
-    if not multibase.startswith('z'):
+    if not multibase.startswith("z"):
         raise ValueError("Unsupported multibase encoding")
     try:
         key_bytes = base58.b58decode(multibase[1:])
@@ -1077,19 +1205,24 @@ def _extract_ed25519_public_key_from_multibase(multibase: str) -> ed25519.Ed2551
             key_bytes = key_bytes[2:]
         return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
     except Exception as e:
-        logging.error(f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         raise ValueError(f"Invalid multibase key: {str(e)}")
 
-def _extract_ed25519_public_key_from_base58(base58_key: str) -> ed25519.Ed25519PublicKey:
+
+def _extract_ed25519_public_key_from_base58(
+    base58_key: str,
+) -> ed25519.Ed25519PublicKey:
     """
     Extract Ed25519 public key from base58 format.
-    
+
     Args:
         base58_key: Base58 encoded string
-        
+
     Returns:
         ed25519.Ed25519PublicKey: Public key
-        
+
     Raises:
         ValueError: If base58 format is invalid
     """
@@ -1097,46 +1230,56 @@ def _extract_ed25519_public_key_from_base58(base58_key: str) -> ed25519.Ed25519P
         key_bytes = base58.b58decode(base58_key)
         return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
     except Exception as e:
-        logging.error(f"Invalid base58 key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Invalid base58 key: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         raise ValueError(f"Invalid base58 key: {str(e)}")
-def _extract_secp256k1_public_key_from_multibase(multibase: str) -> ec.EllipticCurvePublicKey:
+
+
+def _extract_secp256k1_public_key_from_multibase(
+    multibase: str,
+) -> ec.EllipticCurvePublicKey:
     """
     Extract secp256k1 public key from multibase format.
-    
+
     Args:
         multibase: Multibase encoded string (base58btc format starting with 'z')
-        
+
     Returns:
         ec.EllipticCurvePublicKey: secp256k1 public key object
-        
+
     Raises:
         ValueError: If multibase format is invalid
     """
-    if not multibase.startswith('z'):
-        raise ValueError("Unsupported multibase encoding format, must start with 'z' (base58btc)")
-    
+    if not multibase.startswith("z"):
+        raise ValueError(
+            "Unsupported multibase encoding format, must start with 'z' (base58btc)"
+        )
+
     try:
         # Decode base58btc (remove the 'z' prefix)
         key_bytes = base58.b58decode(multibase[1:])
-        
+
         # The compressed format public key for secp256k1 is 33 bytes:
         # 1 byte prefix (0x02 or 0x03) + 32 bytes X coordinate
         if len(key_bytes) != 33:
             raise ValueError("Invalid secp256k1 public key length")
-            
+
         # Recover public key from compressed format
-        return ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP256K1(),
-            key_bytes
-        )
+        return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), key_bytes)
     except Exception as e:
-        logging.error(f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}")
+        logging.error(
+            f"Invalid multibase key: {str(e)}\nStack trace:\n{traceback.format_exc()}"
+        )
         raise ValueError(f"Invalid multibase key: {str(e)}")
 
-def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey]:
+
+def _extract_public_key(
+    verification_method: Dict,
+) -> Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey]:
     """
     Extract public key from verification method.
-    
+
     Supported verification method types:
     - EcdsaSecp256k1VerificationKey2019 (JWK, Multibase)
     - EcdsaSecp256r1VerificationKey2019 (JWK)
@@ -1144,70 +1287,79 @@ def _extract_public_key(verification_method: Dict) -> Union[ec.EllipticCurvePubl
     - Ed25519VerificationKey2018 (JWK, Base58, Multibase)
     - Multikey (Ed25519 publicKeyMultibase)
     - JsonWebKey2020 (JWK)
-    
+
     Args:
         verification_method: Verification method dictionary
-        
+
     Returns:
         Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey]: Public key
-        
+
     Raises:
         ValueError: If key format or type is unsupported or invalid
     """
-    method_type = verification_method.get('type')
+    method_type = verification_method.get("type")
     if not method_type:
         raise ValueError("Verification method missing 'type' field")
-        
+
     # Handle EcdsaSecp256k1VerificationKey2019
-    if method_type == 'EcdsaSecp256k1VerificationKey2019':
-        if 'publicKeyJwk' in verification_method:
-            jwk = verification_method['publicKeyJwk']
-            if jwk.get('crv') != 'secp256k1':
+    if method_type == "EcdsaSecp256k1VerificationKey2019":
+        if "publicKeyJwk" in verification_method:
+            jwk = verification_method["publicKeyJwk"]
+            if jwk.get("crv") != "secp256k1":
                 raise ValueError("Invalid curve for EcdsaSecp256k1VerificationKey2019")
             return _extract_ec_public_key_from_jwk(jwk)
-        elif 'publicKeyMultibase' in verification_method:
+        elif "publicKeyMultibase" in verification_method:
             return _extract_secp256k1_public_key_from_multibase(
-                verification_method['publicKeyMultibase']
+                verification_method["publicKeyMultibase"]
             )
 
     # Handle EcdsaSecp256r1VerificationKey2019
-    elif method_type == 'EcdsaSecp256r1VerificationKey2019':
-        if 'publicKeyJwk' in verification_method:
-            jwk = verification_method['publicKeyJwk']
-            if jwk.get('crv') != 'P-256':
+    elif method_type == "EcdsaSecp256r1VerificationKey2019":
+        if "publicKeyJwk" in verification_method:
+            jwk = verification_method["publicKeyJwk"]
+            if jwk.get("crv") != "P-256":
                 raise ValueError("Invalid curve for EcdsaSecp256r1VerificationKey2019")
             return _extract_ec_public_key_from_jwk(jwk)
 
     # Handle Ed25519 verification methods
-    elif method_type in ['Ed25519VerificationKey2020', 'Ed25519VerificationKey2018', 'Multikey']:
-        if 'publicKeyJwk' in verification_method:
-            jwk = verification_method['publicKeyJwk']
-            if jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519':
+    elif method_type in [
+        "Ed25519VerificationKey2020",
+        "Ed25519VerificationKey2018",
+        "Multikey",
+    ]:
+        if "publicKeyJwk" in verification_method:
+            jwk = verification_method["publicKeyJwk"]
+            if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
                 raise ValueError(f"Invalid JWK parameters for {method_type}")
             try:
-                key_bytes = base64.urlsafe_b64decode(jwk['x'] + '=' * (-len(jwk['x']) % 4))
+                key_bytes = base64.urlsafe_b64decode(
+                    jwk["x"] + "=" * (-len(jwk["x"]) % 4)
+                )
                 return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
             except Exception as e:
                 raise ValueError(f"Invalid Ed25519 JWK: {str(e)}")
-        elif 'publicKeyBase58' in verification_method:
+        elif "publicKeyBase58" in verification_method:
             return _extract_ed25519_public_key_from_base58(
-                verification_method['publicKeyBase58']
+                verification_method["publicKeyBase58"]
             )
-        elif 'publicKeyMultibase' in verification_method:
+        elif "publicKeyMultibase" in verification_method:
             return _extract_ed25519_public_key_from_multibase(
-                verification_method['publicKeyMultibase']
+                verification_method["publicKeyMultibase"]
             )
-            
+
     # Handle JsonWebKey2020
-    elif method_type == 'JsonWebKey2020':
-        if 'publicKeyJwk' in verification_method:
-            return _extract_ec_public_key_from_jwk(verification_method['publicKeyJwk'])
-            
+    elif method_type == "JsonWebKey2020":
+        if "publicKeyJwk" in verification_method:
+            return _extract_ec_public_key_from_jwk(verification_method["publicKeyJwk"])
+
     raise ValueError(
         f"Unsupported verification method type or missing required key format: {method_type}"
     )
 
-def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str, Optional[str]]:
+
+def extract_auth_header_parts(
+    auth_header: str,
+) -> Tuple[str, str, str, str, str, Optional[str]]:
     """
     Extract authentication information from the authorization header.
 
@@ -1229,18 +1381,18 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
     logging.debug(f"Extracting auth header parts from: {auth_header}")
 
     required_fields = {
-        'did': r'(?i)did="([^"]+)"',
-        'nonce': r'(?i)nonce="([^"]+)"',
-        'timestamp': r'(?i)timestamp="([^"]+)"',
-        'verification_method': r'(?i)verification_method="([^"]+)"',
-        'signature': r'(?i)signature="([^"]+)"'
+        "did": r'(?i)did="([^"]+)"',
+        "nonce": r'(?i)nonce="([^"]+)"',
+        "timestamp": r'(?i)timestamp="([^"]+)"',
+        "verification_method": r'(?i)verification_method="([^"]+)"',
+        "signature": r'(?i)signature="([^"]+)"',
     }
 
     # Optional version field (defaults to "1.1")
     version_pattern = r'(?i)v="([^"]+)"'
 
     # Verify the header starts with DIDWba
-    if not auth_header.strip().startswith('DIDWba'):
+    if not auth_header.strip().startswith("DIDWba"):
         raise ValueError("Authorization header must start with 'DIDWba'")
 
     parts = {}
@@ -1255,13 +1407,18 @@ def extract_auth_header_parts(auth_header: str) -> Tuple[str, str, str, str, str
     version = version_match.group(1) if version_match else "1.1"
 
     logging.debug(f"Extracted auth header parts: {parts}, version: {version}")
-    return (parts['did'], parts['nonce'], parts['timestamp'],
-            parts['verification_method'], parts['signature'], version)
+    return (
+        parts["did"],
+        parts["nonce"],
+        parts["timestamp"],
+        parts["verification_method"],
+        parts["signature"],
+        version,
+    )
+
 
 def verify_auth_header_signature(
-    auth_header: str,
-    did_document: Dict,
-    service_domain: str
+    auth_header: str, did_document: Dict, service_domain: str
 ) -> Tuple[bool, str]:
     """
     Verify the DID authentication header signature.
@@ -1280,10 +1437,12 @@ def verify_auth_header_signature(
 
     try:
         # Extract auth header parts (now includes version)
-        client_did, nonce, timestamp_str, verification_method, signature, version = extract_auth_header_parts(auth_header)
+        client_did, nonce, timestamp_str, verification_method, signature, version = (
+            extract_auth_header_parts(auth_header)
+        )
 
         # Verify DID (case-insensitive comparison)
-        if did_document.get('id').lower() != client_did.lower():
+        if did_document.get("id").lower() != client_did.lower():
             return False, "DID mismatch"
 
         # Determine which field to use based on version
@@ -1294,14 +1453,16 @@ def verify_auth_header_signature(
         except ValueError:
             # If version is not a valid float, default to "service" for backward compatibility
             domain_field = "service"
-            logging.warning(f"Invalid version format '{version}', using 'service' field for verification")
+            logging.warning(
+                f"Invalid version format '{version}', using 'service' field for verification"
+            )
 
         # Construct data to verify
         data_to_verify = {
             "nonce": nonce,
             "timestamp": timestamp_str,
             domain_field: service_domain,
-            "did": client_did
+            "did": client_did,
         }
 
         canonical_json = jcs.canonicalize(data_to_verify)
@@ -1331,11 +1492,12 @@ def verify_auth_header_signature(
         logging.error(f"Error during verification process: {str(e)}")
         return False, f"Verification process error: {str(e)}"
 
+
 def generate_auth_json(
     did_document: Dict,
     service_domain: str,
     sign_callback: Callable[[bytes, str], bytes],
-    version: str = "1.1"
+    version: str = "1.1",
 ) -> str:
     """
     Generate JSON format string for DID authentication.
@@ -1357,18 +1519,20 @@ def generate_auth_json(
     logging.info(f"Starting to generate DID authentication JSON with version {version}")
 
     # Validate DID document
-    did = did_document.get('id')
+    did = did_document.get("id")
     if not did:
         raise ValueError("DID document missing id field")
 
     # Select authentication method
-    method_dict, verification_method_fragment = _select_authentication_method(did_document)
+    method_dict, verification_method_fragment = _select_authentication_method(
+        did_document
+    )
 
     # Generate 16-byte random nonce
     nonce = secrets.token_hex(16)
 
     # Generate ISO 8601 formatted UTC timestamp
-    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Determine which field to use based on version
     # For version >= 1.1, use "aud" instead of "service"
@@ -1378,14 +1542,16 @@ def generate_auth_json(
     except ValueError:
         # If version is not a valid float, default to "service" for backward compatibility
         domain_field = "service"
-        logging.warning(f"Invalid version format '{version}', using 'service' field for backward compatibility")
+        logging.warning(
+            f"Invalid version format '{version}', using 'service' field for backward compatibility"
+        )
 
     # Construct data to sign
     data_to_sign = {
         "nonce": nonce,
         "timestamp": timestamp,
         domain_field: service_domain,
-        "did": did
+        "did": did,
     }
 
     # Normalize JSON using JCS
@@ -1406,16 +1572,15 @@ def generate_auth_json(
         "nonce": nonce,
         "timestamp": timestamp,
         "verification_method": verification_method_fragment,
-        "signature": signature
+        "signature": signature,
     }
 
     logging.info("Successfully generated DID authentication JSON")
     return json.dumps(auth_json)
 
+
 def verify_auth_json_signature(
-    auth_json: Union[str, Dict],
-    did_document: Dict,
-    service_domain: str
+    auth_json: Union[str, Dict], did_document: Dict, service_domain: str
 ) -> Tuple[bool, str]:
     """
     Verify the signature of DID authentication JSON.
@@ -1443,19 +1608,19 @@ def verify_auth_json_signature(
             auth_data = auth_json
 
         # Extract authentication data
-        client_did = auth_data.get('did')
-        nonce = auth_data.get('nonce')
-        timestamp_str = auth_data.get('timestamp')
-        verification_method = auth_data.get('verification_method')
-        signature = auth_data.get('signature')
-        version = auth_data.get('v', '1.1')  # Default to "1.1"
+        client_did = auth_data.get("did")
+        nonce = auth_data.get("nonce")
+        timestamp_str = auth_data.get("timestamp")
+        verification_method = auth_data.get("verification_method")
+        signature = auth_data.get("signature")
+        version = auth_data.get("v", "1.1")  # Default to "1.1"
 
         # Verify all required fields exist
         if not all([client_did, nonce, timestamp_str, verification_method, signature]):
             return False, "Authentication JSON missing required fields"
 
         # Verify DID (case-insensitive comparison)
-        if did_document.get('id').lower() != client_did.lower():
+        if did_document.get("id").lower() != client_did.lower():
             return False, "DID mismatch"
 
         # Determine which field to use based on version
@@ -1466,14 +1631,16 @@ def verify_auth_json_signature(
         except ValueError:
             # If version is not a valid float, default to "service" for backward compatibility
             domain_field = "service"
-            logging.warning(f"Invalid version format '{version}', using 'service' field for verification")
+            logging.warning(
+                f"Invalid version format '{version}', using 'service' field for verification"
+            )
 
         # Construct data to verify
         data_to_verify = {
             "nonce": nonce,
             "timestamp": timestamp_str,
             domain_field: service_domain,
-            "did": client_did
+            "did": client_did,
         }
 
         canonical_json = jcs.canonicalize(data_to_verify)
@@ -1488,7 +1655,9 @@ def verify_auth_json_signature(
         try:
             verifier = create_verification_method(method_dict)
             if verifier.verify_signature(content_hash, signature):
-                logging.info(f"JSON signature verification successful for version {version}")
+                logging.info(
+                    f"JSON signature verification successful for version {version}"
+                )
                 return True, "Verification successful"
             return False, "Signature verification failed"
         except ValueError as e:
