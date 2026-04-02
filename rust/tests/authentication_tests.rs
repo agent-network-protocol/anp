@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use anp::authentication::{
+    build_agent_message_service, build_anp_message_service, build_group_message_service,
     create_did_wba_document, extract_signature_metadata, generate_auth_header,
     generate_http_signature_headers, verify_auth_header_signature, verify_http_message_signature,
-    AuthMode, DIDWbaAuthHeader, DidDocumentOptions, DidProfile, DidWbaVerifier,
-    DidWbaVerifierConfig,
+    AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader, DidDocumentOptions, DidProfile,
+    DidWbaVerifier, DidWbaVerifierConfig,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -52,6 +53,29 @@ fn test_create_did_document_profiles() {
         legacy.did_document["proof"]["type"],
         json!("EcdsaSecp256k1Signature2019")
     );
+}
+
+#[test]
+fn test_build_anp_message_service_helpers() {
+    let agent =
+        build_agent_message_service("did:wba:example.com:user:alice", "https://example.com/rpc");
+    assert_eq!(agent["type"], json!("ANPMessageService"));
+    assert_eq!(agent["id"], json!("did:wba:example.com:user:alice#message"));
+    assert_eq!(agent["profiles"][1], json!("anp.direct.base.v1"));
+    assert_eq!(agent["securityProfiles"][1], json!("direct-e2ee"));
+
+    let group =
+        build_group_message_service("did:wba:example.com:groups:test", "https://example.com/rpc");
+    assert_eq!(group["type"], json!("ANPMessageService"));
+    assert_eq!(group["profiles"][1], json!("anp.group.base.v1"));
+    assert_eq!(group["securityProfiles"][1], json!("group-e2ee"));
+
+    let service_ref = build_anp_message_service(
+        "#message",
+        "https://example.com/rpc",
+        AnpMessageServiceOptions::default(),
+    );
+    assert_eq!(service_ref["id"], json!("#message"));
 }
 
 #[test]

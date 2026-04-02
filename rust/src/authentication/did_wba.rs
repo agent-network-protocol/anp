@@ -24,6 +24,7 @@ use super::verification_methods::{create_verification_method, extract_public_key
 pub const VM_KEY_AUTH: &str = "key-1";
 pub const VM_KEY_E2EE_SIGNING: &str = "key-2";
 pub const VM_KEY_E2EE_AGREEMENT: &str = "key-3";
+pub const ANP_MESSAGE_SERVICE_TYPE: &str = "ANPMessageService";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DidProfile {
@@ -117,6 +118,172 @@ impl DidDocumentOptions {
         self.services.push(service);
         self
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnpMessageServiceOptions {
+    pub fragment: String,
+    pub profiles: Vec<String>,
+    pub security_profiles: Vec<String>,
+    pub accepts: Vec<String>,
+    pub priority: Option<i32>,
+    pub auth_schemes: Vec<String>,
+}
+
+impl Default for AnpMessageServiceOptions {
+    fn default() -> Self {
+        Self {
+            fragment: "message".to_string(),
+            profiles: Vec::new(),
+            security_profiles: Vec::new(),
+            accepts: Vec::new(),
+            priority: None,
+            auth_schemes: Vec::new(),
+        }
+    }
+}
+
+impl AnpMessageServiceOptions {
+    pub fn with_fragment(mut self, value: impl Into<String>) -> Self {
+        self.fragment = value.into();
+        self
+    }
+
+    pub fn with_profiles<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.profiles = values.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_security_profiles<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.security_profiles = values.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_accepts<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.accepts = values.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_priority(mut self, value: i32) -> Self {
+        self.priority = Some(value);
+        self
+    }
+
+    pub fn with_auth_schemes<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.auth_schemes = values.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+pub fn build_anp_message_service(
+    did_or_service_ref: &str,
+    service_endpoint: impl Into<String>,
+    options: AnpMessageServiceOptions,
+) -> Value {
+    let mut service = Map::new();
+    let service_id =
+        if did_or_service_ref.starts_with('#') || did_or_service_ref.starts_with("did:") {
+            if did_or_service_ref.starts_with('#') {
+                did_or_service_ref.to_string()
+            } else {
+                format!("{did_or_service_ref}#{}", options.fragment)
+            }
+        } else {
+            format!("{did_or_service_ref}#{}", options.fragment)
+        };
+    service.insert("id".to_string(), Value::String(service_id));
+    service.insert(
+        "type".to_string(),
+        Value::String(ANP_MESSAGE_SERVICE_TYPE.to_string()),
+    );
+    service.insert(
+        "serviceEndpoint".to_string(),
+        Value::String(service_endpoint.into()),
+    );
+    if !options.profiles.is_empty() {
+        service.insert(
+            "profiles".to_string(),
+            Value::Array(options.profiles.into_iter().map(Value::String).collect()),
+        );
+    }
+    if !options.security_profiles.is_empty() {
+        service.insert(
+            "securityProfiles".to_string(),
+            Value::Array(
+                options
+                    .security_profiles
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    if !options.accepts.is_empty() {
+        service.insert(
+            "accepts".to_string(),
+            Value::Array(options.accepts.into_iter().map(Value::String).collect()),
+        );
+    }
+    if let Some(priority) = options.priority {
+        service.insert("priority".to_string(), Value::Number(priority.into()));
+    }
+    if !options.auth_schemes.is_empty() {
+        service.insert(
+            "authSchemes".to_string(),
+            Value::Array(
+                options
+                    .auth_schemes
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    Value::Object(service)
+}
+
+pub fn build_agent_message_service(did: &str, service_endpoint: impl Into<String>) -> Value {
+    build_anp_message_service(
+        did,
+        service_endpoint,
+        AnpMessageServiceOptions::default()
+            .with_profiles([
+                "anp.core.binding.v1",
+                "anp.direct.base.v1",
+                "anp.direct.e2ee.v1",
+            ])
+            .with_security_profiles(["transport-protected", "direct-e2ee"]),
+    )
+}
+
+pub fn build_group_message_service(did: &str, service_endpoint: impl Into<String>) -> Value {
+    build_anp_message_service(
+        did,
+        service_endpoint,
+        AnpMessageServiceOptions::default()
+            .with_profiles([
+                "anp.core.binding.v1",
+                "anp.group.base.v1",
+                "anp.group.e2ee.v1",
+            ])
+            .with_security_profiles(["transport-protected", "group-e2ee"]),
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
