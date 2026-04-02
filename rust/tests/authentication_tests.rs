@@ -2,12 +2,15 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use anp::authentication::{
-    build_agent_message_service, build_anp_message_service, build_group_message_service,
-    create_did_wba_document, extract_signature_metadata, generate_auth_header,
-    generate_http_signature_headers, verify_auth_header_signature, verify_http_message_signature,
+    build_agent_message_service, build_agent_message_service_with_options,
+    build_anp_message_service, build_group_message_service, create_did_wba_document,
+    extract_signature_metadata, generate_auth_header, generate_http_signature_headers,
+    verify_auth_header_signature, verify_federated_http_request, verify_http_message_signature,
     AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader, DidDocumentOptions, DidProfile,
-    DidWbaVerifier, DidWbaVerifierConfig,
+    DidWbaVerifier, DidWbaVerifierConfig, FederatedVerificationOptions,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use ed25519_dalek::SigningKey;
 use serde_json::json;
 use tempfile::tempdir;
 use wiremock::matchers::{method, path};
@@ -53,6 +56,10 @@ fn test_create_did_document_profiles() {
         legacy.did_document["proof"]["type"],
         json!("EcdsaSecp256k1Signature2019")
     );
+
+    let bare = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("bare DID creation should succeed");
+    assert_eq!(bare.did_document["id"], json!("did:wba:example.com"));
 }
 
 #[test]
@@ -129,6 +136,150 @@ fn test_http_signature_verification_rejects_tampered_body() {
         Some(br#"{"item":"music"}"#),
     )
     .is_err());
+}
+
+#[test]
+fn test_build_agent_message_service_with_service_did() {
+    let service = build_agent_message_service_with_options(
+        "did:wba:example.com:agents:alice:e1_demo",
+        "https://example.com/anp",
+        AnpMessageServiceOptions::default().with_service_did("did:wba:example.com"),
+    );
+    assert_eq!(service["serviceDid"], json!("did:wba:example.com"));
+}
+
+#[tokio::test]
+async fn test_verify_federated_http_request_with_did_wba_service_did() {
+    let sender = create_did_wba_document(
+        "a.example.com",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("sender DID creation should succeed");
+    let service_identity = create_did_wba_document("a.example.com", DidDocumentOptions::default())
+        .expect("service DID creation should succeed");
+    let private_key =
+        anp::PrivateKeyMaterial::from_pem(&service_identity.keys["key-1"].private_key_pem)
+            .expect("private key should load");
+    let mut sender_document = sender.did_document.clone();
+    sender_document
+        .as_object_mut()
+        .expect("sender document should be object")
+        .insert(
+            "service".to_string(),
+            json!([build_agent_message_service_with_options(
+                sender.did_document["id"].as_str().unwrap(),
+                "https://a.example.com/anp",
+                AnpMessageServiceOptions::default().with_service_did("did:wba:a.example.com"),
+            )]),
+        );
+    let headers = generate_http_signature_headers(
+        &service_identity.did_document,
+        "https://b.example.com/anp",
+        "POST",
+        &private_key,
+        None,
+        Some(br#"{"message":"hello"}"#),
+        Default::default(),
+    )
+    .expect("headers should generate");
+
+    let result = verify_federated_http_request(
+        sender.did_document["id"].as_str().unwrap(),
+        "POST",
+        "https://b.example.com/anp",
+        &headers,
+        Some(br#"{"message":"hello"}"#),
+        FederatedVerificationOptions {
+            sender_did_document: Some(sender_document),
+            service_did_document: Some(service_identity.did_document.clone()),
+            ..FederatedVerificationOptions::default()
+        },
+    )
+    .await
+    .expect("federated verification should succeed");
+
+    assert_eq!(result.service_did, "did:wba:a.example.com");
+    assert_eq!(
+        result.signature_metadata.keyid,
+        "did:wba:a.example.com#key-1"
+    );
+}
+
+#[tokio::test]
+async fn test_verify_federated_http_request_with_did_web_service_did() {
+    let sender = create_did_wba_document(
+        "a.example.com",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("sender DID creation should succeed");
+    let mut sender_document = sender.did_document.clone();
+    sender_document
+        .as_object_mut()
+        .expect("sender document should be object")
+        .insert(
+            "service".to_string(),
+            json!([build_agent_message_service_with_options(
+                sender.did_document["id"].as_str().unwrap(),
+                "https://a.example.com/anp",
+                AnpMessageServiceOptions::default().with_service_did("did:web:a.example.com"),
+            )]),
+        );
+
+    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let service_document = json!({
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:a.example.com",
+        "verificationMethod": [{
+            "id": "did:web:a.example.com#key-1",
+            "type": "Ed25519VerificationKey2020",
+            "controller": "did:web:a.example.com",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": URL_SAFE_NO_PAD.encode(verifying_key.as_bytes()),
+            }
+        }],
+        "authentication": ["did:web:a.example.com#key-1"]
+    });
+    let private_key = anp::PrivateKeyMaterial::Ed25519(signing_key);
+    let headers = generate_http_signature_headers(
+        &service_document,
+        "https://b.example.com/anp",
+        "POST",
+        &private_key,
+        None,
+        Some(br#"{"message":"hello"}"#),
+        Default::default(),
+    )
+    .expect("headers should generate");
+
+    let result = verify_federated_http_request(
+        sender.did_document["id"].as_str().unwrap(),
+        "POST",
+        "https://b.example.com/anp",
+        &headers,
+        Some(br#"{"message":"hello"}"#),
+        FederatedVerificationOptions {
+            sender_did_document: Some(sender_document),
+            service_did_document: Some(service_document),
+            ..FederatedVerificationOptions::default()
+        },
+    )
+    .await
+    .expect("federated verification should succeed");
+
+    assert_eq!(result.service_did, "did:web:a.example.com");
+    assert_eq!(
+        result.signature_metadata.keyid,
+        "did:web:a.example.com#key-1"
+    );
 }
 
 #[test]

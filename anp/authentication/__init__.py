@@ -18,8 +18,14 @@ from .did_wba import (
     verify_auth_json_signature,
     verify_did_key_binding,
 )
+from .did_resolver import resolve_did_document, resolve_did_document_sync
 from .did_wba_authenticator import DIDWbaAuthHeader
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
+from .federation import (
+    FederatedVerificationError,
+    FederatedVerificationResult,
+    verify_federated_http_request,
+)
 from .http_signatures import (
     build_content_digest,
     extract_signature_metadata,
@@ -41,6 +47,8 @@ __all__ = [
     "create_did_wba_document_with_key_binding",
     "resolve_did_wba_document",
     "resolve_did_wba_document_sync",
+    "resolve_did_document",
+    "resolve_did_document_sync",
     "generate_auth_header",
     "generate_auth_json",
     "verify_auth_header_signature",
@@ -51,6 +59,9 @@ __all__ = [
     "DidWbaVerifier",
     "DidWbaVerifierConfig",
     "DidWbaVerifierError",
+    "FederatedVerificationResult",
+    "FederatedVerificationError",
+    "verify_federated_http_request",
     "build_content_digest",
     "generate_http_signature_headers",
     "verify_http_message_signature",

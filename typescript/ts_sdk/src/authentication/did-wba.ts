@@ -27,6 +27,7 @@ import {
 } from '../proof/proof.js';
 import { createVerificationMethod, extractPublicKey } from './verification-methods.js';
 import type {
+  AnpMessageServiceOptions,
   DidDocument,
   DidDocumentBundle,
   DidDocumentOptions,
@@ -42,6 +43,7 @@ import { DidProfile as DidProfileEnum } from './types.js';
 export const VM_KEY_AUTH = 'key-1';
 export const VM_KEY_E2EE_SIGNING = 'key-2';
 export const VM_KEY_E2EE_AGREEMENT = 'key-3';
+export const ANP_MESSAGE_SERVICE_TYPE = 'ANPMessageService';
 
 export async function resolveDidWbaDocument(
   did: string,
@@ -90,6 +92,69 @@ export async function resolveDidWbaDocument(
   }
 
   return document;
+}
+
+export function buildAnpMessageService(
+  didOrServiceRef: string,
+  serviceEndpoint: string,
+  options: AnpMessageServiceOptions = {}
+): ServiceRecord {
+  const fragment = options.fragment ?? 'message';
+  const serviceId =
+    didOrServiceRef.startsWith('#') || didOrServiceRef.startsWith('did:')
+      ? didOrServiceRef.startsWith('#')
+        ? didOrServiceRef
+        : `${didOrServiceRef}#${fragment}`
+      : `${didOrServiceRef}#${fragment}`;
+
+  const service: ServiceRecord = {
+    id: serviceId,
+    type: ANP_MESSAGE_SERVICE_TYPE,
+    serviceEndpoint,
+  };
+  if (options.serviceDid) {
+    service.serviceDid = options.serviceDid;
+  }
+  if (options.profiles?.length) {
+    service.profiles = [...options.profiles];
+  }
+  if (options.securityProfiles?.length) {
+    service.securityProfiles = [...options.securityProfiles];
+  }
+  if (options.accepts?.length) {
+    service.accepts = [...options.accepts];
+  }
+  if (options.priority !== undefined) {
+    service.priority = options.priority;
+  }
+  if (options.authSchemes?.length) {
+    service.authSchemes = [...options.authSchemes];
+  }
+  return service;
+}
+
+export function buildAgentMessageService(
+  didOrServiceRef: string,
+  serviceEndpoint: string,
+  options: AnpMessageServiceOptions = {}
+): ServiceRecord {
+  return buildAnpMessageService(didOrServiceRef, serviceEndpoint, {
+    profiles: options.profiles ?? ['anp.core.binding.v1', 'anp.direct.base.v1', 'anp.direct.e2ee.v1'],
+    securityProfiles: options.securityProfiles ?? ['transport-protected', 'direct-e2ee'],
+    ...options,
+  });
+}
+
+export function buildGroupMessageService(
+  didOrServiceRef: string,
+  serviceEndpoint: string,
+  options: AnpMessageServiceOptions = {}
+): ServiceRecord {
+  return buildAnpMessageService(didOrServiceRef, serviceEndpoint, {
+    profiles: options.profiles ?? ['anp.core.binding.v1', 'anp.group.base.v1', 'anp.group.e2ee.v1'],
+    securityProfiles: options.securityProfiles ?? ['transport-protected', 'group-e2ee'],
+    ...options,
+  });
 }
 
 export function createDidWbaDocument(
@@ -508,7 +573,7 @@ function buildAuthVerificationMethod(
 function buildServiceEntries(
   did: string,
   agentDescriptionUrl?: string,
-  services?: JsonObject[]
+  services?: Array<ServiceRecord | JsonObject>
 ): ServiceRecord[] {
   const output: ServiceRecord[] = [];
   if (agentDescriptionUrl) {

@@ -1,14 +1,15 @@
 export * from './types.js';
 export * from './verification-methods.js';
 export * from './did-wba.js';
+export * from './did-resolver.js';
 export * from './http-signatures.js';
 export * from './did-wba-authenticator.js';
 export * from './did-wba-verifier.js';
+export * from './federation.js';
 
 export {
   createDidWbaDocument as createDidDocument,
   createDidWbaDocumentWithKeyBinding as createDidDocumentWithKeyBinding,
-  resolveDidWbaDocument as resolveDidDocument,
   validateDidDocumentBinding as validateDidBinding,
   verifyDidKeyBinding as verifyDidBinding,
   generateAuthHeader as createLegacyAuthHeader,
@@ -34,9 +35,12 @@ export {
 } from './did-wba-verifier.js';
 
 import {
+  ANP_MESSAGE_SERVICE_TYPE,
+  buildAgentMessageService,
+  buildAnpMessageService,
+  buildGroupMessageService,
   createDidWbaDocument,
   createDidWbaDocumentWithKeyBinding,
-  resolveDidWbaDocument,
   validateDidDocumentBinding,
   verifyDidKeyBinding,
   generateAuthHeader,
@@ -45,6 +49,7 @@ import {
   verifyAuthHeaderSignature,
   verifyAuthJsonSignature,
 } from './did-wba.js';
+import { resolveDidDocument } from './did-resolver.js';
 import {
   buildContentDigest,
   verifyContentDigest,
@@ -54,11 +59,16 @@ import {
 } from './http-signatures.js';
 import { DIDWbaAuthHeader } from './did-wba-authenticator.js';
 import { DidWbaVerifier } from './did-wba-verifier.js';
+import { verifyFederatedHttpRequest } from './federation.js';
 
 export const didDocuments = {
+  ANP_MESSAGE_SERVICE_TYPE,
+  buildAnpMessageService,
+  buildAgentMessageService,
+  buildGroupMessageService,
   create: createDidWbaDocument,
   createWithKeyBinding: createDidWbaDocumentWithKeyBinding,
-  resolve: resolveDidWbaDocument,
+  resolve: resolveDidDocument,
   validateBinding: validateDidDocumentBinding,
   verifyKeyBinding: verifyDidKeyBinding,
 };
@@ -83,6 +93,9 @@ export const authentication = {
   didDocuments,
   legacyAuth,
   httpSignatures,
+  federation: {
+    verifyRequest: verifyFederatedHttpRequest,
+  },
   DidAuthHeaders: DIDWbaAuthHeader,
   RequestVerifier: DidWbaVerifier,
 };

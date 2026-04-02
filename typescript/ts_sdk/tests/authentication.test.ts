@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   AuthMode,
+  buildAgentMessageService,
   DidProfile,
   DidWbaVerifier,
   DIDWbaAuthHeader,
@@ -15,6 +16,7 @@ import {
   generateHttpSignatureHeaders,
   validateDidDocumentBinding,
   verifyAuthHeaderSignature,
+  verifyFederatedHttpRequest,
   verifyHttpMessageSignature,
 } from '../src/index.js';
 
@@ -33,6 +35,40 @@ describe('authentication', () => {
     expect(k1.didDocument.id).toContain(':k1_');
     expect(validateDidDocumentBinding(e1.didDocument, true)).toBe(true);
     expect(validateDidDocumentBinding(k1.didDocument, true)).toBe(true);
+  });
+
+  test('creates a bare-domain did:wba document and verifies HTTP signatures', () => {
+    const bundle = createDidWbaDocument('example.com');
+    expect(bundle.didDocument.id).toBe('did:wba:example.com');
+
+    const headers = generateHttpSignatureHeaders(
+      bundle.didDocument,
+      'https://api.example.com/orders',
+      'POST',
+      bundle.keys['key-1'].privateKeyPem,
+      {},
+      '{"item":"book"}'
+    );
+
+    expect(
+      verifyHttpMessageSignature(
+        bundle.didDocument,
+        'POST',
+        'https://api.example.com/orders',
+        headers,
+        '{"item":"book"}'
+      ).keyid
+    ).toBe('did:wba:example.com#key-1');
+  });
+
+  test('builds ANPMessageService entries with serviceDid', () => {
+    const service = buildAgentMessageService(
+      'did:wba:example.com:agents:demo:e1_test',
+      'https://example.com/anp',
+      { serviceDid: 'did:wba:example.com' }
+    );
+    expect(service.type).toBe('ANPMessageService');
+    expect(service.serviceDid).toBe('did:wba:example.com');
   });
 
   test('generates and verifies legacy DIDWba headers', () => {
@@ -193,5 +229,93 @@ describe('authentication', () => {
     const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/e1');
     const didDocument = JSON.parse(readFileSync(join(fixtureDir, 'did.json'), 'utf8'));
     expect(validateDidDocumentBinding(didDocument, true)).toBe(true);
+  });
+
+  test('verifies federated HTTP requests with did:wba serviceDid', async () => {
+    const sender = createDidWbaDocument('a.example.com', {
+      pathSegments: ['agents', 'alice'],
+      didProfile: DidProfile.E1,
+    });
+    const serviceIdentity = createDidWbaDocument('a.example.com');
+    sender.didDocument.service = [
+      buildAgentMessageService(sender.didDocument.id, 'https://a.example.com/anp', {
+        serviceDid: serviceIdentity.didDocument.id,
+      }),
+    ];
+
+    const headers = generateHttpSignatureHeaders(
+      serviceIdentity.didDocument,
+      'https://b.example.com/anp',
+      'POST',
+      serviceIdentity.keys['key-1'].privateKeyPem,
+      {},
+      '{"message":"hello"}'
+    );
+
+    const result = await verifyFederatedHttpRequest(
+      sender.didDocument.id,
+      'POST',
+      'https://b.example.com/anp',
+      headers,
+      '{"message":"hello"}',
+      {
+        senderDidDocument: sender.didDocument,
+        serviceDidDocument: serviceIdentity.didDocument,
+      }
+    );
+
+    expect(result.serviceDid).toBe('did:wba:a.example.com');
+    expect(result.signatureMetadata.keyid).toBe('did:wba:a.example.com#key-1');
+  });
+
+  test('verifies federated HTTP requests with did:web serviceDid', async () => {
+    const sender = createDidWbaDocument('a.example.com', {
+      pathSegments: ['agents', 'alice'],
+      didProfile: DidProfile.E1,
+    });
+    const serviceIdentity = createDidWbaDocument('a.example.com');
+    const multikeyMethod = serviceIdentity.didDocument.verificationMethod[0];
+    const serviceDidDocument = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      id: 'did:web:a.example.com',
+      verificationMethod: [
+        {
+          id: 'did:web:a.example.com#key-1',
+          type: 'Ed25519VerificationKey2020',
+          controller: 'did:web:a.example.com',
+          publicKeyMultibase: multikeyMethod.publicKeyMultibase,
+        },
+      ],
+      authentication: ['did:web:a.example.com#key-1'],
+    };
+    sender.didDocument.service = [
+      buildAgentMessageService(sender.didDocument.id, 'https://a.example.com/anp', {
+        serviceDid: serviceDidDocument.id,
+      }),
+    ];
+
+    const headers = generateHttpSignatureHeaders(
+      serviceDidDocument,
+      'https://b.example.com/anp',
+      'POST',
+      serviceIdentity.keys['key-1'].privateKeyPem,
+      {},
+      '{"message":"hello"}'
+    );
+
+    const result = await verifyFederatedHttpRequest(
+      sender.didDocument.id,
+      'POST',
+      'https://b.example.com/anp',
+      headers,
+      '{"message":"hello"}',
+      {
+        senderDidDocument: sender.didDocument,
+        serviceDidDocument,
+      }
+    );
+
+    expect(result.serviceDid).toBe('did:web:a.example.com');
+    expect(result.signatureMetadata.keyid).toBe('did:web:a.example.com#key-1');
   });
 });

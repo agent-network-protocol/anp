@@ -37,6 +37,22 @@ export interface ServiceRecord {
   id: string;
   type: string;
   serviceEndpoint: unknown;
+  serviceDid?: string;
+  profiles?: string[];
+  securityProfiles?: string[];
+  accepts?: string[];
+  priority?: number | string;
+  authSchemes?: string[];
+}
+
+export interface AnpMessageServiceOptions {
+  fragment?: string;
+  serviceDid?: string;
+  profiles?: string[];
+  securityProfiles?: string[];
+  accepts?: string[];
+  priority?: number | string;
+  authSchemes?: string[];
 }
 
 export interface DidDocument {
@@ -54,7 +70,7 @@ export interface DidDocumentOptions {
   port?: number;
   pathSegments?: string[];
   agentDescriptionUrl?: string;
-  services?: JsonObject[];
+  services?: Array<ServiceRecord | JsonObject>;
   proofPurpose?: string;
   verificationMethod?: string;
   domain?: string;
@@ -98,6 +114,16 @@ export interface HttpSignatureOptions {
   coveredComponents?: string[];
 }
 
+export interface FederatedVerificationOptions {
+  senderDidDocument?: DidDocument;
+  serviceDidDocument?: DidDocument;
+  serviceId?: string;
+  serviceEndpoint?: string;
+  verifySenderDidProof?: boolean;
+  verifyServiceDidProof?: boolean;
+  didResolutionOptions?: DidResolutionOptions;
+}
+
 export interface SignatureMetadata {
   label: string;
   components: string[];
@@ -105,4 +131,11 @@ export interface SignatureMetadata {
   nonce?: string;
   created: number;
   expires?: number;
+}
+
+export interface FederatedVerificationResult {
+  senderDid: string;
+  serviceDid: string;
+  serviceId: string;
+  signatureMetadata: SignatureMetadata;
 }

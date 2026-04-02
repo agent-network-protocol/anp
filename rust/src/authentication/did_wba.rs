@@ -123,6 +123,7 @@ impl DidDocumentOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnpMessageServiceOptions {
     pub fragment: String,
+    pub service_did: Option<String>,
     pub profiles: Vec<String>,
     pub security_profiles: Vec<String>,
     pub accepts: Vec<String>,
@@ -134,6 +135,7 @@ impl Default for AnpMessageServiceOptions {
     fn default() -> Self {
         Self {
             fragment: "message".to_string(),
+            service_did: None,
             profiles: Vec::new(),
             security_profiles: Vec::new(),
             accepts: Vec::new(),
@@ -146,6 +148,11 @@ impl Default for AnpMessageServiceOptions {
 impl AnpMessageServiceOptions {
     pub fn with_fragment(mut self, value: impl Into<String>) -> Self {
         self.fragment = value.into();
+        self
+    }
+
+    pub fn with_service_did(mut self, value: impl Into<String>) -> Self {
+        self.service_did = Some(value.into());
         self
     }
 
@@ -216,6 +223,9 @@ pub fn build_anp_message_service(
         "serviceEndpoint".to_string(),
         Value::String(service_endpoint.into()),
     );
+    if let Some(service_did) = options.service_did {
+        service.insert("serviceDid".to_string(), Value::String(service_did));
+    }
     if !options.profiles.is_empty() {
         service.insert(
             "profiles".to_string(),
@@ -258,31 +268,57 @@ pub fn build_anp_message_service(
     Value::Object(service)
 }
 
+pub fn build_agent_message_service_with_options(
+    did: &str,
+    service_endpoint: impl Into<String>,
+    mut options: AnpMessageServiceOptions,
+) -> Value {
+    if options.profiles.is_empty() {
+        options.profiles = vec![
+            "anp.core.binding.v1".to_string(),
+            "anp.direct.base.v1".to_string(),
+            "anp.direct.e2ee.v1".to_string(),
+        ];
+    }
+    if options.security_profiles.is_empty() {
+        options.security_profiles =
+            vec!["transport-protected".to_string(), "direct-e2ee".to_string()];
+    }
+    build_anp_message_service(did, service_endpoint, options)
+}
+
 pub fn build_agent_message_service(did: &str, service_endpoint: impl Into<String>) -> Value {
-    build_anp_message_service(
+    build_agent_message_service_with_options(
         did,
         service_endpoint,
-        AnpMessageServiceOptions::default()
-            .with_profiles([
-                "anp.core.binding.v1",
-                "anp.direct.base.v1",
-                "anp.direct.e2ee.v1",
-            ])
-            .with_security_profiles(["transport-protected", "direct-e2ee"]),
+        AnpMessageServiceOptions::default(),
     )
 }
 
+pub fn build_group_message_service_with_options(
+    did: &str,
+    service_endpoint: impl Into<String>,
+    mut options: AnpMessageServiceOptions,
+) -> Value {
+    if options.profiles.is_empty() {
+        options.profiles = vec![
+            "anp.core.binding.v1".to_string(),
+            "anp.group.base.v1".to_string(),
+            "anp.group.e2ee.v1".to_string(),
+        ];
+    }
+    if options.security_profiles.is_empty() {
+        options.security_profiles =
+            vec!["transport-protected".to_string(), "group-e2ee".to_string()];
+    }
+    build_anp_message_service(did, service_endpoint, options)
+}
+
 pub fn build_group_message_service(did: &str, service_endpoint: impl Into<String>) -> Value {
-    build_anp_message_service(
+    build_group_message_service_with_options(
         did,
         service_endpoint,
-        AnpMessageServiceOptions::default()
-            .with_profiles([
-                "anp.core.binding.v1",
-                "anp.group.base.v1",
-                "anp.group.e2ee.v1",
-            ])
-            .with_security_profiles(["transport-protected", "group-e2ee"]),
+        AnpMessageServiceOptions::default(),
     )
 }
 

@@ -172,6 +172,7 @@ def build_anp_message_service(
     did: str,
     service_endpoint: str,
     fragment: str = "message",
+    service_did: Optional[str] = None,
     profiles: Optional[List[str]] = None,
     security_profiles: Optional[List[str]] = None,
     accepts: Optional[List[str]] = None,
@@ -184,6 +185,8 @@ def build_anp_message_service(
         "type": ANP_MESSAGE_SERVICE_TYPE,
         "serviceEndpoint": service_endpoint,
     }
+    if service_did:
+        service["serviceDid"] = service_did
     if profiles:
         service["profiles"] = profiles
     if security_profiles:
@@ -202,6 +205,7 @@ def build_agent_message_service(
     did: str,
     service_endpoint: str,
     fragment: str = "message",
+    service_did: Optional[str] = None,
     profiles: Optional[List[str]] = None,
     security_profiles: Optional[List[str]] = None,
     accepts: Optional[List[str]] = None,
@@ -222,6 +226,7 @@ def build_agent_message_service(
         did=did,
         service_endpoint=service_endpoint,
         fragment=fragment,
+        service_did=service_did,
         profiles=profiles or default_profiles,
         security_profiles=security_profiles or default_security_profiles,
         accepts=accepts,
@@ -235,6 +240,7 @@ def build_group_message_service(
     did: str,
     service_endpoint: str,
     fragment: str = "message",
+    service_did: Optional[str] = None,
     profiles: Optional[List[str]] = None,
     security_profiles: Optional[List[str]] = None,
     accepts: Optional[List[str]] = None,
@@ -255,6 +261,7 @@ def build_group_message_service(
         did=did,
         service_endpoint=service_endpoint,
         fragment=fragment,
+        service_did=service_did,
         profiles=profiles or default_profiles,
         security_profiles=security_profiles or default_security_profiles,
         accepts=accepts,
