@@ -1,10 +1,21 @@
 use std::fmt;
 
-use base64::{engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use ed25519_dalek::{Signature as Ed25519Signature, Signer as Ed25519Signer, SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519VerifyingKey};
-use k256::ecdsa::{Signature as K256Signature, SigningKey as Secp256k1SigningKey, VerifyingKey as Secp256k1VerifyingKey};
+use base64::{
+    engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _,
+};
+use ed25519_dalek::{
+    Signature as Ed25519Signature, Signer as Ed25519Signer, SigningKey as Ed25519SigningKey,
+    VerifyingKey as Ed25519VerifyingKey,
+};
+use k256::ecdsa::{
+    Signature as K256Signature, SigningKey as Secp256k1SigningKey,
+    VerifyingKey as Secp256k1VerifyingKey,
+};
 use num_bigint::BigUint;
-use p256::ecdsa::{Signature as P256Signature, SigningKey as Secp256r1SigningKey, VerifyingKey as Secp256r1VerifyingKey};
+use p256::ecdsa::{
+    Signature as P256Signature, SigningKey as Secp256r1SigningKey,
+    VerifyingKey as Secp256r1VerifyingKey,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -97,19 +108,25 @@ impl PrivateKeyMaterial {
         let (label, bytes) = decode_pem(input)?;
         match label.as_str() {
             "ANP SECP256K1 PRIVATE KEY" => {
-                let key = Secp256k1SigningKey::from_slice(&bytes).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let key = Secp256k1SigningKey::from_slice(&bytes)
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Secp256k1(key))
             }
             "ANP SECP256R1 PRIVATE KEY" => {
-                let key = Secp256r1SigningKey::from_slice(&bytes).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let key = Secp256r1SigningKey::from_slice(&bytes)
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Secp256r1(key))
             }
             "ANP ED25519 PRIVATE KEY" => {
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Ed25519(Ed25519SigningKey::from_bytes(&bytes)))
             }
             "ANP X25519 PRIVATE KEY" => {
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::X25519(X25519StaticSecret::from(bytes)))
             }
             _ => Err(KeyMaterialError::InvalidPemLabel(label)),
@@ -118,7 +135,11 @@ impl PrivateKeyMaterial {
 }
 
 impl PublicKeyMaterial {
-    pub fn verify_message(&self, message: &[u8], signature_bytes: &[u8]) -> Result<(), KeyMaterialError> {
+    pub fn verify_message(
+        &self,
+        message: &[u8],
+        signature_bytes: &[u8],
+    ) -> Result<(), KeyMaterialError> {
         match self {
             Self::Secp256k1(key) => {
                 use k256::ecdsa::signature::Verifier;
@@ -127,11 +148,15 @@ impl PublicKeyMaterial {
                         signature_bytes,
                         "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
                     )?;
-                    let signature = K256Signature::from_slice(&normalized).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
-                    key.verify(message, &signature).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+                    let signature = K256Signature::from_slice(&normalized)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
+                    key.verify(message, &signature)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
                 } else {
-                    let signature = K256Signature::from_der(signature_bytes).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
-                    key.verify(message, &signature).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+                    let signature = K256Signature::from_der(signature_bytes)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
+                    key.verify(message, &signature)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
                 }
             }
             Self::Secp256r1(key) => {
@@ -141,17 +166,23 @@ impl PublicKeyMaterial {
                         signature_bytes,
                         "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
                     )?;
-                    let signature = P256Signature::from_slice(&normalized).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
-                    key.verify(message, &signature).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+                    let signature = P256Signature::from_slice(&normalized)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
+                    key.verify(message, &signature)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
                 } else {
-                    let signature = P256Signature::from_der(signature_bytes).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
-                    key.verify(message, &signature).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+                    let signature = P256Signature::from_der(signature_bytes)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
+                    key.verify(message, &signature)
+                        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
                 }
             }
             Self::Ed25519(key) => {
                 use ed25519_dalek::Verifier;
-                let signature = Ed25519Signature::from_slice(signature_bytes).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
-                key.verify(message, &signature).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+                let signature = Ed25519Signature::from_slice(signature_bytes)
+                    .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)?;
+                key.verify(message, &signature)
+                    .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
             }
             Self::X25519(_) => Err(KeyMaterialError::X25519VerificationUnsupported),
         }
@@ -159,8 +190,14 @@ impl PublicKeyMaterial {
 
     pub fn to_pem(&self) -> String {
         match self {
-            Self::Secp256k1(key) => encode_pem("ANP SECP256K1 PUBLIC KEY", key.to_encoded_point(true).as_bytes()),
-            Self::Secp256r1(key) => encode_pem("ANP SECP256R1 PUBLIC KEY", key.to_encoded_point(true).as_bytes()),
+            Self::Secp256k1(key) => encode_pem(
+                "ANP SECP256K1 PUBLIC KEY",
+                key.to_encoded_point(true).as_bytes(),
+            ),
+            Self::Secp256r1(key) => encode_pem(
+                "ANP SECP256R1 PUBLIC KEY",
+                key.to_encoded_point(true).as_bytes(),
+            ),
             Self::Ed25519(key) => encode_pem("ANP ED25519 PUBLIC KEY", &key.to_bytes()),
             Self::X25519(key) => encode_pem("ANP X25519 PUBLIC KEY", key),
         }
@@ -170,20 +207,27 @@ impl PublicKeyMaterial {
         let (label, bytes) = decode_pem(input)?;
         match label.as_str() {
             "ANP SECP256K1 PUBLIC KEY" => {
-                let key = Secp256k1VerifyingKey::from_sec1_bytes(&bytes).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let key = Secp256k1VerifyingKey::from_sec1_bytes(&bytes)
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Secp256k1(key))
             }
             "ANP SECP256R1 PUBLIC KEY" => {
-                let key = Secp256r1VerifyingKey::from_sec1_bytes(&bytes).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let key = Secp256r1VerifyingKey::from_sec1_bytes(&bytes)
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Secp256r1(key))
             }
             "ANP ED25519 PUBLIC KEY" => {
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                let key = Ed25519VerifyingKey::from_bytes(&bytes).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let key = Ed25519VerifyingKey::from_bytes(&bytes)
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::Ed25519(key))
             }
             "ANP X25519 PUBLIC KEY" => {
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
                 Ok(Self::X25519(bytes))
             }
             _ => Err(KeyMaterialError::InvalidPemLabel(label)),
@@ -207,7 +251,9 @@ pub(crate) fn base64url_encode(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn base64url_decode(value: &str) -> Result<Vec<u8>, KeyMaterialError> {
-    URL_SAFE_NO_PAD.decode(value).map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| KeyMaterialError::InvalidSignatureEncoding)
 }
 
 pub(crate) fn encode_signature_bytes(signature_bytes: &[u8]) -> String {
@@ -234,7 +280,10 @@ pub(crate) fn decode_pem(input: &str) -> Result<(String, Vec<u8>), KeyMaterialEr
     if !begin.starts_with("-----BEGIN ") || !begin.ends_with("-----") {
         return Err(KeyMaterialError::InvalidPemStructure);
     }
-    let label = begin.trim_start_matches("-----BEGIN ").trim_end_matches("-----").to_string();
+    let label = begin
+        .trim_start_matches("-----BEGIN ")
+        .trim_end_matches("-----")
+        .to_string();
     let end_marker = format!("-----END {label}-----");
     let mut body = String::new();
     let mut found_end = false;
@@ -248,21 +297,31 @@ pub(crate) fn decode_pem(input: &str) -> Result<(String, Vec<u8>), KeyMaterialEr
     if !found_end {
         return Err(KeyMaterialError::InvalidPemStructure);
     }
-    let bytes = STANDARD.decode(body.as_bytes()).map_err(|_| KeyMaterialError::InvalidPemStructure)?;
+    let bytes = STANDARD
+        .decode(body.as_bytes())
+        .map_err(|_| KeyMaterialError::InvalidPemStructure)?;
     Ok((label, bytes))
 }
 
-fn normalize_ecdsa_signature(signature_bytes: &[u8], order_hex: &str) -> Result<Vec<u8>, KeyMaterialError> {
+fn normalize_ecdsa_signature(
+    signature_bytes: &[u8],
+    order_hex: &str,
+) -> Result<Vec<u8>, KeyMaterialError> {
     if signature_bytes.len() % 2 != 0 {
         return Err(KeyMaterialError::InvalidSignatureEncoding);
     }
     let half = signature_bytes.len() / 2;
     let r = &signature_bytes[..half];
     let s = &signature_bytes[half..];
-    let order = BigUint::parse_bytes(order_hex.as_bytes(), 16).ok_or(KeyMaterialError::InvalidSignatureEncoding)?;
+    let order = BigUint::parse_bytes(order_hex.as_bytes(), 16)
+        .ok_or(KeyMaterialError::InvalidSignatureEncoding)?;
     let half_order = &order >> 1;
     let s_value = BigUint::from_bytes_be(s);
-    let normalized_s = if s_value > half_order { order - s_value } else { s_value };
+    let normalized_s = if s_value > half_order {
+        order - s_value
+    } else {
+        s_value
+    };
     let mut normalized = Vec::with_capacity(signature_bytes.len());
     normalized.extend_from_slice(r);
     let mut s_bytes = normalized_s.to_bytes_be();

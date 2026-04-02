@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::keys::PrivateKeyMaterial;
 
-use super::did_wba::{generate_auth_header, generate_auth_header_with_overrides, AuthenticationError};
+use super::did_wba::{
+    generate_auth_header, generate_auth_header_with_overrides, AuthenticationError,
+};
 use super::http_signatures::{generate_http_signature_headers, HttpSignatureOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,10 +125,7 @@ impl DIDWbaAuthHeader {
         self.tokens.clear();
     }
 
-    pub fn should_retry_after_401(
-        &self,
-        response_headers: &BTreeMap<String, String>,
-    ) -> bool {
+    pub fn should_retry_after_401(&self, response_headers: &BTreeMap<String, String>) -> bool {
         let Some(www_authenticate) =
             get_header_case_insensitive(response_headers, "WWW-Authenticate")
         else {
@@ -150,10 +149,8 @@ impl DIDWbaAuthHeader {
         headers: Option<&BTreeMap<String, String>>,
         body: Option<&[u8]>,
     ) -> Result<BTreeMap<String, String>, AuthenticationError> {
-        let www_authenticate =
-            get_header_case_insensitive(response_headers, "WWW-Authenticate");
-        let accept_signature =
-            get_header_case_insensitive(response_headers, "Accept-Signature");
+        let www_authenticate = get_header_case_insensitive(response_headers, "WWW-Authenticate");
+        let accept_signature = get_header_case_insensitive(response_headers, "Accept-Signature");
         let challenge = www_authenticate
             .map(|value| parse_www_authenticate(value))
             .unwrap_or_default();
@@ -203,7 +200,8 @@ impl DIDWbaAuthHeader {
         if self.did_document_cache.is_none() {
             let content = fs::read_to_string(&self.did_document_path)
                 .map_err(|_| AuthenticationError::IoFailure)?;
-            let value = serde_json::from_str(&content).map_err(|_| AuthenticationError::JsonFailure)?;
+            let value =
+                serde_json::from_str(&content).map_err(|_| AuthenticationError::JsonFailure)?;
             self.did_document_cache = Some(value);
         }
         self.did_document_cache
@@ -239,7 +237,12 @@ fn parse_authentication_info(value: &str) -> HashMap<String, String> {
     value
         .split(',')
         .filter_map(|item| item.trim().split_once('='))
-        .map(|(key, raw)| (key.trim().to_string(), raw.trim().trim_matches('"').to_string()))
+        .map(|(key, raw)| {
+            (
+                key.trim().to_string(),
+                raw.trim().trim_matches('"').to_string(),
+            )
+        })
         .collect()
 }
 

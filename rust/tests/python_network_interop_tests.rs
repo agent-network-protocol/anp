@@ -35,8 +35,8 @@ async fn test_rust_http_client_to_python_server() {
     let mut server = spawn_python_server(&did_path, port);
     wait_for_health(port).await;
 
-    let result = exercise_rust_client_flow(&did_path, &key_path, AuthMode::HttpSignatures, port)
-        .await;
+    let result =
+        exercise_rust_client_flow(&did_path, &key_path, AuthMode::HttpSignatures, port).await;
 
     server.kill().ok();
     server.wait().ok();
@@ -71,8 +71,8 @@ async fn test_rust_legacy_client_to_python_server() {
     let mut server = spawn_python_server(&did_path, port);
     wait_for_health(port).await;
 
-    let result = exercise_rust_client_flow(&did_path, &key_path, AuthMode::LegacyDidWba, port)
-        .await;
+    let result =
+        exercise_rust_client_flow(&did_path, &key_path, AuthMode::LegacyDidWba, port).await;
 
     server.kill().ok();
     server.wait().ok();
@@ -90,7 +90,10 @@ async fn exercise_rust_client_flow(
     port: u16,
 ) -> (String, String, String) {
     let server_url = format!("http://127.0.0.1:{}/auth", port);
-    let client = Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
     let mut auth = DIDWbaAuthHeader::new(did_path, key_path, auth_mode);
 
     let first_headers = auth
@@ -104,9 +107,17 @@ async fn exercise_rust_client_flow(
         .expect("first request should succeed");
     let first_status = first_response.status();
     let first_response_headers = response_headers(&first_response);
-    let first_body_text = first_response.text().await.expect("first body should be readable");
-    assert_eq!(first_status, 200, "unexpected first response body: {}", first_body_text);
-    let first_body: Value = serde_json::from_str(&first_body_text).expect("first body should be JSON");
+    let first_body_text = first_response
+        .text()
+        .await
+        .expect("first body should be readable");
+    assert_eq!(
+        first_status, 200,
+        "unexpected first response body: {}",
+        first_body_text
+    );
+    let first_body: Value =
+        serde_json::from_str(&first_body_text).expect("first body should be JSON");
 
     auth.update_token(&server_url, &first_response_headers);
     let second_headers = auth
@@ -119,12 +130,24 @@ async fn exercise_rust_client_flow(
         .await
         .expect("second request should succeed");
     assert_eq!(second_response.status(), 200);
-    let second_body: Value = second_response.json().await.expect("second body should be JSON");
+    let second_body: Value = second_response
+        .json()
+        .await
+        .expect("second body should be JSON");
 
     (
-        first_body["auth_scheme"].as_str().unwrap_or_default().to_string(),
-        second_body["auth_scheme"].as_str().unwrap_or_default().to_string(),
-        second_headers.get("Authorization").cloned().unwrap_or_default(),
+        first_body["auth_scheme"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        second_body["auth_scheme"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        second_headers
+            .get("Authorization")
+            .cloned()
+            .unwrap_or_default(),
     )
 }
 
@@ -155,7 +178,10 @@ fn spawn_python_server(did_path: &Path, port: u16) -> Child {
 }
 
 async fn wait_for_health(port: u16) {
-    let client = Client::builder().timeout(Duration::from_secs(1)).build().unwrap();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .unwrap();
     let url = format!("http://127.0.0.1:{}/health", port);
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
@@ -184,7 +210,12 @@ fn response_headers(response: &reqwest::Response) -> BTreeMap<String, String> {
     response
         .headers()
         .iter()
-        .map(|(name, value)| (name.as_str().to_string(), value.to_str().unwrap_or_default().to_string()))
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                value.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect()
 }
 

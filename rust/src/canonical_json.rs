@@ -18,7 +18,9 @@ pub(crate) fn canonicalize_json(value: &Value) -> Result<Vec<u8>, CanonicalJsonE
 fn write_canonical_json(value: &Value, output: &mut String) -> Result<(), CanonicalJsonError> {
     match value {
         Value::Null | Value::Bool(_) | Value::String(_) => {
-            output.push_str(&serde_json::to_string(value).map_err(|_| CanonicalJsonError::UnsupportedValue)?);
+            output.push_str(
+                &serde_json::to_string(value).map_err(|_| CanonicalJsonError::UnsupportedValue)?,
+            );
             Ok(())
         }
         Value::Number(number) => {
@@ -48,7 +50,10 @@ fn write_canonical_json(value: &Value, output: &mut String) -> Result<(), Canoni
                 if index > 0 {
                     output.push(',');
                 }
-                output.push_str(&serde_json::to_string(key).map_err(|_| CanonicalJsonError::UnsupportedValue)?);
+                output.push_str(
+                    &serde_json::to_string(key)
+                        .map_err(|_| CanonicalJsonError::UnsupportedValue)?,
+                );
                 output.push(':');
                 let value = map.get(*key).ok_or(CanonicalJsonError::UnsupportedValue)?;
                 write_canonical_json(value, output)?;

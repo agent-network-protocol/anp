@@ -104,13 +104,14 @@ pub fn generate_http_signature_headers(
         headers_to_sign
             .entry("Content-Length".to_string())
             .or_insert_with(|| body_bytes.len().to_string());
-        if !covered.iter().any(|value| value.eq_ignore_ascii_case("content-digest")) {
+        if !covered
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("content-digest"))
+        {
             covered.push("content-digest".to_string());
         }
     }
-    let created = options
-        .created
-        .unwrap_or_else(|| Utc::now().timestamp());
+    let created = options.created.unwrap_or_else(|| Utc::now().timestamp());
     let expires = options.expires.or(Some(created + 300));
     let nonce = options
         .nonce
@@ -163,7 +164,9 @@ pub fn extract_signature_metadata(
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params.get("expires").and_then(|value| value.parse::<i64>().ok());
+    let expires = params
+        .get("expires")
+        .and_then(|value| value.parse::<i64>().ok());
     let nonce = params.get("nonce").cloned();
     Ok(SignatureMetadata {
         label: label_input,
@@ -199,12 +202,16 @@ pub fn verify_http_message_signature(
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params.get("expires").and_then(|value| value.parse::<i64>().ok());
+    let expires = params
+        .get("expires")
+        .and_then(|value| value.parse::<i64>().ok());
     let nonce = params.get("nonce").cloned();
 
     let body_bytes = body.unwrap_or_default();
     if !body_bytes.is_empty()
-        || components.iter().any(|value| value.eq_ignore_ascii_case("content-digest"))
+        || components
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("content-digest"))
     {
         let digest = get_header_case_insensitive(headers, "Content-Digest")
             .ok_or(HttpSignatureError::MissingContentDigest)?;
@@ -215,8 +222,8 @@ pub fn verify_http_message_signature(
 
     let method = find_verification_method(did_document, &keyid)
         .ok_or(HttpSignatureError::VerificationMethodNotFound)?;
-    let public_key = extract_public_key(&method)
-        .map_err(|_| HttpSignatureError::VerificationMethodNotFound)?;
+    let public_key =
+        extract_public_key(&method).map_err(|_| HttpSignatureError::VerificationMethodNotFound)?;
     let signature_base = build_signature_base(
         &components,
         request_method,
@@ -326,8 +333,12 @@ fn parse_signature_input(
     let (label, remainder) = signature_input
         .split_once('=')
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let open_index = remainder.find('(').ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let close_index = remainder.find(')').ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let open_index = remainder
+        .find('(')
+        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let close_index = remainder
+        .find(')')
+        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
     let components_raw = &remainder[open_index + 1..close_index];
     let params_raw = remainder[close_index + 1..].trim_start_matches(';');
     let components = components_raw
@@ -350,9 +361,7 @@ fn parse_signature_input(
     Ok((label.to_string(), components, params))
 }
 
-fn parse_signature_header(
-    signature_header: &str,
-) -> Result<(String, Vec<u8>), HttpSignatureError> {
+fn parse_signature_header(signature_header: &str) -> Result<(String, Vec<u8>), HttpSignatureError> {
     let (label, remainder) = signature_header
         .split_once('=')
         .ok_or(HttpSignatureError::InvalidSignatureFormat)?;

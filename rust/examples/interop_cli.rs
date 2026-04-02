@@ -42,10 +42,10 @@ fn run_auth_fixture(args: &[String]) {
     let profile = read_option(args, "--profile").unwrap_or_else(|| "e1".to_string());
     let hostname = read_option(args, "--hostname").unwrap_or_else(|| "example.com".to_string());
     let scheme = read_option(args, "--scheme").unwrap_or_else(|| "http".to_string());
-    let service_domain = read_option(args, "--service-domain")
-        .unwrap_or_else(|| "api.example.com".to_string());
-    let request_url = read_option(args, "--url")
-        .unwrap_or_else(|| format!("https://{}/orders", service_domain));
+    let service_domain =
+        read_option(args, "--service-domain").unwrap_or_else(|| "api.example.com".to_string());
+    let request_url =
+        read_option(args, "--url").unwrap_or_else(|| format!("https://{}/orders", service_domain));
     let request_method = read_option(args, "--method").unwrap_or_else(|| "GET".to_string());
     let body = read_option(args, "--body").unwrap_or_default();
 
@@ -56,13 +56,9 @@ fn run_auth_fixture(args: &[String]) {
 
     let output = match scheme.as_str() {
         "legacy" => {
-            let header = generate_auth_header(
-                &bundle.did_document,
-                &service_domain,
-                &private_key,
-                "1.1",
-            )
-            .expect("legacy auth header should generate");
+            let header =
+                generate_auth_header(&bundle.did_document, &service_domain, &private_key, "1.1")
+                    .expect("legacy auth header should generate");
             json!({
                 "profile": profile,
                 "scheme": scheme,
@@ -73,7 +69,11 @@ fn run_auth_fixture(args: &[String]) {
             })
         }
         "http" => {
-            let body_bytes = if body.is_empty() { None } else { Some(body.as_bytes()) };
+            let body_bytes = if body.is_empty() {
+                None
+            } else {
+                Some(body.as_bytes())
+            };
             let headers = generate_http_signature_headers(
                 &bundle.did_document,
                 &request_url,
@@ -99,11 +99,15 @@ fn run_auth_fixture(args: &[String]) {
         other => panic!("Unsupported scheme: {}", other),
     };
 
-    println!("{}", serde_json::to_string(&output).expect("fixture should serialize"));
+    println!(
+        "{}",
+        serde_json::to_string(&output).expect("fixture should serialize")
+    );
 }
 
 fn create_bundle(hostname: &str, profile: &str) -> anp::authentication::DidDocumentBundle {
-    let did_profile = DidProfile::from_str(profile).expect("profile must be one of: e1, k1, plain_legacy");
+    let did_profile =
+        DidProfile::from_str(profile).expect("profile must be one of: e1, k1, plain_legacy");
     create_did_wba_document(
         hostname,
         DidDocumentOptions::default()

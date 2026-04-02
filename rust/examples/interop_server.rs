@@ -9,15 +9,14 @@ use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<String>>();
-    let did_json_path = PathBuf::from(
-        read_option(&args, "--did-json").expect("--did-json is required"),
-    );
+    let did_json_path =
+        PathBuf::from(read_option(&args, "--did-json").expect("--did-json is required"));
     let port: u16 = read_option(&args, "--port")
         .expect("--port is required")
         .parse()
         .expect("port must be a valid integer");
-    let jwt_secret = read_option(&args, "--jwt-secret")
-        .unwrap_or_else(|| "test-secret".to_string());
+    let jwt_secret =
+        read_option(&args, "--jwt-secret").unwrap_or_else(|| "test-secret".to_string());
 
     let did_document: Value = serde_json::from_str(
         &fs::read_to_string(&did_json_path).expect("did.json should be readable"),
@@ -67,7 +66,11 @@ fn main() {
             method_to_str(request.method()),
             &full_url,
             &headers,
-            if body.is_empty() { None } else { Some(body.as_slice()) },
+            if body.is_empty() {
+                None
+            } else {
+                Some(body.as_slice())
+            },
             Some(&domain),
             &did_document,
         ));
@@ -83,7 +86,8 @@ fn main() {
             }
             Err(error) => {
                 let response_body = json!({"detail": error.message});
-                let response = build_json_response(error.status_code, &response_body, &error.headers);
+                let response =
+                    build_json_response(error.status_code, &response_body, &error.headers);
                 let _ = request.respond(response);
             }
         }
@@ -114,7 +118,12 @@ fn request_headers(request: &tiny_http::Request) -> BTreeMap<String, String> {
     request
         .headers()
         .iter()
-        .map(|header| (header.field.as_str().to_string(), header.value.as_str().to_string()))
+        .map(|header| {
+            (
+                header.field.as_str().to_string(),
+                header.value.as_str().to_string(),
+            )
+        })
         .collect()
 }
 
@@ -130,7 +139,10 @@ fn method_to_str(method: &Method) -> &str {
 }
 
 fn did_document_path(did_document: &Value) -> String {
-    let did = did_document.get("id").and_then(Value::as_str).unwrap_or_default();
+    let did = did_document
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let parts = did.split(':').collect::<Vec<&str>>();
     if parts.len() <= 3 {
         return "/.well-known/did.json".to_string();

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use anp::authentication::{
-    create_did_wba_document, extract_signature_metadata, generate_auth_header, generate_http_signature_headers,
-    verify_auth_header_signature, verify_http_message_signature, AuthMode,
-    DIDWbaAuthHeader, DidDocumentOptions, DidProfile, DidWbaVerifier,
+    create_did_wba_document, extract_signature_metadata, generate_auth_header,
+    generate_http_signature_headers, verify_auth_header_signature, verify_http_message_signature,
+    AuthMode, DIDWbaAuthHeader, DidDocumentOptions, DidProfile, DidWbaVerifier,
     DidWbaVerifierConfig,
 };
 use serde_json::json;
@@ -23,7 +23,10 @@ fn test_create_did_document_profiles() {
     )
     .expect("e1 DID creation should succeed");
     assert!(e1.did_document["id"].as_str().unwrap().contains(":e1_"));
-    assert_eq!(e1.did_document["proof"]["type"], json!("DataIntegrityProof"));
+    assert_eq!(
+        e1.did_document["proof"]["type"],
+        json!("DataIntegrityProof")
+    );
 
     let k1 = create_did_wba_document(
         "example.com",
@@ -45,7 +48,10 @@ fn test_create_did_document_profiles() {
         },
     )
     .expect("legacy DID creation should succeed");
-    assert_eq!(legacy.did_document["proof"]["type"], json!("EcdsaSecp256k1Signature2019"));
+    assert_eq!(
+        legacy.did_document["proof"]["type"],
+        json!("EcdsaSecp256k1Signature2019")
+    );
 }
 
 #[test]
@@ -61,13 +67,8 @@ fn test_legacy_auth_header_generation_and_verification() {
     .expect("DID creation should succeed");
     let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
         .expect("private key should load");
-    let header = generate_auth_header(
-        &bundle.did_document,
-        "api.example.com",
-        &private_key,
-        "1.1",
-    )
-    .expect("auth header generation should succeed");
+    let header = generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "1.1")
+        .expect("auth header generation should succeed");
     verify_auth_header_signature(&header, &bundle.did_document, "api.example.com")
         .expect("verification should succeed");
 }
@@ -158,7 +159,10 @@ fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
         .expect("challenge auth headers should be generated");
     let metadata = extract_signature_metadata(&headers).expect("metadata should parse");
     assert_eq!(metadata.nonce.as_deref(), Some("server-nonce-123"));
-    assert!(metadata.components.iter().any(|value| value == "content-type"));
+    assert!(metadata
+        .components
+        .iter()
+        .any(|value| value == "content-type"));
     assert!(headers.contains_key("Content-Digest"));
 }
 

@@ -35,14 +35,21 @@ pub async fn resolve_handle_with_options(
     options: &ResolveHandleOptions,
 ) -> Result<HandleResolutionDocument, HandleResolutionError> {
     let bare_handle = strip_wba_scheme(handle);
-    let (local_part, domain) = validate_handle(bare_handle).map_err(|err| HandleResolutionError {
-        message: err.message,
-        status_code: 400,
-    })?;
+    let (local_part, domain) =
+        validate_handle(bare_handle).map_err(|err| HandleResolutionError {
+            message: err.message,
+            status_code: 400,
+        })?;
     let url = options
         .base_url_override
         .as_ref()
-        .map(|base| format!("{}/.well-known/handle/{}", base.trim_end_matches('/'), local_part))
+        .map(|base| {
+            format!(
+                "{}/.well-known/handle/{}",
+                base.trim_end_matches('/'),
+                local_part
+            )
+        })
         .unwrap_or_else(|| build_resolution_url(&local_part, &domain));
     let normalized = format!("{}.{}", local_part, domain);
     let client = Client::builder()
@@ -53,10 +60,15 @@ pub async fn resolve_handle_with_options(
             message: format!("Unexpected error resolving handle '{}'", normalized),
             status_code: 502,
         })?;
-    let response = client.get(url).header("Accept", "application/json").send().await.map_err(|err| HandleResolutionError {
-        message: format!("Network error resolving handle '{}': {}", normalized, err),
-        status_code: 502,
-    })?;
+    let response = client
+        .get(url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|err| HandleResolutionError {
+            message: format!("Network error resolving handle '{}': {}", normalized, err),
+            status_code: 502,
+        })?;
 
     let status = response.status();
     if status.as_u16() == 301 {
@@ -101,20 +113,29 @@ pub async fn resolve_handle_with_options(
         return Err(HandleResolutionError {
             message: format!(
                 "Unexpected status {} resolving '{}': {}",
-                status.as_u16(), normalized, text
+                status.as_u16(),
+                normalized,
+                text
             ),
             status_code: 502,
         });
     }
 
     let data: Value = response.json().await.map_err(|err| HandleResolutionError {
-        message: format!("Unexpected error resolving handle '{}': {}", normalized, err),
+        message: format!(
+            "Unexpected error resolving handle '{}': {}",
+            normalized, err
+        ),
         status_code: 502,
     })?;
-    let document: HandleResolutionDocument = serde_json::from_value(data).map_err(|err| HandleResolutionError {
-        message: format!("Unexpected error resolving handle '{}': {}", normalized, err),
-        status_code: 502,
-    })?;
+    let document: HandleResolutionDocument =
+        serde_json::from_value(data).map_err(|err| HandleResolutionError {
+            message: format!(
+                "Unexpected error resolving handle '{}': {}",
+                normalized, err
+            ),
+            status_code: 502,
+        })?;
     if document.handle.to_ascii_lowercase() != normalized {
         return Err(HandleResolutionError {
             message: format!(
@@ -148,5 +169,7 @@ pub async fn resolve_handle_from_uri(
 }
 
 fn strip_wba_scheme(handle_or_uri: &str) -> &str {
-    handle_or_uri.strip_prefix("wba://").unwrap_or(handle_or_uri)
+    handle_or_uri
+        .strip_prefix("wba://")
+        .unwrap_or(handle_or_uri)
 }

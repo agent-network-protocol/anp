@@ -13,9 +13,8 @@ use thiserror::Error;
 use crate::canonical_json::canonicalize_json;
 use crate::keys::{base64url_encode, GeneratedKeyPairPem};
 use crate::proof::{
-    generate_w3c_proof, verify_w3c_proof, ProofGenerationOptions,
-    ProofVerificationOptions, CRYPTOSUITE_DIDWBA_SECP256K1_2025,
-    CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
+    generate_w3c_proof, verify_w3c_proof, ProofGenerationOptions, ProofVerificationOptions,
+    CRYPTOSUITE_DIDWBA_SECP256K1_2025, CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
     PROOF_TYPE_SECP256K1,
 };
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
@@ -132,15 +131,24 @@ impl DidDocumentBundle {
     }
 
     pub fn private_key_pem(&self, fragment: &str) -> Option<&str> {
-        self.keys.get(fragment).map(|value| value.private_key_pem.as_str())
+        self.keys
+            .get(fragment)
+            .map(|value| value.private_key_pem.as_str())
     }
 
     pub fn public_key_pem(&self, fragment: &str) -> Option<&str> {
-        self.keys.get(fragment).map(|value| value.public_key_pem.as_str())
+        self.keys
+            .get(fragment)
+            .map(|value| value.public_key_pem.as_str())
     }
 
-    pub fn load_private_key(&self, fragment: &str) -> Result<PrivateKeyMaterial, AuthenticationError> {
-        let pem = self.private_key_pem(fragment).ok_or(AuthenticationError::InvalidDidDocument)?;
+    pub fn load_private_key(
+        &self,
+        fragment: &str,
+    ) -> Result<PrivateKeyMaterial, AuthenticationError> {
+        let pem = self
+            .private_key_pem(fragment)
+            .ok_or(AuthenticationError::InvalidDidDocument)?;
         PrivateKeyMaterial::from_pem(pem).map_err(|_| AuthenticationError::InvalidDidDocument)
     }
 }
@@ -223,9 +231,7 @@ pub fn create_did_wba_document(
 
     let did_base = build_did_base(hostname, options.port);
     let mut path_segments = options.path_segments.clone();
-    let mut contexts = vec![Value::String(
-        "https://www.w3.org/ns/did/v1".to_string(),
-    )];
+    let mut contexts = vec![Value::String("https://www.w3.org/ns/did/v1".to_string())];
     let mut verification_methods: Vec<Value> = Vec::new();
     let mut authentication_entries: Vec<Value> = Vec::new();
     let mut assertion_method_entries: Vec<Value> = Vec::new();
@@ -254,10 +260,7 @@ pub fn create_did_wba_document(
         }
         DidProfile::K1 => {
             if !path_segments.is_empty() {
-                path_segments.push(format!(
-                    "k1_{}",
-                    compute_jwk_fingerprint(&auth_public_key)?
-                ));
+                path_segments.push(format!("k1_{}", compute_jwk_fingerprint(&auth_public_key)?));
             }
             join_did(&did_base, &path_segments)
         }
@@ -321,10 +324,9 @@ pub fn create_did_wba_document(
         ));
         let signing_key =
             PrivateKeyMaterial::Secp256r1(p256::ecdsa::SigningKey::random(&mut OsRng));
-        let agreement_key =
-            PrivateKeyMaterial::X25519(x25519_dalek::StaticSecret::from(rand::random::<
-                [u8; 32],
-            >()));
+        let agreement_key = PrivateKeyMaterial::X25519(x25519_dalek::StaticSecret::from(
+            rand::random::<[u8; 32]>(),
+        ));
         let signing_public = signing_key.public_key();
         let agreement_public = agreement_key.public_key();
 
@@ -349,9 +351,7 @@ pub fn create_did_wba_document(
 
         verification_methods.push(signing_vm);
         verification_methods.push(agreement_vm);
-        key_agreement_entries.push(Value::String(format!(
-            "{did}#{VM_KEY_E2EE_AGREEMENT}"
-        )));
+        key_agreement_entries.push(Value::String(format!("{did}#{VM_KEY_E2EE_AGREEMENT}")));
         keys.insert(
             VM_KEY_E2EE_SIGNING.to_string(),
             GeneratedKeyPairPem {
@@ -491,7 +491,10 @@ pub fn verify_did_key_binding(did: &str, binding_material: &Value) -> bool {
 }
 
 pub fn validate_did_document_binding(did_document: &Value, verify_proof: bool) -> bool {
-    let did = did_document.get("id").and_then(Value::as_str).unwrap_or_default();
+    let did = did_document
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let last_segment = did.rsplit(':').next().unwrap_or_default();
     if let Some(expected) = last_segment.strip_prefix("e1_") {
         return validate_e1_binding(did_document, expected);
@@ -523,8 +526,7 @@ pub async fn resolve_did_wba_document(
     did: &str,
     verify_proof: bool,
 ) -> Result<Value, AuthenticationError> {
-    resolve_did_wba_document_with_options(did, verify_proof, &DidResolutionOptions::default())
-        .await
+    resolve_did_wba_document_with_options(did, verify_proof, &DidResolutionOptions::default()).await
 }
 
 pub async fn resolve_did_wba_document_with_options(
@@ -543,7 +545,11 @@ pub async fn resolve_did_wba_document_with_options(
     let domain = percent_decode_str(encoded_domain)
         .decode_utf8_lossy()
         .to_string();
-    let path_segments = if parts.len() > 3 { &parts[3..] } else { &[][..] };
+    let path_segments = if parts.len() > 3 {
+        &parts[3..]
+    } else {
+        &[][..]
+    };
 
     let base_url = options
         .base_url_override
@@ -596,11 +602,7 @@ pub async fn resolve_did_wba_document_with_options(
             .ok_or(AuthenticationError::VerificationMethodNotFound)?;
         let public_key = extract_public_key(&method)
             .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
-        if !verify_w3c_proof(
-            &document,
-            &public_key,
-            ProofVerificationOptions::default(),
-        ) {
+        if !verify_w3c_proof(&document, &public_key, ProofVerificationOptions::default()) {
             return Err(AuthenticationError::VerificationFailed);
         }
     }
@@ -612,8 +614,8 @@ pub fn resolve_did_wba_document_sync(
     did: &str,
     verify_proof: bool,
 ) -> Result<Value, AuthenticationError> {
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|_| AuthenticationError::NetworkFailure)?;
+    let runtime =
+        tokio::runtime::Runtime::new().map_err(|_| AuthenticationError::NetworkFailure)?;
     runtime.block_on(resolve_did_wba_document(did, verify_proof))
 }
 
@@ -716,14 +718,12 @@ pub fn extract_auth_header_parts(
             .captures(auth_header)
             .and_then(|caps| caps.get(1))
             .map(|matched| matched.as_str().to_string())
-            .ok_or_else(|| {
-                AuthenticationError::MissingAuthorizationField(field.to_string())
-            })?;
+            .ok_or_else(|| AuthenticationError::MissingAuthorizationField(field.to_string()))?;
         values.insert(field.to_string(), capture);
     }
 
-    let version_regex = Regex::new(r#"(?i)v=\"([^\"]+)\""#)
-        .map_err(|_| AuthenticationError::RegexFailure)?;
+    let version_regex =
+        Regex::new(r#"(?i)v=\"([^\"]+)\""#).map_err(|_| AuthenticationError::RegexFailure)?;
     let version = version_regex
         .captures(auth_header)
         .and_then(|caps| caps.get(1))
@@ -800,21 +800,14 @@ pub fn find_verification_method(
         .and_then(Value::as_array)
     {
         for method in methods {
-            if method.get("id").and_then(Value::as_str)
-                == Some(verification_method_id)
-            {
+            if method.get("id").and_then(Value::as_str) == Some(verification_method_id) {
                 return Some(method.clone());
             }
         }
     }
-    if let Some(authentication) = did_document
-        .get("authentication")
-        .and_then(Value::as_array)
-    {
+    if let Some(authentication) = did_document.get("authentication").and_then(Value::as_array) {
         for method in authentication {
-            if method.get("id").and_then(Value::as_str)
-                == Some(verification_method_id)
-            {
+            if method.get("id").and_then(Value::as_str) == Some(verification_method_id) {
                 return Some(method.clone());
             }
         }
@@ -822,18 +815,14 @@ pub fn find_verification_method(
     None
 }
 
-pub fn is_authentication_authorized(
-    did_document: &Value,
-    verification_method_id: &str,
-) -> bool {
+pub fn is_authentication_authorized(did_document: &Value, verification_method_id: &str) -> bool {
     did_document
         .get("authentication")
         .and_then(Value::as_array)
         .map(|entries| {
             entries.iter().any(|entry| {
                 entry.as_str() == Some(verification_method_id)
-                    || entry.get("id").and_then(Value::as_str)
-                        == Some(verification_method_id)
+                    || entry.get("id").and_then(Value::as_str) == Some(verification_method_id)
             })
         })
         .unwrap_or(false)
@@ -844,14 +833,10 @@ fn validate_e1_binding(did_document: &Value, expected_fingerprint: &str) -> bool
         Some(value) => value,
         None => return false,
     };
-    if proof.get("type").and_then(Value::as_str)
-        != Some(PROOF_TYPE_DATA_INTEGRITY)
-    {
+    if proof.get("type").and_then(Value::as_str) != Some(PROOF_TYPE_DATA_INTEGRITY) {
         return false;
     }
-    if proof.get("cryptosuite").and_then(Value::as_str)
-        != Some(CRYPTOSUITE_EDDSA_JCS_2022)
-    {
+    if proof.get("cryptosuite").and_then(Value::as_str) != Some(CRYPTOSUITE_EDDSA_JCS_2022) {
         return false;
     }
     let verification_method = match proof.get("verificationMethod").and_then(Value::as_str) {
@@ -924,8 +909,7 @@ fn generate_auth_payload(
     let (method_dict, method_fragment) = select_authentication_method(did_document)?;
     let nonce = nonce_override
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| base64url_encode(&rand::random::<[u8; 16]>()))
-        ;
+        .unwrap_or_else(|| base64url_encode(&rand::random::<[u8; 16]>()));
     let timestamp = timestamp_override
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
@@ -937,8 +921,7 @@ fn generate_auth_payload(
         domain_field: service_domain,
         "did": did,
     });
-    let canonical = canonicalize_json(&payload)
-        .map_err(|_| AuthenticationError::JsonFailure)?;
+    let canonical = canonicalize_json(&payload).map_err(|_| AuthenticationError::JsonFailure)?;
     let content_hash = Sha256::digest(canonical).to_vec();
     let signature_bytes = private_key
         .sign_message(&content_hash)
@@ -984,8 +967,7 @@ fn verify_auth_payload(
         domain_field: service_domain,
         "did": parsed.did,
     });
-    let canonical = canonicalize_json(&payload)
-        .map_err(|_| AuthenticationError::JsonFailure)?;
+    let canonical = canonicalize_json(&payload).map_err(|_| AuthenticationError::JsonFailure)?;
     let content_hash = Sha256::digest(canonical).to_vec();
     let verification_method_id = format!("{}#{}", parsed.did, parsed.verification_method);
     let method = find_verification_method(did_document, &verification_method_id)
@@ -1010,11 +992,7 @@ fn select_authentication_method(
     if let Some(reference) = first.as_str() {
         let method = find_verification_method(did_document, reference)
             .ok_or(AuthenticationError::VerificationMethodNotFound)?;
-        let fragment = reference
-            .split('#')
-            .last()
-            .unwrap_or_default()
-            .to_string();
+        let fragment = reference.split('#').last().unwrap_or_default().to_string();
         return Ok((method, fragment));
     }
     let id = first
@@ -1045,10 +1023,7 @@ fn build_service_entries(
         if let Some(object) = copy.as_object_mut() {
             if let Some(id_value) = object.get("id").and_then(Value::as_str) {
                 if id_value.starts_with('#') {
-                    object.insert(
-                        "id".to_string(),
-                        Value::String(format!("{did}{id_value}")),
-                    );
+                    object.insert("id".to_string(), Value::String(format!("{did}{id_value}")));
                 }
             }
         }
@@ -1073,8 +1048,7 @@ fn join_did(base: &str, path_segments: &[String]) -> String {
 }
 
 fn jwk_thumbprint(jwk: &Value) -> Result<String, AuthenticationError> {
-    let canonical = canonicalize_json(jwk)
-        .map_err(|_| AuthenticationError::JsonFailure)?;
+    let canonical = canonicalize_json(jwk).map_err(|_| AuthenticationError::JsonFailure)?;
     Ok(base64url_encode(&Sha256::digest(canonical)))
 }
 

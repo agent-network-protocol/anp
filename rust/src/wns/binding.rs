@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::authentication::{
-    resolve_did_wba_document_with_options, DidResolutionOptions,
-};
+use crate::authentication::{resolve_did_wba_document_with_options, DidResolutionOptions};
 
 use super::models::HandleStatus;
 use super::resolver::{resolve_handle_with_options, ResolveHandleOptions};
@@ -36,9 +34,7 @@ impl Default for BindingVerificationOptions {
     }
 }
 
-pub async fn verify_handle_binding(
-    handle: &str,
-) -> BindingVerificationResult {
+pub async fn verify_handle_binding(handle: &str) -> BindingVerificationResult {
     verify_handle_binding_with_options(handle, BindingVerificationOptions::default()).await
 }
 
@@ -63,19 +59,20 @@ pub async fn verify_handle_binding_with_options(
     let normalized_handle = format!("{}.{}", local_part, domain);
     let expected_endpoint = build_resolution_url(&local_part, &domain);
 
-    let resolution = match resolve_handle_with_options(&normalized_handle, &options.resolution_options).await {
-        Ok(value) => value,
-        Err(err) => {
-            return BindingVerificationResult {
-                is_valid: false,
-                handle: normalized_handle,
-                did: String::new(),
-                forward_verified: false,
-                reverse_verified: false,
-                error_message: Some(format!("Forward resolution failed: {}", err.message)),
-            };
-        }
-    };
+    let resolution =
+        match resolve_handle_with_options(&normalized_handle, &options.resolution_options).await {
+            Ok(value) => value,
+            Err(err) => {
+                return BindingVerificationResult {
+                    is_valid: false,
+                    handle: normalized_handle,
+                    did: String::new(),
+                    forward_verified: false,
+                    reverse_verified: false,
+                    error_message: Some(format!("Forward resolution failed: {}", err.message)),
+                };
+            }
+        };
     if resolution.status != HandleStatus::Active {
         return BindingVerificationResult {
             is_valid: false,
@@ -83,7 +80,13 @@ pub async fn verify_handle_binding_with_options(
             did: resolution.did.clone(),
             forward_verified: false,
             reverse_verified: false,
-            error_message: Some(format!("Handle status is '{:?}', expected 'active'", resolution.status).to_ascii_lowercase()),
+            error_message: Some(
+                format!(
+                    "Handle status is '{:?}', expected 'active'",
+                    resolution.status
+                )
+                .to_ascii_lowercase(),
+            ),
         };
     }
     let did_value = resolution.did.clone();
@@ -183,7 +186,9 @@ pub fn extract_handle_service_from_did_document(did_document: &Value) -> Vec<Val
         .map(|services| {
             services
                 .iter()
-                .filter(|service| service.get("type").and_then(Value::as_str) == Some("HandleService"))
+                .filter(|service| {
+                    service.get("type").and_then(Value::as_str) == Some("HandleService")
+                })
                 .cloned()
                 .collect::<Vec<Value>>()
         })

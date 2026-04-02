@@ -12,7 +12,9 @@ use serde_json::Value;
 #[test]
 fn test_current_python_http_signatures_verify_in_rust() {
     if which_uv().is_none() {
-        eprintln!("Skipping test_current_python_http_signatures_verify_in_rust because uv is unavailable");
+        eprintln!(
+            "Skipping test_current_python_http_signatures_verify_in_rust because uv is unavailable"
+        );
         return;
     }
 
@@ -32,7 +34,11 @@ fn test_current_python_http_signatures_verify_in_rust() {
     );
     let did_document = fixture["did_document"].clone();
     let headers = json_headers_to_btree(&fixture["headers"]);
-    let body = fixture["body"].as_str().unwrap_or_default().as_bytes().to_vec();
+    let body = fixture["body"]
+        .as_str()
+        .unwrap_or_default()
+        .as_bytes()
+        .to_vec();
     let request_url = fixture["request_url"].as_str().unwrap();
 
     let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
@@ -44,15 +50,16 @@ fn test_current_python_http_signatures_verify_in_rust() {
     });
 
     let runtime = tokio::runtime::Runtime::new().expect("runtime should start");
-    let result = runtime.block_on(verifier.verify_request_with_did_document(
-        "POST",
-        request_url,
-        &headers,
-        Some(&body),
-        Some("api.example.com"),
-        &did_document,
-    ))
-    .expect("Rust verifier should accept the Python HTTP signature request");
+    let result = runtime
+        .block_on(verifier.verify_request_with_did_document(
+            "POST",
+            request_url,
+            &headers,
+            Some(&body),
+            Some("api.example.com"),
+            &did_document,
+        ))
+        .expect("Rust verifier should accept the Python HTTP signature request");
 
     assert_eq!(result.auth_scheme, "http_signatures");
     assert!(result.access_token.is_some());
@@ -61,7 +68,9 @@ fn test_current_python_http_signatures_verify_in_rust() {
 #[test]
 fn test_old_python_legacy_auth_verifies_in_rust() {
     if which_uv().is_none() {
-        eprintln!("Skipping test_old_python_legacy_auth_verifies_in_rust because uv is unavailable");
+        eprintln!(
+            "Skipping test_old_python_legacy_auth_verifies_in_rust because uv is unavailable"
+        );
         return;
     }
 
@@ -82,7 +91,9 @@ fn test_old_python_legacy_auth_verifies_in_rust() {
     let headers = json_headers_to_btree(&fixture["headers"]);
 
     verify_auth_header_signature(
-        headers.get("Authorization").expect("authorization header should exist"),
+        headers
+            .get("Authorization")
+            .expect("authorization header should exist"),
         &did_document,
         "api.example.com",
     )
@@ -97,20 +108,20 @@ fn test_old_python_legacy_auth_verifies_in_rust() {
     });
 
     let runtime = tokio::runtime::Runtime::new().expect("runtime should start");
-    let result = runtime.block_on(verifier.verify_request_with_did_document(
-        "GET",
-        "https://api.example.com/orders",
-        &headers,
-        None,
-        Some("api.example.com"),
-        &did_document,
-    ))
-    .expect("Rust verifier should accept the old Python legacy request");
+    let result = runtime
+        .block_on(verifier.verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &did_document,
+        ))
+        .expect("Rust verifier should accept the old Python legacy request");
 
     assert_eq!(result.auth_scheme, "legacy_didwba");
     assert!(result.access_token.is_some());
 }
-
 
 fn run_python_json_owned(args: Vec<String>, cwd: &Path) -> Value {
     let output = Command::new("uv")
@@ -128,7 +139,6 @@ fn run_python_json_owned(args: Vec<String>, cwd: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("Python output should be valid JSON")
 }
 
-
 fn json_headers_to_btree(value: &Value) -> BTreeMap<String, String> {
     value
         .as_object()
@@ -139,7 +149,9 @@ fn json_headers_to_btree(value: &Value) -> BTreeMap<String, String> {
 }
 
 fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("repo root should exist")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
 }
 
 fn which_uv() -> Option<String> {

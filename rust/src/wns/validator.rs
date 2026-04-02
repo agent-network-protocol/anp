@@ -103,8 +103,8 @@ pub fn build_wba_uri(local_part: &str, domain: &str) -> String {
 }
 
 fn is_valid_domain(domain: &str) -> bool {
-    let label_re = Regex::new(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-        .expect("domain regex must compile");
+    let label_re =
+        Regex::new(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$").expect("domain regex must compile");
     let labels = domain.split('.').collect::<Vec<&str>>();
     if labels.len() < 2 {
         return false;

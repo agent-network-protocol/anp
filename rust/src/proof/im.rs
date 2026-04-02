@@ -3,9 +3,7 @@
 use std::collections::BTreeMap;
 
 use base64::{
-    engine::general_purpose::STANDARD,
-    engine::general_purpose::URL_SAFE_NO_PAD,
-    Engine as _,
+    engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -15,8 +13,7 @@ use thiserror::Error;
 use crate::authentication::{build_content_digest, find_verification_method};
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
-pub const IM_PROOF_DEFAULT_COMPONENTS: [&str; 3] =
-    ["@method", "@target-uri", "content-digest"];
+pub const IM_PROOF_DEFAULT_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "content-digest"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImProof {
@@ -137,7 +134,9 @@ pub fn parse_im_signature_input(
         .split_once('=')
         .ok_or(ImProofError::InvalidSignatureInput)?;
     let remainder = remainder.trim();
-    let open = remainder.find('(').ok_or(ImProofError::InvalidSignatureInput)?;
+    let open = remainder
+        .find('(')
+        .ok_or(ImProofError::InvalidSignatureInput)?;
     let close = remainder[open..]
         .find(')')
         .map(|index| open + index)
@@ -161,7 +160,10 @@ pub fn parse_im_signature_input(
         let (name, value) = raw
             .split_once('=')
             .ok_or(ImProofError::InvalidSignatureInput)?;
-        params.insert(name.trim().to_owned(), value.trim().trim_matches('"').to_owned());
+        params.insert(
+            name.trim().to_owned(),
+            value.trim().trim_matches('"').to_owned(),
+        );
     }
     let keyid = params
         .get("keyid")
@@ -174,8 +176,12 @@ pub fn parse_im_signature_input(
         signature_params: remainder.to_owned(),
         keyid,
         nonce: params.get("nonce").cloned(),
-        created: params.get("created").and_then(|value| value.parse::<i64>().ok()),
-        expires: params.get("expires").and_then(|value| value.parse::<i64>().ok()),
+        created: params
+            .get("created")
+            .and_then(|value| value.parse::<i64>().ok()),
+        expires: params
+            .get("expires")
+            .and_then(|value| value.parse::<i64>().ok()),
     })
 }
 
@@ -286,9 +292,8 @@ fn verify_im_signature_bytes(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_im_content_digest, build_im_signature_input, decode_im_signature,
-        generate_im_proof, parse_im_signature_input, verify_im_proof_with_document,
-        ImProofGenerationOptions,
+        build_im_content_digest, build_im_signature_input, decode_im_signature, generate_im_proof,
+        parse_im_signature_input, verify_im_proof_with_document, ImProofGenerationOptions,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::PrivateKeyMaterial;
@@ -299,7 +304,8 @@ mod tests {
         content_digest: &str,
         signature_input: &str,
     ) -> Vec<u8> {
-        let parsed = parse_im_signature_input(signature_input).expect("signature input should parse");
+        let parsed =
+            parse_im_signature_input(signature_input).expect("signature input should parse");
         let lines = parsed
             .components
             .iter()
@@ -372,7 +378,10 @@ mod tests {
             bundle.did(),
         )
         .expect("proof should verify");
-        assert_eq!(result.parsed_signature_input.nonce.as_deref(), Some("nonce-1"));
+        assert_eq!(
+            result.parsed_signature_input.nonce.as_deref(),
+            Some("nonce-1")
+        );
     }
 
     #[test]

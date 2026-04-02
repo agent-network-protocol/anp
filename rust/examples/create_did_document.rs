@@ -12,7 +12,8 @@ fn main() {
         match arg.as_str() {
             "--profile" => {
                 if let Some(value) = args.next() {
-                    profile = DidProfile::from_str(&value).expect("profile must be one of: e1, k1, plain_legacy");
+                    profile = DidProfile::from_str(&value)
+                        .expect("profile must be one of: e1, k1, plain_legacy");
                 }
             }
             "--hostname" => {
@@ -55,11 +56,17 @@ fn main() {
         );
     }
 
-    println!("Generated DID identifier: {}", bundle.did().unwrap_or("<unknown>"));
+    println!(
+        "Generated DID identifier: {}",
+        bundle.did().unwrap_or("<unknown>")
+    );
     if let Some(proof) = bundle.did_document.get("proof") {
         println!(
             "Generated proof profile: {} {}",
-            proof.get("type").and_then(serde_json::Value::as_str).unwrap_or("<unknown>"),
+            proof
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unknown>"),
             proof
                 .get("cryptosuite")
                 .and_then(serde_json::Value::as_str)

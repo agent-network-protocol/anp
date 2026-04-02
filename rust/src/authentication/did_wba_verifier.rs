@@ -7,13 +7,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::did_wba::{
-    extract_auth_header_parts, is_authentication_authorized,
-    resolve_did_wba_document_with_options, validate_did_document_binding,
-    verify_auth_header_signature, DidResolutionOptions,
+    extract_auth_header_parts, is_authentication_authorized, resolve_did_wba_document_with_options,
+    validate_did_document_binding, verify_auth_header_signature, DidResolutionOptions,
 };
-use super::http_signatures::{
-    extract_signature_metadata, verify_http_message_signature,
-};
+use super::http_signatures::{extract_signature_metadata, verify_http_message_signature};
 
 #[derive(Clone)]
 pub struct DidWbaVerifierConfig {
@@ -147,7 +144,6 @@ impl DidWbaVerifier {
         })
     }
 
-
     pub async fn verify_request_with_did_document(
         &mut self,
         method: &str,
@@ -221,12 +217,7 @@ impl DidWbaVerifier {
         domain: &str,
     ) -> Result<VerificationSuccess, DidWbaVerifierError> {
         let metadata = extract_signature_metadata(headers).map_err(|_| {
-            self.challenge_error(
-                "Invalid signature metadata",
-                401,
-                domain,
-                "invalid_request",
-            )
+            self.challenge_error("Invalid signature metadata", 401, domain, "invalid_request")
         })?;
         let did = metadata
             .keyid
@@ -234,14 +225,25 @@ impl DidWbaVerifier {
             .next()
             .unwrap_or_default()
             .to_string();
-        let did_document = resolve_did_wba_document_with_options(
-            &did,
-            false,
-            &self.config.did_resolution_options,
+        let did_document =
+            resolve_did_wba_document_with_options(&did, false, &self.config.did_resolution_options)
+                .await
+                .map_err(|_| {
+                    self.challenge_error(
+                        "Failed to resolve DID document",
+                        401,
+                        domain,
+                        "invalid_did",
+                    )
+                })?;
+        self.handle_http_signature_auth_with_document(
+            method,
+            url,
+            headers,
+            body,
+            domain,
+            &did_document,
         )
-        .await
-        .map_err(|_| self.challenge_error("Failed to resolve DID document", 401, domain, "invalid_did"))?;
-        self.handle_http_signature_auth_with_document(method, url, headers, body, domain, &did_document)
     }
 
     fn handle_http_signature_auth_with_document(
@@ -254,12 +256,7 @@ impl DidWbaVerifier {
         did_document: &serde_json::Value,
     ) -> Result<VerificationSuccess, DidWbaVerifierError> {
         let metadata = extract_signature_metadata(headers).map_err(|_| {
-            self.challenge_error(
-                "Invalid signature metadata",
-                401,
-                domain,
-                "invalid_request",
-            )
+            self.challenge_error("Invalid signature metadata", 401, domain, "invalid_request")
         })?;
         let did = metadata
             .keyid
@@ -276,14 +273,10 @@ impl DidWbaVerifier {
                 headers: BTreeMap::new(),
             });
         }
-        let verification = verify_http_message_signature(
-            did_document,
-            method,
-            url,
-            headers,
-            body,
-        )
-        .map_err(|_| self.challenge_error("Invalid signature", 401, domain, "invalid_signature"))?;
+        let verification = verify_http_message_signature(did_document, method, url, headers, body)
+            .map_err(|_| {
+                self.challenge_error("Invalid signature", 401, domain, "invalid_signature")
+            })?;
         if !self.verify_http_signature_time_window(verification.created, verification.expires) {
             return Err(self.challenge_error(
                 "HTTP signature timestamp is expired or invalid",
@@ -333,7 +326,9 @@ impl DidWbaVerifier {
             &self.config.did_resolution_options,
         )
         .await
-        .map_err(|_| self.challenge_error("Failed to resolve DID document", 401, domain, "invalid_did"))?;
+        .map_err(|_| {
+            self.challenge_error("Failed to resolve DID document", 401, domain, "invalid_did")
+        })?;
         self.handle_legacy_did_auth_with_document(authorization, domain, &did_document)
     }
 
@@ -397,12 +392,13 @@ impl DidWbaVerifier {
         let algorithm = parse_algorithm(&self.config.jwt_algorithm)?;
         let mut validation = Validation::new(algorithm);
         validation.validate_exp = true;
-        let token_data = decode::<Claims>(token, &decoding_key, &validation)
-            .map_err(|_| DidWbaVerifierError {
+        let token_data = decode::<Claims>(token, &decoding_key, &validation).map_err(|_| {
+            DidWbaVerifierError {
                 message: "Invalid token".to_string(),
                 status_code: 401,
                 headers: BTreeMap::new(),
-            })?;
+            }
+        })?;
         let claims = token_data.claims;
         let now = Utc::now().timestamp();
         if claims.iat > now + 5 {
@@ -441,10 +437,7 @@ impl DidWbaVerifier {
                 );
             }
             if self.config.emit_legacy_authorization_header {
-                response_headers.insert(
-                    "Authorization".to_string(),
-                    format!("Bearer {}", token),
-                );
+                response_headers.insert("Authorization".to_string(), format!("Bearer {}", token));
             }
         }
         VerificationSuccess {
@@ -479,7 +472,8 @@ impl DidWbaVerifier {
             if request > current + Duration::minutes(1) {
                 return false;
             }
-            return current - request <= Duration::minutes(self.config.timestamp_expiration_minutes);
+            return current - request
+                <= Duration::minutes(self.config.timestamp_expiration_minutes);
         }
         false
     }
@@ -536,11 +530,15 @@ impl DidWbaVerifier {
     }
 
     fn encoding_key(&self) -> Result<EncodingKey, DidWbaVerifierError> {
-        let secret = self.config.jwt_private_key.as_ref().ok_or(DidWbaVerifierError {
-            message: "Missing JWT private key".to_string(),
-            status_code: 500,
-            headers: BTreeMap::new(),
-        })?;
+        let secret = self
+            .config
+            .jwt_private_key
+            .as_ref()
+            .ok_or(DidWbaVerifierError {
+                message: "Missing JWT private key".to_string(),
+                status_code: 500,
+                headers: BTreeMap::new(),
+            })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(EncodingKey::from_secret(secret.as_bytes())),
             _ => EncodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
@@ -552,11 +550,16 @@ impl DidWbaVerifier {
     }
 
     fn decoding_key(&self) -> Result<DecodingKey, DidWbaVerifierError> {
-        let secret = self.config.jwt_public_key.as_ref().or(self.config.jwt_private_key.as_ref()).ok_or(DidWbaVerifierError {
-            message: "Missing JWT public key".to_string(),
-            status_code: 500,
-            headers: BTreeMap::new(),
-        })?;
+        let secret = self
+            .config
+            .jwt_public_key
+            .as_ref()
+            .or(self.config.jwt_private_key.as_ref())
+            .ok_or(DidWbaVerifierError {
+                message: "Missing JWT public key".to_string(),
+                status_code: 500,
+                headers: BTreeMap::new(),
+            })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(DecodingKey::from_secret(secret.as_bytes())),
             _ => DecodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
