@@ -137,6 +137,7 @@ Google Python Style Guide: 4-space indentation, type hints on function signature
 ## Key Development Notes
 
 - Always use `uv run` prefix when running scripts to ensure correct environment
+- Go SDK work under `golang/` must remain pure Go and must not use cgo; prefer cross-platform standard-library or pure-Go dependencies only
 - OpenANP `@interface` method names must be unique within a class (tracked by function reference)
 - OpenANP `Context` parameter (`ctx: Context`) is auto-injected and excluded from OpenRPC schemas; detected by parameter name `ctx`/`context` or type annotation
 - OpenANP `router()` works as both class method (tries no-arg instantiation) and instance method (recommended for constructors with arguments)

@@ -1,24 +1,58 @@
-# AgentConnect4Golang
+# ANP Go SDK
 
-这是Python AgentConnect代码库的golang实现版本。它可以提供了DID（去中心化标识符）生成、身份验证和加密操作等功能。
+Agent Network Protocol (ANP) 的纯 Go 核心 SDK 实现。
 
-⭐️⭐️⭐️相关代码正在积极整理中,稍后推出,敬请期待.⭐️⭐️⭐️
+## 当前已实现
 
+- `authentication`
+  - DID WBA 文档生成
+  - 旧版 DIDWba 认证头生成与验签
+  - HTTP Message Signatures 生成与验签
+  - `did:wba` / `did:web` 文档解析
+  - 请求验证器与 Bearer Token 签发
+  - 联邦请求验签辅助
+- `proof`
+  - W3C Data Integrity proof 生成与校验
+  - group receipt proof
+  - IM proof
+- `wns`
+  - handle 校验与 URI 解析
+  - handle 解析
+  - handle 绑定校验
+- `direct_e2ee`
+  - prekey bundle 辅助
+  - X3DH 初始会话建立
+  - 对称 ratchet 推导
+  - direct init / cipher 消息处理
+  - 文件存储与参考客户端辅助
 
-## 构建项目
+## 兼容性要求
 
-本项目使用go mod进行依赖管理。构建项目的命令：
+- **纯 Go 实现**
+- **不使用 cgo**
+- Go **1.22+**
+
+## 模块路径
 
 ```bash
-go mod tidy
+go get github.com/agent-network-protocol/anp/golang
 ```
 
+## 示例
 
-## 许可证
+- `examples/create_did_document`
+- `examples/direct_e2ee`
+- `examples/proof`
+- `examples/wns`
 
-本项目基于MIT许可证开源。
+## 文档
 
-## 作者
+- `docs/api.md`
+- `docs/direct_e2ee-guide.md`
+- `docs/release-notes.md`
 
-原始Python实现：GaoWei Chang (chgaowei@gmail.com)。
-Golang实现：临沂市人工智能协会 (lysrgznxh@9885.net)。
+## 测试
+
+```bash
+go test ./...
+```
