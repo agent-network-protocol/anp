@@ -238,7 +238,7 @@ pub fn verify_im_proof_with_document(
 ) -> Result<ImProofVerificationResult, ImProofError> {
     let parsed = parse_im_signature_input(&proof.signature_input)?;
     if let Some(expected_signer_did) = expected_signer_did {
-        if !parsed.keyid.starts_with(expected_signer_did) {
+        if !keyid_belongs_to_expected_did(&parsed.keyid, expected_signer_did) {
             return Err(ImProofError::InvalidSignerDid);
         }
     }
@@ -262,7 +262,7 @@ pub fn verify_im_proof_with_public_key(
 ) -> Result<ImProofVerificationResult, ImProofError> {
     let parsed = parse_im_signature_input(&proof.signature_input)?;
     if let Some(expected_signer_did) = expected_signer_did {
-        if !parsed.keyid.starts_with(expected_signer_did) {
+        if !keyid_belongs_to_expected_did(&parsed.keyid, expected_signer_did) {
             return Err(ImProofError::InvalidSignerDid);
         }
     }
@@ -287,6 +287,14 @@ fn verify_im_signature_bytes(
     public_key
         .verify_message(signature_base, signature_bytes)
         .map_err(|_| ImProofError::VerificationFailed)
+}
+
+fn keyid_belongs_to_expected_did(keyid: &str, expected_signer_did: &str) -> bool {
+    keyid
+        .split('#')
+        .next()
+        .map(|did| did == expected_signer_did)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -449,5 +457,58 @@ mod tests {
         let (label, decoded) = decode_im_signature(&encoded).expect("signature should decode");
         assert_eq!(label.as_deref(), Some("sig2"));
         assert_eq!(decoded, b"hello");
+    }
+
+    #[test]
+    fn signer_did_match_requires_exact_did_url_owner() {
+        let bundle = create_did_wba_document(
+            "example.com",
+            DidDocumentOptions {
+                path_segments: vec!["user".to_owned(), "alice".to_owned()],
+                did_profile: DidProfile::E1,
+                ..DidDocumentOptions::default()
+            },
+        )
+        .expect("bundle should be created");
+        let private_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+            .expect("private key should load");
+        let payload = br#"{"text":"hello"}"#;
+        let signature_input = build_im_signature_input(
+            &format!("{}#key-1", bundle.did_document["id"].as_str().expect("did")),
+            ImProofGenerationOptions {
+                created: Some(1_712_000_000),
+                nonce: Some("nonce-1".to_owned()),
+                ..ImProofGenerationOptions::default()
+            },
+        )
+        .expect("signature input should build");
+        let signature_base = business_signature_base(
+            "direct.send",
+            "anp://agent/did%3Awba%3Aexample.com%3Auser%3Abob%3Ae1_bob",
+            &build_im_content_digest(payload),
+            &signature_input,
+        );
+        let proof = generate_im_proof(
+            payload,
+            &signature_base,
+            &private_key,
+            &format!("{}#key-1", bundle.did_document["id"].as_str().expect("did")),
+            ImProofGenerationOptions {
+                created: Some(1_712_000_000),
+                nonce: Some("nonce-1".to_owned()),
+                ..ImProofGenerationOptions::default()
+            },
+        )
+        .expect("proof should generate");
+
+        let error = verify_im_proof_with_document(
+            &proof,
+            payload,
+            &signature_base,
+            &bundle.did_document,
+            Some("did:wba:example.com:user:alice"),
+        )
+        .expect_err("prefix-only DID match must fail");
+        assert!(matches!(error, super::ImProofError::InvalidSignerDid));
     }
 }
