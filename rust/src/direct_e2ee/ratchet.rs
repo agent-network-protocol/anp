@@ -69,10 +69,8 @@ mod tests {
     #[test]
     fn chain_step_encrypts_and_decrypts() {
         let step = derive_chain_step(&[9u8; 32]);
-        let ciphertext = encrypt_with_step(&step, b"hello", br#"{"aad":true}"#)
-            .expect("encrypt");
-        let plaintext = decrypt_with_step(&step, &ciphertext, br#"{"aad":true}"#)
-            .expect("decrypt");
+        let ciphertext = encrypt_with_step(&step, b"hello", br#"{"aad":true}"#).expect("encrypt");
+        let plaintext = decrypt_with_step(&step, &ciphertext, br#"{"aad":true}"#).expect("decrypt");
         assert_eq!(plaintext, b"hello");
     }
 }

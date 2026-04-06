@@ -2,8 +2,7 @@ use super::aad::{build_init_aad, build_message_aad};
 use super::errors::DirectE2eeError;
 use super::models::{
     ApplicationPlaintext, DirectCipherBody, DirectEnvelopeMetadata, DirectInitBody,
-    DirectSessionState, PendingOutboundRecord, PrekeyBundle, RatchetHeader,
-    MTI_DIRECT_E2EE_SUITE,
+    DirectSessionState, PendingOutboundRecord, PrekeyBundle, RatchetHeader, MTI_DIRECT_E2EE_SUITE,
 };
 use super::ratchet::{decrypt_with_step, derive_chain_step, encrypt_with_step, MAX_SKIP};
 use super::x3dh::{
@@ -28,7 +27,9 @@ impl DirectE2eeSession {
         plaintext: &ApplicationPlaintext,
     ) -> Result<(DirectSessionState, PendingOutboundRecord, DirectInitBody), DirectE2eeError> {
         if recipient_bundle.suite != MTI_DIRECT_E2EE_SUITE {
-            return Err(DirectE2eeError::UnsupportedSuite(recipient_bundle.suite.clone()));
+            return Err(DirectE2eeError::UnsupportedSuite(
+                recipient_bundle.suite.clone(),
+            ));
         }
         let sender_ephemeral_private = X25519StaticSecret::random_from_rng(OsRng);
         let sender_ephemeral_public = X25519PublicKey::from(&sender_ephemeral_private).to_bytes();
@@ -54,8 +55,9 @@ impl DirectE2eeSession {
         let ciphertext = encrypt_with_raw_key(
             &key,
             &nonce,
-            &serde_json::to_vec(plaintext)
-                .map_err(|error| DirectE2eeError::invalid_field(format!("invalid plaintext: {error}")))?,
+            &serde_json::to_vec(plaintext).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid plaintext: {error}"))
+            })?,
             &init_aad,
         )?;
         body.ciphertext_b64u = crate::keys::base64url_encode(&ciphertext);
@@ -69,8 +71,12 @@ impl DirectE2eeSession {
             local_key_agreement_id: local_static_key_id.to_owned(),
             peer_key_agreement_id: recipient_bundle.static_key_agreement_id.clone(),
             root_key_b64u: crate::keys::base64url_encode(&initial_material.root_key),
-            send_chain_key_b64u: crate::keys::base64url_encode(&initial_material.initiator_chain_key),
-            recv_chain_key_b64u: crate::keys::base64url_encode(&initial_material.responder_chain_key),
+            send_chain_key_b64u: crate::keys::base64url_encode(
+                &initial_material.initiator_chain_key,
+            ),
+            recv_chain_key_b64u: crate::keys::base64url_encode(
+                &initial_material.responder_chain_key,
+            ),
             ratchet_public_key_b64u: crate::keys::base64url_encode(&ratchet_public),
             peer_ratchet_public_key_b64u: None,
             send_n: 0,
@@ -83,8 +89,9 @@ impl DirectE2eeSession {
             operation_id: operation_id.to_owned(),
             message_id: metadata.message_id.clone(),
             wire_content_type: "application/anp-direct-init+json".to_owned(),
-            body_json: serde_json::to_value(&body)
-                .map_err(|error| DirectE2eeError::invalid_field(format!("invalid init body: {error}")))?,
+            body_json: serde_json::to_value(&body).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid init body: {error}"))
+            })?,
         };
         Ok((session, pending, body))
     }
@@ -110,8 +117,10 @@ impl DirectE2eeSession {
         let ciphertext = crate::keys::base64url_decode(&body.ciphertext_b64u)
             .map_err(|_| DirectE2eeError::invalid_field("ciphertext_b64u"))?;
         let plaintext_bytes = encrypt_decrypt_with_raw_key(&key, &nonce, &ciphertext, &init_aad)?;
-        let plaintext: ApplicationPlaintext = serde_json::from_slice(&plaintext_bytes)
-            .map_err(|error| DirectE2eeError::invalid_field(format!("invalid plaintext json: {error}")))?;
+        let plaintext: ApplicationPlaintext =
+            serde_json::from_slice(&plaintext_bytes).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid plaintext json: {error}"))
+            })?;
         let ratchet_private = X25519StaticSecret::random_from_rng(OsRng);
         let ratchet_public = X25519PublicKey::from(&ratchet_private).to_bytes();
         let session = DirectSessionState {
@@ -121,8 +130,12 @@ impl DirectE2eeSession {
             local_key_agreement_id: local_static_key_id.to_owned(),
             peer_key_agreement_id: body.sender_static_key_agreement_id.clone(),
             root_key_b64u: crate::keys::base64url_encode(&initial_material.root_key),
-            send_chain_key_b64u: crate::keys::base64url_encode(&initial_material.responder_chain_key),
-            recv_chain_key_b64u: crate::keys::base64url_encode(&initial_material.initiator_chain_key),
+            send_chain_key_b64u: crate::keys::base64url_encode(
+                &initial_material.responder_chain_key,
+            ),
+            recv_chain_key_b64u: crate::keys::base64url_encode(
+                &initial_material.initiator_chain_key,
+            ),
             ratchet_public_key_b64u: crate::keys::base64url_encode(&ratchet_public),
             peer_ratchet_public_key_b64u: None,
             send_n: 0,
@@ -155,8 +168,9 @@ impl DirectE2eeSession {
         let aad = build_message_aad(metadata, &body, &plaintext.application_content_type)?;
         let ciphertext = encrypt_with_step(
             &step,
-            &serde_json::to_vec(plaintext)
-                .map_err(|error| DirectE2eeError::invalid_field(format!("invalid plaintext: {error}")))?,
+            &serde_json::to_vec(plaintext).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid plaintext: {error}"))
+            })?,
             &aad,
         )?;
         let body = DirectCipherBody {
@@ -169,8 +183,9 @@ impl DirectE2eeSession {
             operation_id: operation_id.to_owned(),
             message_id: metadata.message_id.clone(),
             wire_content_type: "application/anp-direct-cipher+json".to_owned(),
-            body_json: serde_json::to_value(&body)
-                .map_err(|error| DirectE2eeError::invalid_field(format!("invalid cipher body: {error}")))?,
+            body_json: serde_json::to_value(&body).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid cipher body: {error}"))
+            })?,
         };
         Ok((pending, body))
     }
@@ -207,8 +222,10 @@ impl DirectE2eeSession {
         let ciphertext = crate::keys::base64url_decode(&body.ciphertext_b64u)
             .map_err(|_| DirectE2eeError::invalid_field("ciphertext_b64u"))?;
         let plaintext_bytes = decrypt_with_step(&step, &ciphertext, &aad)?;
-        let plaintext: ApplicationPlaintext = serde_json::from_slice(&plaintext_bytes)
-            .map_err(|error| DirectE2eeError::invalid_field(format!("invalid plaintext json: {error}")))?;
+        let plaintext: ApplicationPlaintext =
+            serde_json::from_slice(&plaintext_bytes).map_err(|error| {
+                DirectE2eeError::invalid_field(format!("invalid plaintext json: {error}"))
+            })?;
         session.recv_chain_key_b64u = crate::keys::base64url_encode(&step.next_chain_key);
         session.recv_n = n + 1;
         Ok(plaintext)
@@ -218,7 +235,8 @@ impl DirectE2eeSession {
 fn decode_fixed_32(value: &str) -> Result<[u8; 32], DirectE2eeError> {
     let bytes = crate::keys::base64url_decode(value)
         .map_err(|_| DirectE2eeError::invalid_field("base64url value"))?;
-    bytes.try_into()
+    bytes
+        .try_into()
         .map_err(|_| DirectE2eeError::invalid_field("expected 32-byte base64url value"))
 }
 
@@ -276,7 +294,11 @@ mod tests {
             owner_did: owner_did.to_owned(),
             suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
             static_key_agreement_id: format!("{owner_did}#ka-1"),
-            signed_prekey: signed_prekey_from_private_key("spk-001", spk_private, "2026-04-07T00:00:00Z"),
+            signed_prekey: signed_prekey_from_private_key(
+                "spk-001",
+                spk_private,
+                "2026-04-07T00:00:00Z",
+            ),
             proof: json!({
                 "type": "DataIntegrityProof",
                 "verificationMethod": format!("{owner_did}#key-1"),
@@ -338,10 +360,8 @@ mod tests {
             "did:wba:b.example:agents:bob:e1",
             "msg-2",
         );
-        let follow_up_plaintext = ApplicationPlaintext::new_json(
-            "application/json",
-            json!({"event": "wave"}),
-        );
+        let follow_up_plaintext =
+            ApplicationPlaintext::new_json("application/json", json!({"event": "wave"}));
         let (_pending, cipher_body) = DirectE2eeSession::encrypt_follow_up(
             &mut alice_session,
             &alice_follow_up_metadata,

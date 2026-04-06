@@ -53,12 +53,11 @@ pub fn initial_secret_key_and_nonce(
 }
 
 fn derive_initial_material(chunks: &[&[u8]]) -> Result<InitialMaterial, DirectE2eeError> {
-    let ikm = chunks.iter().flat_map(|chunk| chunk.iter().copied()).collect::<Vec<_>>();
-    let initial_secret = hkdf_expand_from_ikm(
-        &ikm,
-        b"ANP Direct E2EE v1 Initial Secret",
-        32,
-    )?;
+    let ikm = chunks
+        .iter()
+        .flat_map(|chunk| chunk.iter().copied())
+        .collect::<Vec<_>>();
+    let initial_secret = hkdf_expand_from_ikm(&ikm, b"ANP Direct E2EE v1 Initial Secret", 32)?;
     let initial_secret: [u8; 32] = initial_secret
         .try_into()
         .map_err(|_| DirectE2eeError::crypto("invalid initial secret length"))?;
@@ -93,11 +92,7 @@ fn derive_initial_material(chunks: &[&[u8]]) -> Result<InitialMaterial, DirectE2
     })
 }
 
-fn hkdf_expand_from_ikm(
-    ikm: &[u8],
-    info: &[u8],
-    len: usize,
-) -> Result<Vec<u8>, DirectE2eeError> {
+fn hkdf_expand_from_ikm(ikm: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>, DirectE2eeError> {
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, &[0u8; 32]);
     let prk = salt.extract(ikm);
     let info_parts = [info];

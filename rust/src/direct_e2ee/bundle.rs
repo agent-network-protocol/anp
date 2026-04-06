@@ -2,7 +2,9 @@ use super::errors::DirectE2eeError;
 use super::models::{PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE};
 use crate::authentication::{create_verification_method, find_verification_method};
 use crate::keys::base64url_encode;
-use crate::proof::{generate_w3c_proof, verify_w3c_proof_detailed, ProofGenerationOptions, ProofVerificationOptions};
+use crate::proof::{
+    generate_w3c_proof, verify_w3c_proof_detailed, ProofGenerationOptions, ProofVerificationOptions,
+};
 use crate::PrivateKeyMaterial;
 use serde_json::{json, Value};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -71,7 +73,9 @@ pub fn verify_prekey_bundle(
         .get("keyAgreement")
         .and_then(Value::as_array)
         .ok_or_else(|| DirectE2eeError::MissingField("keyAgreement"))?;
-    let static_key_found = key_agreement.iter().any(|entry| entry.as_str() == Some(&bundle.static_key_agreement_id));
+    let static_key_found = key_agreement
+        .iter()
+        .any(|entry| entry.as_str() == Some(&bundle.static_key_agreement_id));
     if !static_key_found {
         return Err(DirectE2eeError::invalid_field(
             "static_key_agreement_id must appear in did_document.keyAgreement",
@@ -85,10 +89,12 @@ pub fn verify_prekey_bundle(
         .ok_or_else(|| DirectE2eeError::MissingField("proof.verificationMethod"))?;
     let method = find_verification_method(did_document, verification_method_id)
         .ok_or_else(|| DirectE2eeError::invalid_field("proof.verificationMethod not found"))?;
-    let verification_method = create_verification_method(&method)
-        .map_err(|error| DirectE2eeError::invalid_field(format!("invalid verification method: {error}")))?;
-    let signed_bundle = serde_json::to_value(bundle)
-        .map_err(|error| DirectE2eeError::invalid_field(format!("invalid bundle serialization: {error}")))?;
+    let verification_method = create_verification_method(&method).map_err(|error| {
+        DirectE2eeError::invalid_field(format!("invalid verification method: {error}"))
+    })?;
+    let signed_bundle = serde_json::to_value(bundle).map_err(|error| {
+        DirectE2eeError::invalid_field(format!("invalid bundle serialization: {error}"))
+    })?;
     verify_w3c_proof_detailed(
         &signed_bundle,
         &verification_method.public_key,
@@ -101,10 +107,12 @@ pub fn extract_x25519_public_key(
     did_document: &Value,
     key_id: &str,
 ) -> Result<[u8; 32], DirectE2eeError> {
-    let method = find_verification_method(did_document, key_id)
-        .ok_or_else(|| DirectE2eeError::invalid_field(format!("verification method not found: {key_id}")))?;
-    let verification_method = create_verification_method(&method)
-        .map_err(|error| DirectE2eeError::invalid_field(format!("invalid verification method: {error}")))?;
+    let method = find_verification_method(did_document, key_id).ok_or_else(|| {
+        DirectE2eeError::invalid_field(format!("verification method not found: {key_id}"))
+    })?;
+    let verification_method = create_verification_method(&method).map_err(|error| {
+        DirectE2eeError::invalid_field(format!("invalid verification method: {error}"))
+    })?;
     match verification_method.public_key {
         crate::PublicKeyMaterial::X25519(bytes) => Ok(bytes),
         _ => Err(DirectE2eeError::invalid_field(format!(
@@ -135,7 +143,8 @@ mod tests {
         let signing_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
             .expect("private key");
         let spk_private = X25519StaticSecret::from([7u8; 32]);
-        let signed_prekey = signed_prekey_from_private_key("spk-001", &spk_private, "2026-04-07T00:00:00Z");
+        let signed_prekey =
+            signed_prekey_from_private_key("spk-001", &spk_private, "2026-04-07T00:00:00Z");
         let built = build_prekey_bundle(
             "bundle-001",
             did,

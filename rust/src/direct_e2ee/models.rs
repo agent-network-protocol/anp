@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const MTI_DIRECT_E2EE_SUITE: &str =
-    "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1";
+pub const MTI_DIRECT_E2EE_SUITE: &str = "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedPrekey {

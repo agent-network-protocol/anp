@@ -42,10 +42,7 @@ fn main() {
         .expect("bob did should exist");
     let sender_static_key = extract_x25519_public_key(
         &fixture.alice_did_document,
-        fixture
-            .init_body
-            .sender_static_key_agreement_id
-            .as_str(),
+        fixture.init_body.sender_static_key_agreement_id.as_str(),
     )
     .expect("sender static key should exist");
 

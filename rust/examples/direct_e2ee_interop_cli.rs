@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use anp::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
 use anp::direct_e2ee::{
-    build_prekey_bundle, signed_prekey_from_private_key, ApplicationPlaintext,
-    DirectE2eeSession, DirectEnvelopeMetadata,
+    build_prekey_bundle, signed_prekey_from_private_key, ApplicationPlaintext, DirectE2eeSession,
+    DirectEnvelopeMetadata,
 };
 use anp::PrivateKeyMaterial;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -39,8 +39,8 @@ fn main() {
     let bob_static = load_x25519_secret(&bob.keys["key-3"].private_key_pem);
     let bob_spk = X25519StaticSecret::from([55u8; 32]);
 
-    let bob_signing_key = PrivateKeyMaterial::from_pem(&bob.keys["key-1"].private_key_pem)
-        .expect("bob signing key");
+    let bob_signing_key =
+        PrivateKeyMaterial::from_pem(&bob.keys["key-1"].private_key_pem).expect("bob signing key");
     let bundle = build_prekey_bundle(
         "bundle-001",
         &bob_did,

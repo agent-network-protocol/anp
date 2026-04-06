@@ -84,7 +84,11 @@ mod tests {
         let init_aad = build_init_aad(&metadata, &init).expect("init aad");
         let msg_aad = build_message_aad(&metadata, &cipher, "text/plain").expect("msg aad");
 
-        assert!(String::from_utf8(init_aad).expect("utf8").contains("\"bundle_id\":\"bundle-001\""));
-        assert!(String::from_utf8(msg_aad).expect("utf8").contains("\"application_content_type\":\"text/plain\""));
+        assert!(String::from_utf8(init_aad)
+            .expect("utf8")
+            .contains("\"bundle_id\":\"bundle-001\""));
+        assert!(String::from_utf8(msg_aad)
+            .expect("utf8")
+            .contains("\"application_content_type\":\"text/plain\""));
     }
 }
