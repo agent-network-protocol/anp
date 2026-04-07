@@ -15,12 +15,13 @@ pub use did_wba::{
     build_group_message_service_with_options, compute_jwk_fingerprint,
     compute_multikey_fingerprint, create_did_wba_document,
     create_did_wba_document_with_key_binding, extract_auth_header_parts, find_verification_method,
-    generate_auth_header, generate_auth_json, is_authentication_authorized,
-    resolve_did_wba_document, resolve_did_wba_document_sync, resolve_did_wba_document_with_options,
-    validate_did_document_binding, verify_auth_header_signature, verify_auth_json_signature,
-    verify_did_key_binding, AnpMessageServiceOptions, AuthenticationError, DidDocumentBundle,
-    DidDocumentOptions, DidProfile, DidResolutionOptions, ParsedAuthHeader,
-    ANP_MESSAGE_SERVICE_TYPE, VM_KEY_AUTH, VM_KEY_E2EE_AGREEMENT, VM_KEY_E2EE_SIGNING,
+    generate_auth_header, generate_auth_json, is_assertion_method_authorized,
+    is_authentication_authorized, resolve_did_wba_document, resolve_did_wba_document_sync,
+    resolve_did_wba_document_with_options, validate_did_document_binding,
+    verify_auth_header_signature, verify_auth_json_signature, verify_did_key_binding,
+    AnpMessageServiceOptions, AuthenticationError, DidDocumentBundle, DidDocumentOptions,
+    DidProfile, DidResolutionOptions, ParsedAuthHeader, ANP_MESSAGE_SERVICE_TYPE, VM_KEY_AUTH,
+    VM_KEY_E2EE_AGREEMENT, VM_KEY_E2EE_SIGNING,
 };
 pub use did_wba_authenticator::{AuthMode, DIDWbaAuthHeader};
 pub use did_wba_verifier::{

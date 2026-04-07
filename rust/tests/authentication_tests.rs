@@ -5,9 +5,10 @@ use anp::authentication::{
     build_agent_message_service, build_agent_message_service_with_options,
     build_anp_message_service, build_group_message_service, create_did_wba_document,
     extract_signature_metadata, generate_auth_header, generate_http_signature_headers,
-    verify_auth_header_signature, verify_federated_http_request, verify_http_message_signature,
-    AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader, DidDocumentOptions, DidProfile,
-    DidWbaVerifier, DidWbaVerifierConfig, FederatedVerificationOptions,
+    validate_did_document_binding, verify_auth_header_signature, verify_federated_http_request,
+    verify_http_message_signature, AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader,
+    DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
+    FederatedVerificationOptions,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::SigningKey;
@@ -60,6 +61,55 @@ fn test_create_did_document_profiles() {
     let bare = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("bare DID creation should succeed");
     assert_eq!(bare.did_document["id"], json!("did:wba:example.com"));
+}
+
+#[test]
+fn test_validate_did_document_binding_rejects_e1_without_assertion_method_authorization() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("e1 DID creation should succeed");
+
+    let mut document = bundle.did_document.clone();
+    let assertion_method = document
+        .get_mut("assertionMethod")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("assertionMethod should exist");
+    assertion_method.clear();
+
+    assert!(
+        !validate_did_document_binding(&document, false),
+        "e1 DID binding should require proof.verificationMethod authorization in assertionMethod",
+    );
+}
+
+#[test]
+fn test_validate_did_document_binding_rejects_e1_with_tampered_thumbprint() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("e1 DID creation should succeed");
+
+    let mut document = bundle.did_document.clone();
+    let original_did = document["id"]
+        .as_str()
+        .expect("DID should be a string")
+        .to_string();
+    let tampered_did = format!("{original_did}x");
+    document["id"] = json!(tampered_did);
+
+    assert!(
+        !validate_did_document_binding(&document, false),
+        "e1 DID binding should fail when the path thumbprint no longer matches the proof key",
+    );
 }
 
 #[test]

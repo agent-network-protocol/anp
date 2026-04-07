@@ -1015,12 +1015,34 @@ pub fn find_verification_method(
             }
         }
     }
+    if let Some(assertion_method) = did_document
+        .get("assertionMethod")
+        .and_then(Value::as_array)
+    {
+        for method in assertion_method {
+            if method.get("id").and_then(Value::as_str) == Some(verification_method_id) {
+                return Some(method.clone());
+            }
+        }
+    }
     None
 }
 
 pub fn is_authentication_authorized(did_document: &Value, verification_method_id: &str) -> bool {
+    is_verification_method_authorized(did_document, "authentication", verification_method_id)
+}
+
+pub fn is_assertion_method_authorized(did_document: &Value, verification_method_id: &str) -> bool {
+    is_verification_method_authorized(did_document, "assertionMethod", verification_method_id)
+}
+
+fn is_verification_method_authorized(
+    did_document: &Value,
+    relationship: &str,
+    verification_method_id: &str,
+) -> bool {
     did_document
-        .get("authentication")
+        .get(relationship)
         .and_then(Value::as_array)
         .map(|entries| {
             entries.iter().any(|entry| {
@@ -1046,6 +1068,9 @@ fn validate_e1_binding(did_document: &Value, expected_fingerprint: &str) -> bool
         Some(value) => value,
         None => return false,
     };
+    if !is_assertion_method_authorized(did_document, verification_method) {
+        return false;
+    }
     let method = match find_verification_method(did_document, verification_method) {
         Some(value) => value,
         None => return false,
@@ -1076,6 +1101,9 @@ fn validate_k1_binding(did_document: &Value, expected_fingerprint: &str) -> bool
         Some(value) => value,
         None => return false,
     };
+    if !is_assertion_method_authorized(did_document, verification_method) {
+        return false;
+    }
     let method = match find_verification_method(did_document, verification_method) {
         Some(value) => value,
         None => return false,
