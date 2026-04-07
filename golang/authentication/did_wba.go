@@ -34,6 +34,11 @@ func IsAuthenticationAuthorized(didDocument map[string]any, verificationMethodID
 	return diddoc.IsAuthenticationAuthorized(didDocument, verificationMethodID)
 }
 
+// IsAssertionMethodAuthorized reports whether a method is listed in assertionMethod.
+func IsAssertionMethodAuthorized(didDocument map[string]any, verificationMethodID string) bool {
+	return diddoc.IsAssertionMethodAuthorized(didDocument, verificationMethodID)
+}
+
 // BuildANPMessageService builds a generic ANPMessageService record.
 func BuildANPMessageService(didOrServiceRef string, serviceEndpoint string, options AnpMessageServiceOptions) map[string]any {
 	fragment := options.Fragment
@@ -578,7 +583,11 @@ func validateE1Binding(didDocument map[string]any, expectedFingerprint string) b
 	if stringValue(proofValue["type"]) != proof.ProofTypeDataIntegrity || stringValue(proofValue["cryptosuite"]) != proof.CryptosuiteEddsaJCS2022 {
 		return false
 	}
-	verificationMethod := FindVerificationMethod(didDocument, stringValue(proofValue["verificationMethod"]))
+	verificationMethodID := stringValue(proofValue["verificationMethod"])
+	if !IsAssertionMethodAuthorized(didDocument, verificationMethodID) {
+		return false
+	}
+	verificationMethod := FindVerificationMethod(didDocument, verificationMethodID)
 	if verificationMethod == nil {
 		return false
 	}
@@ -598,7 +607,11 @@ func validateK1Binding(didDocument map[string]any, expectedFingerprint string) b
 	if !ok {
 		return false
 	}
-	verificationMethod := FindVerificationMethod(didDocument, stringValue(proofValue["verificationMethod"]))
+	verificationMethodID := stringValue(proofValue["verificationMethod"])
+	if !IsAssertionMethodAuthorized(didDocument, verificationMethodID) {
+		return false
+	}
+	verificationMethod := FindVerificationMethod(didDocument, verificationMethodID)
 	if verificationMethod == nil {
 		return false
 	}

@@ -723,7 +723,32 @@ def _is_authentication_authorized_in_document(
     verification_method_id: str,
 ) -> bool:
     """Check whether a verification method is authorized for authentication."""
-    authentication = did_document.get("authentication", [])
+    return _is_verification_method_authorized_in_document(
+        did_document,
+        "authentication",
+        verification_method_id,
+    )
+
+
+def _is_assertion_method_authorized_in_document(
+    did_document: Dict[str, Any],
+    verification_method_id: str,
+) -> bool:
+    """Check whether a verification method is authorized for assertionMethod."""
+    return _is_verification_method_authorized_in_document(
+        did_document,
+        "assertionMethod",
+        verification_method_id,
+    )
+
+
+def _is_verification_method_authorized_in_document(
+    did_document: Dict[str, Any],
+    relationship_name: str,
+    verification_method_id: str,
+) -> bool:
+    """Check whether a verification method is authorized in one DID relationship."""
+    authentication = did_document.get(relationship_name, [])
     verification_methods = {
         method.get("id"): method
         for method in did_document.get("verificationMethod", [])
@@ -755,6 +780,12 @@ def _validate_e1_proof_binding(did_document: Dict[str, Any], did: str) -> bool:
 
     verification_method_id = proof.get("verificationMethod")
     if not isinstance(verification_method_id, str) or not verification_method_id:
+        return False
+
+    if not _is_assertion_method_authorized_in_document(
+        did_document,
+        verification_method_id,
+    ):
         return False
 
     method = _find_verification_method(did_document, verification_method_id)
@@ -792,6 +823,12 @@ def _validate_k1_proof_binding(did_document: Dict[str, Any], did: str) -> bool:
 
     verification_method_id = proof.get("verificationMethod")
     if not isinstance(verification_method_id, str) or not verification_method_id:
+        return False
+
+    if not _is_assertion_method_authorized_in_document(
+        did_document,
+        verification_method_id,
+    ):
         return False
 
     method = _find_verification_method(did_document, verification_method_id)
@@ -1074,7 +1111,7 @@ def _find_verification_method(
 ) -> Optional[Dict]:
     """
     Find verification method in DID document by ID.
-    Searches in both verificationMethod and authentication arrays.
+    Searches in verificationMethod, authentication, and assertionMethod arrays.
 
     Args:
         did_document: DID document
@@ -1099,6 +1136,19 @@ def _find_verification_method(
                         return method
         elif isinstance(auth, dict) and auth.get("id") == verification_method_id:
             return auth
+
+    # Search in assertionMethod array
+    for assertion_method in did_document.get("assertionMethod", []):
+        if isinstance(assertion_method, str):
+            if assertion_method == verification_method_id:
+                for method in did_document.get("verificationMethod", []):
+                    if method["id"] == verification_method_id:
+                        return method
+        elif (
+            isinstance(assertion_method, dict)
+            and assertion_method.get("id") == verification_method_id
+        ):
+            return assertion_method
 
     return None
 

@@ -37,6 +37,30 @@ func TestCreateDidWBADocumentProfiles(t *testing.T) {
 	}
 }
 
+func TestValidateDIDDocumentBindingRejectsE1WithoutAssertionMethodAuthorization(t *testing.T) {
+	bundle, err := CreateDidWBADocument("example.com", DidDocumentOptions{PathSegments: []string{"user", "alice"}})
+	if err != nil {
+		t.Fatalf("CreateDidWBADocument failed: %v", err)
+	}
+	document := cloneMap(bundle.DidDocument)
+	document["assertionMethod"] = []any{}
+	if ValidateDIDDocumentBinding(document, false) {
+		t.Fatalf("expected e1 binding validation to fail without assertionMethod authorization")
+	}
+}
+
+func TestValidateDIDDocumentBindingRejectsE1WithTamperedThumbprint(t *testing.T) {
+	bundle, err := CreateDidWBADocument("example.com", DidDocumentOptions{PathSegments: []string{"user", "alice"}})
+	if err != nil {
+		t.Fatalf("CreateDidWBADocument failed: %v", err)
+	}
+	document := cloneMap(bundle.DidDocument)
+	document["id"] = stringValue(bundle.DidDocument["id"]) + "x"
+	if ValidateDIDDocumentBinding(document, false) {
+		t.Fatalf("expected e1 binding validation to fail when thumbprint is tampered")
+	}
+}
+
 func TestLegacyAuthRoundTrip(t *testing.T) {
 	bundle, err := CreateDidWBADocument("example.com", DidDocumentOptions{PathSegments: []string{"user", "alice"}, DidProfile: DidProfileK1})
 	if err != nil {

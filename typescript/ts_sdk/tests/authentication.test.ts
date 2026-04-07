@@ -37,6 +37,28 @@ describe('authentication', () => {
     expect(validateDidDocumentBinding(k1.didDocument, true)).toBe(true);
   });
 
+  test('rejects e1 DID binding without assertionMethod authorization', () => {
+    const bundle = createDidWbaDocument('example.com', {
+      pathSegments: ['agents', 'demo'],
+      didProfile: DidProfile.E1,
+    });
+    const tampered = structuredClone(bundle.didDocument);
+    tampered.assertionMethod = [];
+
+    expect(validateDidDocumentBinding(tampered, false)).toBe(false);
+  });
+
+  test('rejects e1 DID binding when the thumbprint path is tampered', () => {
+    const bundle = createDidWbaDocument('example.com', {
+      pathSegments: ['agents', 'demo'],
+      didProfile: DidProfile.E1,
+    });
+    const tampered = structuredClone(bundle.didDocument);
+    tampered.id = `${tampered.id}x`;
+
+    expect(validateDidDocumentBinding(tampered, false)).toBe(false);
+  });
+
   test('creates a bare-domain did:wba document and verifies HTTP signatures', () => {
     const bundle = createDidWbaDocument('example.com');
     expect(bundle.didDocument.id).toBe('did:wba:example.com');

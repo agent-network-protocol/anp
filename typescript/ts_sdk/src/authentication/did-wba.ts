@@ -417,16 +417,37 @@ export function findVerificationMethod(
   didDocument: DidDocument,
   verificationMethodId: string
 ): VerificationMethodRecord | undefined {
-  return didDocument.verificationMethod.find((method) => method.id === verificationMethodId);
+  const directMethod = didDocument.verificationMethod.find(
+    (method) => method.id === verificationMethodId
+  );
+  if (directMethod) {
+    return directMethod;
+  }
+  for (const entry of didDocument.authentication) {
+    if (typeof entry !== 'string' && entry.id === verificationMethodId) {
+      return entry;
+    }
+  }
+  for (const entry of didDocument.assertionMethod ?? []) {
+    if (typeof entry !== 'string' && entry.id === verificationMethodId) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 export function isAuthenticationAuthorized(
   didDocument: DidDocument,
   verificationMethodId: string
 ): boolean {
-  return didDocument.authentication.some((entry) =>
-    typeof entry === 'string' ? entry === verificationMethodId : entry.id === verificationMethodId
-  );
+  return isVerificationMethodAuthorized(didDocument.authentication, verificationMethodId);
+}
+
+export function isAssertionMethodAuthorized(
+  didDocument: DidDocument,
+  verificationMethodId: string
+): boolean {
+  return isVerificationMethodAuthorized(didDocument.assertionMethod ?? [], verificationMethodId);
 }
 
 function validateE1Binding(didDocument: DidDocument, expectedFingerprint: string): boolean {
@@ -435,6 +456,9 @@ function validateE1Binding(didDocument: DidDocument, expectedFingerprint: string
     return false;
   }
   if (proof.type !== PROOF_TYPE_DATA_INTEGRITY || proof.cryptosuite !== CRYPTOSUITE_EDDSA_JCS_2022) {
+    return false;
+  }
+  if (!isAssertionMethodAuthorized(didDocument, proof.verificationMethod)) {
     return false;
   }
   const method = findVerificationMethod(didDocument, proof.verificationMethod);
@@ -452,6 +476,9 @@ function validateE1Binding(didDocument: DidDocument, expectedFingerprint: string
 function validateK1Binding(didDocument: DidDocument, expectedFingerprint: string): boolean {
   const proof = didDocument.proof;
   if (!proof) {
+    return false;
+  }
+  if (!isAssertionMethodAuthorized(didDocument, proof.verificationMethod)) {
     return false;
   }
   const method = findVerificationMethod(didDocument, proof.verificationMethod);
@@ -637,4 +664,13 @@ function toPublicKeyMaterial(
     return bindingMaterial;
   }
   return extractPublicKey(bindingMaterial);
+}
+
+function isVerificationMethodAuthorized(
+  entries: Array<string | VerificationMethodRecord>,
+  verificationMethodId: string
+): boolean {
+  return entries.some((entry) =>
+    typeof entry === 'string' ? entry === verificationMethodId : entry.id === verificationMethodId
+  );
 }

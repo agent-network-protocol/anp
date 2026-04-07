@@ -358,8 +358,8 @@ class TestResolveDIDDocumentWithProofVerification(unittest.IsolatedAsyncioTestCa
         result = await self._mock_resolve(tampered, self.did, verify_proof=False)
         self.assertIsNone(result)
 
-    async def test_resolve_without_verify_proof_e1_without_assertion_method_still_resolves(self):
-        """测试 e1 proof 绑定校验不再强制要求 assertionMethod 授权。"""
+    async def test_resolve_without_verify_proof_e1_without_assertion_method_returns_none(self):
+        """测试 e1 proof 绑定校验强制要求 assertionMethod 授权。"""
         tampered = copy.deepcopy(self.did_document)
         tampered["assertionMethod"] = []
         private_key = serialization.load_pem_private_key(
@@ -375,7 +375,7 @@ class TestResolveDIDDocumentWithProofVerification(unittest.IsolatedAsyncioTestCa
             proof_purpose="assertionMethod",
         )
         result = await self._mock_resolve(tampered, self.did, verify_proof=False)
-        self.assertIsNotNone(result)
+        self.assertIsNone(result)
 
     async def test_resolve_without_verify_proof_e1_without_authentication_still_resolves(self):
         """测试 e1 proof 绑定校验不再强制要求 authentication 授权。"""

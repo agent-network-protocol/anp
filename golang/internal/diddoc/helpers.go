@@ -24,12 +24,32 @@ func FindVerificationMethod(didDocument map[string]any, verificationMethodID str
 			}
 		}
 	}
+	if assertionMethod, ok := didDocument["assertionMethod"].([]any); ok {
+		for _, item := range assertionMethod {
+			method, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, _ := method["id"].(string); id == verificationMethodID {
+				return cloneMap(method)
+			}
+		}
+	}
 	return nil
 }
 
 // IsAuthenticationAuthorized reports whether a verification method is referenced from authentication.
 func IsAuthenticationAuthorized(didDocument map[string]any, verificationMethodID string) bool {
-	authentication, ok := didDocument["authentication"].([]any)
+	return isVerificationMethodAuthorized(didDocument, "authentication", verificationMethodID)
+}
+
+// IsAssertionMethodAuthorized reports whether a verification method is referenced from assertionMethod.
+func IsAssertionMethodAuthorized(didDocument map[string]any, verificationMethodID string) bool {
+	return isVerificationMethodAuthorized(didDocument, "assertionMethod", verificationMethodID)
+}
+
+func isVerificationMethodAuthorized(didDocument map[string]any, relationship string, verificationMethodID string) bool {
+	authentication, ok := didDocument[relationship].([]any)
 	if !ok {
 		return false
 	}
