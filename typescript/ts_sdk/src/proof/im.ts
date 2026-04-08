@@ -1,10 +1,19 @@
 import { randomBytes } from 'node:crypto';
 
-import { findVerificationMethod } from '../authentication/did-wba.js';
+import {
+  findVerificationMethod,
+  isAssertionMethodAuthorized,
+  isAuthenticationAuthorized,
+} from '../authentication/did-wba.js';
 import type { DidDocument, VerificationMethodRecord } from '../authentication/types.js';
 import { extractPublicKey } from '../authentication/verification-methods.js';
 import { ProofError } from '../errors/index.js';
-import { decodeBase64, decodeBase64Url, encodeBase64, encodeBase64Url } from '../internal/base64.js';
+import {
+  decodeBase64,
+  decodeBase64Url,
+  encodeBase64,
+  encodeBase64Url,
+} from '../internal/base64.js';
 import {
   normalizePrivateKeyMaterial,
   signMessage,
@@ -14,6 +23,11 @@ import {
 import { buildContentDigest } from '../authentication/http-signatures.js';
 
 export const IM_PROOF_DEFAULT_COMPONENTS = ['@method', '@target-uri', 'content-digest'] as const;
+export const IM_PROOF_RELATION_AUTHENTICATION = 'authentication' as const;
+export const IM_PROOF_RELATION_ASSERTION_METHOD = 'assertionMethod' as const;
+export type ImProofVerificationRelationship =
+  | typeof IM_PROOF_RELATION_AUTHENTICATION
+  | typeof IM_PROOF_RELATION_ASSERTION_METHOD;
 
 export interface ImProof {
   contentDigest: string;
@@ -44,11 +58,20 @@ export interface ImProofVerificationResult {
   verificationMethod: VerificationMethodRecord;
 }
 
+export interface ImProofVerificationTarget {
+  didDocument?: DidDocument;
+  verificationMethod?: VerificationMethodRecord;
+  verificationRelationship?: ImProofVerificationRelationship;
+}
+
 export function buildImContentDigest(payload: Uint8Array | string): string {
   return buildContentDigest(payload);
 }
 
-export function verifyImContentDigest(payload: Uint8Array | string, contentDigest: string): boolean {
+export function verifyImContentDigest(
+  payload: Uint8Array | string,
+  contentDigest: string
+): boolean {
   return buildImContentDigest(payload) === contentDigest.trim();
 }
 
@@ -128,7 +151,10 @@ export function encodeImSignature(signatureBytes: Uint8Array, label = 'sig1'): s
   return `${label}=:${encodeBase64(signatureBytes)}:`;
 }
 
-export function decodeImSignature(signature: string): { label?: string; signatureBytes: Uint8Array } {
+export function decodeImSignature(signature: string): {
+  label?: string;
+  signatureBytes: Uint8Array;
+} {
   const trimmed = signature.trim();
   const labeled = trimmed.match(/^\s*([a-zA-Z0-9_-]+)=:(.+):\s*$/);
   const unlabeled = trimmed.match(/^\s*:(.+):\s*$/);
@@ -170,15 +196,28 @@ export function verifyImProof(
   proof: ImProof,
   payload: Uint8Array | string,
   signatureBase: Uint8Array | string,
-  verificationTarget: { didDocument?: DidDocument; verificationMethod?: VerificationMethodRecord },
+  verificationTarget: ImProofVerificationTarget,
   expectedSignerDid?: string
 ): ImProofVerificationResult {
   if (!verifyImContentDigest(payload, proof.contentDigest)) {
     throw new ProofError('proof contentDigest does not match request payload');
   }
   const parsed = parseImSignatureInput(proof.signatureInput);
-  if (expectedSignerDid && !parsed.keyid.startsWith(expectedSignerDid)) {
+  if (expectedSignerDid && !keyidBelongsToExpectedDid(parsed.keyid, expectedSignerDid)) {
     throw new ProofError('proof keyid must belong to expected signer DID');
+  }
+  if (verificationTarget.didDocument) {
+    const verificationRelationship =
+      verificationTarget.verificationRelationship ?? IM_PROOF_RELATION_AUTHENTICATION;
+    if (
+      !isVerificationMethodAuthorized(
+        verificationTarget.didDocument,
+        parsed.keyid,
+        verificationRelationship
+      )
+    ) {
+      throw new ProofError(`verification method is not authorized for ${verificationRelationship}`);
+    }
   }
 
   const verificationMethod =
@@ -212,4 +251,22 @@ function resolveVerificationMethod(
 
 function toBytes(value: Uint8Array | string): Uint8Array {
   return typeof value === 'string' ? new TextEncoder().encode(value) : value;
+}
+
+function keyidBelongsToExpectedDid(keyid: string, expectedSignerDid: string): boolean {
+  return keyid.split('#', 1)[0] === expectedSignerDid;
+}
+
+function isVerificationMethodAuthorized(
+  didDocument: DidDocument,
+  verificationMethodId: string,
+  verificationRelationship: ImProofVerificationRelationship
+): boolean {
+  if (verificationRelationship === IM_PROOF_RELATION_AUTHENTICATION) {
+    return isAuthenticationAuthorized(didDocument, verificationMethodId);
+  }
+  if (verificationRelationship === IM_PROOF_RELATION_ASSERTION_METHOD) {
+    return isAssertionMethodAuthorized(didDocument, verificationMethodId);
+  }
+  throw new ProofError(`unsupported verification relationship: ${verificationRelationship}`);
 }

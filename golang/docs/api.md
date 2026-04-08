@@ -41,6 +41,7 @@ Key APIs:
 - `BuildIMSignatureInput`
 - `GenerateIMProof`
 - `VerifyIMProofWithDocument`
+- `VerifyIMProofWithDocumentForRelationship`
 - `VerifyIMProofWithVerificationMethod`
 
 ### `wns`

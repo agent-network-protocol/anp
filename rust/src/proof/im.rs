@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::authentication::{build_content_digest, find_verification_method};
+use crate::authentication::{
+    build_content_digest, find_verification_method, is_assertion_method_authorized,
+    is_authentication_authorized,
+};
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
 pub const IM_PROOF_DEFAULT_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "content-digest"];
@@ -65,6 +68,22 @@ pub struct ImProofVerificationResult {
     pub verification_method: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ImProofVerificationRelationship {
+    #[default]
+    Authentication,
+    AssertionMethod,
+}
+
+impl ImProofVerificationRelationship {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Authentication => "authentication",
+            Self::AssertionMethod => "assertionMethod",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ImProofError {
     #[error("missing proof field: {0}")]
@@ -83,6 +102,8 @@ pub enum ImProofError {
     VerificationMethodNotFound,
     #[error("proof keyid must belong to expected signer DID")]
     InvalidSignerDid,
+    #[error("verification method is not authorized for {0}")]
+    UnauthorizedVerificationMethod(&'static str),
     #[error("signing error")]
     SigningError,
     #[error("signature verification failed")]
@@ -236,11 +257,34 @@ pub fn verify_im_proof_with_document(
     did_document: &Value,
     expected_signer_did: Option<&str>,
 ) -> Result<ImProofVerificationResult, ImProofError> {
+    verify_im_proof_with_document_for_relationship(
+        proof,
+        payload,
+        signature_base,
+        did_document,
+        expected_signer_did,
+        ImProofVerificationRelationship::Authentication,
+    )
+}
+
+pub fn verify_im_proof_with_document_for_relationship(
+    proof: &ImProof,
+    payload: &[u8],
+    signature_base: &[u8],
+    did_document: &Value,
+    expected_signer_did: Option<&str>,
+    verification_relationship: ImProofVerificationRelationship,
+) -> Result<ImProofVerificationResult, ImProofError> {
     let parsed = parse_im_signature_input(&proof.signature_input)?;
     if let Some(expected_signer_did) = expected_signer_did {
         if !keyid_belongs_to_expected_did(&parsed.keyid, expected_signer_did) {
             return Err(ImProofError::InvalidSignerDid);
         }
+    }
+    if !is_verification_method_authorized(did_document, &parsed.keyid, verification_relationship) {
+        return Err(ImProofError::UnauthorizedVerificationMethod(
+            verification_relationship.as_str(),
+        ));
     }
     let verification_method = find_verification_method(did_document, &parsed.keyid)
         .ok_or(ImProofError::VerificationMethodNotFound)?;
@@ -297,14 +341,32 @@ fn keyid_belongs_to_expected_did(keyid: &str, expected_signer_did: &str) -> bool
         .unwrap_or(false)
 }
 
+fn is_verification_method_authorized(
+    did_document: &Value,
+    verification_method_id: &str,
+    verification_relationship: ImProofVerificationRelationship,
+) -> bool {
+    match verification_relationship {
+        ImProofVerificationRelationship::Authentication => {
+            is_authentication_authorized(did_document, verification_method_id)
+        }
+        ImProofVerificationRelationship::AssertionMethod => {
+            is_assertion_method_authorized(did_document, verification_method_id)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_im_content_digest, build_im_signature_input, decode_im_signature, generate_im_proof,
-        parse_im_signature_input, verify_im_proof_with_document, ImProofGenerationOptions,
+        parse_im_signature_input, verify_im_proof_with_document,
+        verify_im_proof_with_document_for_relationship, ImProofGenerationOptions,
+        ImProofVerificationRelationship,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::PrivateKeyMaterial;
+    use serde_json::json;
 
     fn business_signature_base(
         method: &str,
@@ -510,5 +572,104 @@ mod tests {
         )
         .expect_err("prefix-only DID match must fail");
         assert!(matches!(error, super::ImProofError::InvalidSignerDid));
+    }
+
+    #[test]
+    fn defaults_to_authentication_relationship() {
+        let bundle = create_did_wba_document(
+            "example.com",
+            DidDocumentOptions {
+                path_segments: vec!["user".to_owned(), "assertion-only".to_owned()],
+                did_profile: DidProfile::E1,
+                ..DidDocumentOptions::default()
+            },
+        )
+        .expect("bundle should be created");
+        let private_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+            .expect("private key should load");
+        let payload = br#"{"text":"hello"}"#;
+        let signature_input = build_im_signature_input(
+            &format!("{}#key-1", bundle.did().expect("did should exist")),
+            ImProofGenerationOptions {
+                created: Some(1_712_000_200),
+                nonce: Some("nonce-auth".to_owned()),
+                ..ImProofGenerationOptions::default()
+            },
+        )
+        .expect("signature input should build");
+        let signature_base = business_signature_base(
+            "direct.send",
+            &format!(
+                "anp://agent/{}",
+                url::form_urlencoded::byte_serialize(
+                    bundle.did().expect("did should exist").as_bytes()
+                )
+                .collect::<String>()
+            ),
+            &build_im_content_digest(payload),
+            &signature_input,
+        );
+        let proof = generate_im_proof(
+            payload,
+            &signature_base,
+            &private_key,
+            &format!("{}#key-1", bundle.did().expect("did should exist")),
+            ImProofGenerationOptions {
+                created: Some(1_712_000_200),
+                nonce: Some("nonce-auth".to_owned()),
+                ..ImProofGenerationOptions::default()
+            },
+        )
+        .expect("proof should generate");
+        let mut did_document = bundle.did_document.clone();
+        did_document
+            .as_object_mut()
+            .expect("document object")
+            .insert("authentication".to_string(), json!([]));
+
+        let error = verify_im_proof_with_document(
+            &proof,
+            payload,
+            &business_signature_base(
+                "direct.send",
+                &format!(
+                    "anp://agent/{}",
+                    url::form_urlencoded::byte_serialize(
+                        bundle.did().expect("did should exist").as_bytes()
+                    )
+                    .collect::<String>()
+                ),
+                &proof.content_digest,
+                &proof.signature_input,
+            ),
+            &did_document,
+            bundle.did(),
+        )
+        .expect_err("authentication relationship should be required by default");
+        assert!(matches!(
+            error,
+            super::ImProofError::UnauthorizedVerificationMethod("authentication")
+        ));
+
+        verify_im_proof_with_document_for_relationship(
+            &proof,
+            payload,
+            &business_signature_base(
+                "direct.send",
+                &format!(
+                    "anp://agent/{}",
+                    url::form_urlencoded::byte_serialize(
+                        bundle.did().expect("did should exist").as_bytes()
+                    )
+                    .collect::<String>()
+                ),
+                &proof.content_digest,
+                &proof.signature_input,
+            ),
+            &did_document,
+            bundle.did(),
+            ImProofVerificationRelationship::AssertionMethod,
+        )
+        .expect("assertionMethod verification should succeed");
     }
 }

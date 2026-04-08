@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   DidProfile,
+  IM_PROOF_RELATION_ASSERTION_METHOD,
   buildImContentDigest,
   buildImSignatureInput,
   createDidWbaDocument,
@@ -153,5 +154,108 @@ describe('im proof', () => {
     const decoded = decodeImSignature(encoded);
     expect(decoded.label).toBe('sig2');
     expect(new TextDecoder().decode(decoded.signatureBytes)).toBe('hello');
+  });
+
+  test('defaults to authentication relationship', () => {
+    const bundle = createDidWbaDocument('example.com', {
+      pathSegments: ['user', 'assertion-only'],
+      didProfile: DidProfile.E1,
+    });
+    const payload = '{"text":"hello"}';
+    const proof = generateImProof(
+      payload,
+      buildBusinessSignatureBase(
+        'direct.send',
+        `anp://agent/${bundle.didDocument.id}`,
+        buildImContentDigest(payload),
+        buildImSignatureInput(`${bundle.didDocument.id}#key-1`, {
+          nonce: 'nonce-auth',
+          created: 1712000200,
+        })
+      ),
+      bundle.keys['key-1'].privateKeyPem,
+      `${bundle.didDocument.id}#key-1`,
+      {
+        nonce: 'nonce-auth',
+        created: 1712000200,
+      }
+    );
+    const didDocument = {
+      ...bundle.didDocument,
+      authentication: [],
+    };
+
+    expect(() =>
+      verifyImProof(
+        proof,
+        payload,
+        buildBusinessSignatureBase(
+          'direct.send',
+          `anp://agent/${bundle.didDocument.id}`,
+          proof.contentDigest,
+          proof.signatureInput
+        ),
+        { didDocument },
+        bundle.didDocument.id
+      )
+    ).toThrow(/authorized for authentication/);
+
+    const result = verifyImProof(
+      proof,
+      payload,
+      buildBusinessSignatureBase(
+        'direct.send',
+        `anp://agent/${bundle.didDocument.id}`,
+        proof.contentDigest,
+        proof.signatureInput
+      ),
+      {
+        didDocument,
+        verificationRelationship: IM_PROOF_RELATION_ASSERTION_METHOD,
+      },
+      bundle.didDocument.id
+    );
+    expect(result.parsedSignatureInput.keyid).toBe(`${bundle.didDocument.id}#key-1`);
+  });
+
+  test('requires exact signer DID match', () => {
+    const bundle = createDidWbaDocument('example.com', {
+      pathSegments: ['user', 'prefix-check'],
+      didProfile: DidProfile.E1,
+    });
+    const payload = '{"text":"hello"}';
+    const proof = generateImProof(
+      payload,
+      buildBusinessSignatureBase(
+        'direct.send',
+        `anp://agent/${bundle.didDocument.id}`,
+        buildImContentDigest(payload),
+        buildImSignatureInput(`${bundle.didDocument.id}#key-1`, {
+          nonce: 'nonce-prefix',
+          created: 1712000300,
+        })
+      ),
+      bundle.keys['key-1'].privateKeyPem,
+      `${bundle.didDocument.id}#key-1`,
+      {
+        nonce: 'nonce-prefix',
+        created: 1712000300,
+      }
+    );
+
+    expect(() =>
+      verifyImProof(
+        proof,
+        payload,
+        buildBusinessSignatureBase(
+          'direct.send',
+          `anp://agent/${bundle.didDocument.id}`,
+          proof.contentDigest,
+          proof.signatureInput
+        ),
+        { didDocument: bundle.didDocument },
+        'did:wba:example.com:user:prefix-check'
+      )
+    ).toThrow(/expected signer DID/);
   });
 });

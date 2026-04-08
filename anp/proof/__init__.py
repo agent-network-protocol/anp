@@ -37,6 +37,8 @@ from .group_receipt import (
 )
 from .im import (
     IM_PROOF_DEFAULT_COMPONENTS,
+    IM_PROOF_RELATION_ASSERTION_METHOD,
+    IM_PROOF_RELATION_AUTHENTICATION,
     ImProofError,
     ImProofVerificationResult,
     ParsedImSignatureInput,
@@ -63,6 +65,8 @@ __all__ = [
     "generate_group_receipt_proof",
     "verify_group_receipt_proof",
     "IM_PROOF_DEFAULT_COMPONENTS",
+    "IM_PROOF_RELATION_AUTHENTICATION",
+    "IM_PROOF_RELATION_ASSERTION_METHOD",
     "ImProofError",
     "ImProofVerificationResult",
     "ParsedImSignatureInput",

@@ -14,6 +14,10 @@ The SDK is responsible for:
 The business layer is responsible for assembling the protocol-specific
 signature base bytes and passing them into ``generate_im_proof`` /
 ``verify_im_proof``.
+
+When verification is performed with a DID document, request-level IM proofs
+default to DID ``authentication`` authorization. Assertion-style business
+objects should explicitly opt into ``assertionMethod`` verification.
 """
 
 from __future__ import annotations
@@ -32,6 +36,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 from anp.authentication.verification_methods import create_verification_method
 
 IM_PROOF_DEFAULT_COMPONENTS = ("@method", "@target-uri", "content-digest")
+IM_PROOF_RELATION_AUTHENTICATION = "authentication"
+IM_PROOF_RELATION_ASSERTION_METHOD = "assertionMethod"
 
 _SIGNATURE_INPUT_RE = re.compile(
     r'^\s*(?P<label>[a-zA-Z0-9_-]+)=\((?P<components>[^)]*)\)(?P<params>.*)$'
@@ -216,8 +222,15 @@ def verify_im_proof(
     did_document: Optional[Dict[str, Any]] = None,
     verification_method: Optional[Dict[str, Any]] = None,
     expected_signer_did: str | None = None,
+    verification_relationship: str = IM_PROOF_RELATION_AUTHENTICATION,
 ) -> ImProofVerificationResult:
-    """Verify an ANP IM proof object."""
+    """Verify an ANP IM proof object.
+
+    When ``did_document`` is provided, the verification method is additionally
+    checked against the requested DID verification relationship. The default
+    relationship follows ANP request-level origin-proof semantics and uses
+    ``authentication``.
+    """
     content_digest = _require_field(proof, "contentDigest")
     signature_input = _require_field(proof, "signatureInput")
     signature = _require_field(proof, "signature")
@@ -227,8 +240,21 @@ def verify_im_proof(
         raise ImProofError("proof contentDigest does not match request payload")
 
     parsed = parse_im_signature_input(signature_input)
-    if expected_signer_did and not parsed.keyid.startswith(expected_signer_did):
+    if expected_signer_did and not _keyid_belongs_to_expected_did(
+        parsed.keyid,
+        expected_signer_did,
+    ):
         raise ImProofError("proof keyid must belong to expected signer DID")
+    if did_document is not None:
+        relationship = _normalize_verification_relationship(verification_relationship)
+        if not _is_verification_method_authorized(
+            did_document,
+            parsed.keyid,
+            relationship,
+        ):
+            raise ImProofError(
+                f"verification method is not authorized for {relationship}"
+            )
 
     method_dict = verification_method or _resolve_verification_method(did_document, parsed.keyid)
     verifier = create_verification_method(method_dict)
@@ -268,6 +294,42 @@ def _find_verification_method_in_document(
                     if isinstance(method, dict) and method.get("id") == verification_method_id:
                         return method
     return None
+
+
+def _normalize_verification_relationship(verification_relationship: str) -> str:
+    if verification_relationship in {
+        IM_PROOF_RELATION_AUTHENTICATION,
+        IM_PROOF_RELATION_ASSERTION_METHOD,
+    }:
+        return verification_relationship
+    raise ImProofError(
+        f"unsupported verification relationship: {verification_relationship}"
+    )
+
+
+def _is_verification_method_authorized(
+    did_document: Dict[str, Any],
+    verification_method_id: str,
+    verification_relationship: str,
+) -> bool:
+    from anp.authentication.did_wba import (
+        _is_assertion_method_authorized_in_document,
+        _is_authentication_authorized_in_document,
+    )
+
+    if verification_relationship == IM_PROOF_RELATION_AUTHENTICATION:
+        return _is_authentication_authorized_in_document(
+            did_document,
+            verification_method_id,
+        )
+    if verification_relationship == IM_PROOF_RELATION_ASSERTION_METHOD:
+        return _is_assertion_method_authorized_in_document(
+            did_document,
+            verification_method_id,
+        )
+    raise ImProofError(
+        f"unsupported verification relationship: {verification_relationship}"
+    )
 
 
 def _verify_signature_bytes(public_key: Any, content: bytes, signature_bytes: bytes) -> None:
@@ -318,6 +380,10 @@ def _parse_int(value: str) -> int | None:
         return None
 
 
+def _keyid_belongs_to_expected_did(keyid: str, expected_signer_did: str) -> bool:
+    return keyid.split("#", 1)[0] == expected_signer_did
+
+
 def _require_field(proof: Mapping[str, str], field: str) -> str:
     value = proof.get(field)
     if not value:
@@ -327,6 +393,8 @@ def _require_field(proof: Mapping[str, str], field: str) -> str:
 
 __all__ = [
     "IM_PROOF_DEFAULT_COMPONENTS",
+    "IM_PROOF_RELATION_AUTHENTICATION",
+    "IM_PROOF_RELATION_ASSERTION_METHOD",
     "ImProofError",
     "ImProofVerificationResult",
     "ParsedImSignatureInput",

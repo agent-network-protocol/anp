@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from anp.authentication import create_did_wba_document
 from anp.proof import (
+    IM_PROOF_RELATION_ASSERTION_METHOD,
     build_im_content_digest,
     build_im_signature_input,
     decode_im_signature,
@@ -174,9 +176,105 @@ class TestImProof(unittest.TestCase):
                 expected_signer_did="did:wba:example.com:user:other:e1_xxx",
             )
 
+    def test_defaults_to_authentication_relationship(self):
+        bundle, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "assertion-only"],
+            did_profile="e1",
+        )
+        private_key = load_pem_private_key(keys["key-1"][0], password=None)
+        payload = b'{"text":"hello"}'
+        proof = generate_im_proof(
+            payload,
+            _build_signature_base(
+                method="direct.send",
+                target_uri=f"anp://agent/{bundle['id']}",
+                content_digest=build_im_content_digest(payload),
+                signature_input=build_im_signature_input(
+                    f"{bundle['id']}#key-1",
+                    nonce="nonce-auth",
+                    created=1712000200,
+                ),
+            ),
+            private_key,
+            f"{bundle['id']}#key-1",
+            nonce="nonce-auth",
+            created=1712000200,
+        )
+        did_document = deepcopy(bundle)
+        did_document["authentication"] = []
+
+        with self.assertRaisesRegex(ValueError, "authorized for authentication"):
+            verify_im_proof(
+                proof,
+                payload,
+                _build_signature_base(
+                    method="direct.send",
+                    target_uri=f"anp://agent/{bundle['id']}",
+                    content_digest=proof["contentDigest"],
+                    signature_input=proof["signatureInput"],
+                ),
+                did_document=did_document,
+                expected_signer_did=bundle["id"],
+            )
+
+        result = verify_im_proof(
+            proof,
+            payload,
+            _build_signature_base(
+                method="direct.send",
+                target_uri=f"anp://agent/{bundle['id']}",
+                content_digest=proof["contentDigest"],
+                signature_input=proof["signatureInput"],
+            ),
+            did_document=did_document,
+            expected_signer_did=bundle["id"],
+            verification_relationship=IM_PROOF_RELATION_ASSERTION_METHOD,
+        )
+        self.assertEqual(result.parsed_signature_input.keyid, f"{bundle['id']}#key-1")
+
+    def test_rejects_prefix_only_signer_did_match(self):
+        bundle, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "prefix-check"],
+            did_profile="e1",
+        )
+        private_key = load_pem_private_key(keys["key-1"][0], password=None)
+        payload = b'{"text":"hello"}'
+        proof = generate_im_proof(
+            payload,
+            _build_signature_base(
+                method="direct.send",
+                target_uri=f"anp://agent/{bundle['id']}",
+                content_digest=build_im_content_digest(payload),
+                signature_input=build_im_signature_input(
+                    f"{bundle['id']}#key-1",
+                    nonce="nonce-prefix",
+                    created=1712000300,
+                ),
+            ),
+            private_key,
+            f"{bundle['id']}#key-1",
+            nonce="nonce-prefix",
+            created=1712000300,
+        )
+
+        with self.assertRaisesRegex(ValueError, "expected signer DID"):
+            verify_im_proof(
+                proof,
+                payload,
+                _build_signature_base(
+                    method="direct.send",
+                    target_uri=f"anp://agent/{bundle['id']}",
+                    content_digest=proof["contentDigest"],
+                    signature_input=proof["signatureInput"],
+                ),
+                did_document=bundle,
+                expected_signer_did="did:wba:example.com:user:prefix-check",
+            )
+
     def test_signature_helpers_round_trip(self):
         signature = encode_im_signature(b"hello", label="sig2")
         label, decoded = decode_im_signature(signature)
         self.assertEqual(label, "sig2")
         self.assertEqual(decoded, b"hello")
-

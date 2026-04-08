@@ -16,6 +16,13 @@ import (
 
 var IMProofDefaultComponents = []string{"@method", "@target-uri", "content-digest"}
 
+const (
+	// IMProofRelationshipAuthentication binds request-level IM proofs to DID authentication.
+	IMProofRelationshipAuthentication = "authentication"
+	// IMProofRelationshipAssertionMethod binds assertion-style IM proofs to DID assertionMethod.
+	IMProofRelationshipAssertionMethod = "assertionMethod"
+)
+
 // IMProof stores an ANP IM business proof.
 type IMProof struct {
 	ContentDigest  string `json:"contentDigest"`
@@ -194,12 +201,24 @@ func GenerateIMProof(payload []byte, signatureBase []byte, privateKey anp.Privat
 
 // VerifyIMProofWithDocument verifies an IM proof using a DID document.
 func VerifyIMProofWithDocument(proof IMProof, payload []byte, signatureBase []byte, didDocument map[string]any, expectedSignerDID string) (IMVerificationResult, error) {
+	return VerifyIMProofWithDocumentForRelationship(proof, payload, signatureBase, didDocument, expectedSignerDID, IMProofRelationshipAuthentication)
+}
+
+// VerifyIMProofWithDocumentForRelationship verifies an IM proof using a DID document and an explicit verification relationship.
+func VerifyIMProofWithDocumentForRelationship(proof IMProof, payload []byte, signatureBase []byte, didDocument map[string]any, expectedSignerDID string, verificationRelationship string) (IMVerificationResult, error) {
 	parsed, err := ParseIMSignatureInput(proof.SignatureInput)
 	if err != nil {
 		return IMVerificationResult{}, err
 	}
-	if expectedSignerDID != "" && !strings.HasPrefix(parsed.KeyID, expectedSignerDID) {
+	if expectedSignerDID != "" && !keyIDBelongsToExpectedDID(parsed.KeyID, expectedSignerDID) {
 		return IMVerificationResult{}, &Error{Message: "proof keyid must belong to expected signer DID"}
+	}
+	relationship, err := normalizeIMVerificationRelationship(verificationRelationship)
+	if err != nil {
+		return IMVerificationResult{}, err
+	}
+	if !isIMVerificationMethodAuthorized(didDocument, parsed.KeyID, relationship) {
+		return IMVerificationResult{}, &Error{Message: fmt.Sprintf("verification method is not authorized for %s", relationship)}
 	}
 	verificationMethod := diddoc.FindVerificationMethod(didDocument, parsed.KeyID)
 	if verificationMethod == nil {
@@ -217,7 +236,7 @@ func VerifyIMProofWithVerificationMethod(proof IMProof, payload []byte, signatur
 	if err != nil {
 		return IMVerificationResult{}, err
 	}
-	if expectedSignerDID != "" && !strings.HasPrefix(parsed.KeyID, expectedSignerDID) {
+	if expectedSignerDID != "" && !keyIDBelongsToExpectedDID(parsed.KeyID, expectedSignerDID) {
 		return IMVerificationResult{}, &Error{Message: "proof keyid must belong to expected signer DID"}
 	}
 	label, signatureBytes, err := DecodeIMSignature(proof.Signature)
@@ -257,4 +276,29 @@ func randomNonce() []byte {
 	seed, _ := cjson.Marshal(map[string]any{"time": time.Now().UnixNano()})
 	hash := sha256.Sum256(seed)
 	return hash[:16]
+}
+
+func normalizeIMVerificationRelationship(verificationRelationship string) (string, error) {
+	if verificationRelationship == "" {
+		return IMProofRelationshipAuthentication, nil
+	}
+	if verificationRelationship != IMProofRelationshipAuthentication && verificationRelationship != IMProofRelationshipAssertionMethod {
+		return "", &Error{Message: fmt.Sprintf("unsupported verification relationship: %s", verificationRelationship)}
+	}
+	return verificationRelationship, nil
+}
+
+func isIMVerificationMethodAuthorized(didDocument map[string]any, verificationMethodID string, verificationRelationship string) bool {
+	switch verificationRelationship {
+	case IMProofRelationshipAuthentication:
+		return diddoc.IsAuthenticationAuthorized(didDocument, verificationMethodID)
+	case IMProofRelationshipAssertionMethod:
+		return diddoc.IsAssertionMethodAuthorized(didDocument, verificationMethodID)
+	default:
+		return false
+	}
+}
+
+func keyIDBelongsToExpectedDID(keyID string, expectedSignerDID string) bool {
+	return strings.SplitN(keyID, "#", 2)[0] == expectedSignerDID
 }
