@@ -1,0 +1,4 @@
+interface:
+  display_name: "ANP Multi SDK Release"
+  short_description: "Release Go, Python, and Rust SDKs with one shared semver."
+  default_prompt: "Use this skill to bump the ANP Go, Python, and Rust SDKs to a shared version, validate builds, publish artifacts, and push the correct Git tags."
