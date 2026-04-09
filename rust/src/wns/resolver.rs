@@ -53,7 +53,6 @@ pub async fn resolve_handle_with_options(
         .unwrap_or_else(|| build_resolution_url(&local_part, &domain));
     let normalized = format!("{}.{}", local_part, domain);
     let client = Client::builder()
-        .danger_accept_invalid_certs(!options.verify_ssl)
         .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
         .build()
         .map_err(|_| HandleResolutionError {
