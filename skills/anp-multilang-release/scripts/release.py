@@ -179,7 +179,6 @@ def get_release_paths(repo_root: Path) -> ReleasePaths:
         paths.pyproject_toml,
         paths.uv_lock,
         paths.cargo_toml,
-        paths.cargo_lock,
         paths.go_mod,
     ]
     missing = [str(path) for path in required_paths if not path.exists()]
@@ -205,14 +204,15 @@ def extract_current_version(paths: ReleasePaths) -> SemVer:
     python_version = extract_project_version(paths.pyproject_toml)
     rust_version = extract_cargo_package_version(paths.cargo_toml)
     uv_lock_version = extract_uv_lock_version(paths.uv_lock)
-    cargo_lock_version = extract_cargo_lock_version(paths.cargo_lock)
 
     versions = {
         "pyproject.toml": python_version,
         "rust/Cargo.toml": rust_version,
         "uv.lock": uv_lock_version,
-        "rust/Cargo.lock": cargo_lock_version,
     }
+    if paths.cargo_lock.exists() and is_git_tracked(paths.repo_root, paths.cargo_lock):
+        cargo_lock_version = extract_cargo_lock_version(paths.cargo_lock)
+        versions["rust/Cargo.lock"] = cargo_lock_version
 
     unique_versions = {str(version) for version in versions.values()}
     if len(unique_versions) != 1:
@@ -289,7 +289,7 @@ def update_version_files(paths: ReleasePaths, target_version: SemVer) -> list[Pa
     """Update all tracked version files and return the changed file list."""
     changed_paths: list[Path] = []
 
-    replacements = [
+    replacements: list[tuple[Path, str]] = [
         (
             paths.pyproject_toml,
             r'(?ms)(^\[project\]\s+.*?^version = ")(\d+\.\d+\.\d+)(".*$)',
@@ -307,6 +307,11 @@ def update_version_files(paths: ReleasePaths, target_version: SemVer) -> list[Pa
             r'(?ms)(^name = "anp"\nversion = ")(\d+\.\d+\.\d+)("\n)',
         ),
     ]
+
+    if not paths.cargo_lock.exists():
+        replacements = [
+            item for item in replacements if item[0] != paths.cargo_lock
+        ]
 
     for path, pattern in replacements:
         original_text = read_text(path)
@@ -404,7 +409,14 @@ def maybe_commit_version_bump(
         print("No version files changed. Skip commit and branch push.")
         return
 
-    relative_paths = [str(path.relative_to(repo_root)) for path in changed_paths]
+    tracked_paths = [
+        path for path in changed_paths if is_git_tracked(repo_root, path)
+    ]
+    if not tracked_paths:
+        print("Only ignored or untracked files changed. Skip commit and branch push.")
+        return
+
+    relative_paths = [str(path.relative_to(repo_root)) for path in tracked_paths]
     run_command(["git", "add", *relative_paths], cwd=repo_root)
     run_command(
         [
@@ -461,7 +473,8 @@ def print_release_plan(
     print(f"- {paths.pyproject_toml.relative_to(paths.repo_root)}")
     print(f"- {paths.uv_lock.relative_to(paths.repo_root)}")
     print(f"- {paths.cargo_toml.relative_to(paths.repo_root)}")
-    print(f"- {paths.cargo_lock.relative_to(paths.repo_root)}")
+    if paths.cargo_lock.exists():
+        print(f"- {paths.cargo_lock.relative_to(paths.repo_root)}")
     print("Validation steps:")
     print("- uv build")
     print("- cargo publish --dry-run --manifest-path rust/Cargo.toml")
@@ -488,6 +501,18 @@ def run_command(
         text=True,
         capture_output=capture_output,
     )
+
+
+def is_git_tracked(repo_root: Path, path: Path) -> bool:
+    """Return whether a path is tracked by git."""
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", str(path.relative_to(repo_root))],
+        cwd=str(repo_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def main() -> int:
