@@ -380,7 +380,14 @@ def run_release_validations(paths: ReleasePaths) -> None:
 
     run_command(["uv", "build"], cwd=paths.repo_root)
     run_command(
-        ["cargo", "publish", "--dry-run", "--manifest-path", "rust/Cargo.toml"],
+        [
+            "cargo",
+            "publish",
+            "--dry-run",
+            "--allow-dirty",
+            "--manifest-path",
+            "rust/Cargo.toml",
+        ],
         cwd=paths.repo_root,
     )
     run_command(["go", "test", "./..."], cwd=paths.repo_root / "golang")
