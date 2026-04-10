@@ -210,6 +210,7 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 | **FastANP** | FastAPI插件框架 | [README](anp/fastanp/README.cn.md) |
 | **AP2** | 智能体支付协议v2 | [README](anp/ap2/README.cn.md) |
 | **Authentication** | DID-WBA身份认证 | [示例](examples/python/did_wba_examples/) |
+| **Proof** | W3C Data Integrity 与 RFC 9421 origin proof 辅助能力 | [Python包](anp/proof/__init__.py) |
 | **E2EE HPKE** | 基于HPKE的端到端加密（私聊+群聊） | [示例](examples/python/e2e_encryption_hpke_examples/) |
 
 ---

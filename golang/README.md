@@ -17,6 +17,7 @@ Implemented in this directory:
   - W3C Data Integrity proof generation and verification
   - group receipt proof helpers
   - IM proof helpers
+  - RFC 9421 origin proof helpers for ANP request objects
 - `wns`
   - handle validation and URI parsing
   - handle resolution

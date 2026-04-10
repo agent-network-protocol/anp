@@ -41,6 +41,12 @@ Key APIs:
 - `BuildIMSignatureInput`
 - `GenerateIMProof`
 - `VerifyIMProofWithDocument`
+- `BuildSignedRequestObject`
+- `CanonicalizeSignedRequestObject`
+- `BuildLogicalTargetURI`
+- `BuildRFC9421OriginSignatureBase`
+- `GenerateRFC9421OriginProof`
+- `VerifyRFC9421OriginProof`
 - `VerifyIMProofWithDocumentForRelationship`
 - `VerifyIMProofWithVerificationMethod`
 

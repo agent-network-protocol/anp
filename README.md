@@ -206,6 +206,7 @@ uv run python examples/python/did_wba_examples/create_did_document.py
 | **FastANP** | FastAPI plugin framework | [README](anp/fastanp/README.md) |
 | **AP2** | Agent Payment Protocol v2 | [README](anp/ap2/README.md) |
 | **Authentication** | DID-WBA identity authentication | [Examples](examples/python/did_wba_examples/) |
+| **Proof** | W3C Data Integrity + RFC 9421 origin proof helpers | [Python package](anp/proof/__init__.py) |
 | **E2EE HPKE** | HPKE-based end-to-end encryption (private + group chat) | [Examples](examples/python/e2e_encryption_hpke_examples/) |
 
 ---

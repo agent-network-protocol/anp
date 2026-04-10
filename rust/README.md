@@ -17,6 +17,7 @@ cargo add anp
 - DID WBA document creation and verification
 - HTTP authentication helpers
 - Proof generation and verification
+- RFC 9421 origin proof helpers for ANP request objects
 - WNS models, validation, and resolver helpers
 
 ## Repository

@@ -2,6 +2,7 @@
 
 pub mod group_receipt;
 pub mod im;
+pub mod rfc9421_origin;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
 pub use group_receipt::*;
 pub use im::*;
+pub use rfc9421_origin::*;
 
 pub const PROOF_TYPE_SECP256K1: &str = "EcdsaSecp256k1Signature2019";
 pub const PROOF_TYPE_ED25519: &str = "Ed25519Signature2020";

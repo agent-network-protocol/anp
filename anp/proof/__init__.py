@@ -1,7 +1,8 @@
-"""W3C Data Integrity Proof module for ANP.
+"""W3C Data Integrity Proof and RFC 9421 origin proof module for ANP.
 
 Provides general-purpose W3C-compatible Proof generation and verification
-for JSON documents, supporting multiple signature suites.
+for JSON documents, supporting multiple signature suites, and high-level
+RFC 9421 origin proof helpers for ANP request objects.
 
 Supported proof types:
 - EcdsaSecp256k1Signature2019 (secp256k1 ECDSA + SHA-256)
@@ -35,6 +36,24 @@ from .group_receipt import (
     generate_group_receipt_proof,
     verify_group_receipt_proof,
 )
+from .rfc9421_origin import (
+    RFC9421_ORIGIN_PROOF_DEFAULT_COMPONENTS,
+    RFC9421_ORIGIN_PROOF_DEFAULT_LABEL,
+    TARGET_KIND_AGENT,
+    TARGET_KIND_GROUP,
+    TARGET_KIND_SERVICE,
+    Rfc9421OriginProof,
+    Rfc9421OriginProofError,
+    Rfc9421OriginProofGenerationOptions,
+    Rfc9421OriginProofVerificationOptions,
+    SignedRequestObject,
+    build_logical_target_uri,
+    build_rfc9421_origin_signature_base,
+    build_signed_request_object,
+    canonicalize_signed_request_object,
+    generate_rfc9421_origin_proof,
+    verify_rfc9421_origin_proof,
+)
 from .im import (
     IM_PROOF_DEFAULT_COMPONENTS,
     IM_PROOF_RELATION_ASSERTION_METHOD,
@@ -53,6 +72,22 @@ from .im import (
 )
 
 __all__ = [
+    "RFC9421_ORIGIN_PROOF_DEFAULT_COMPONENTS",
+    "RFC9421_ORIGIN_PROOF_DEFAULT_LABEL",
+    "TARGET_KIND_AGENT",
+    "TARGET_KIND_GROUP",
+    "TARGET_KIND_SERVICE",
+    "SignedRequestObject",
+    "Rfc9421OriginProof",
+    "Rfc9421OriginProofError",
+    "Rfc9421OriginProofGenerationOptions",
+    "Rfc9421OriginProofVerificationOptions",
+    "build_signed_request_object",
+    "canonicalize_signed_request_object",
+    "build_logical_target_uri",
+    "build_rfc9421_origin_signature_base",
+    "generate_rfc9421_origin_proof",
+    "verify_rfc9421_origin_proof",
     "generate_w3c_proof",
     "verify_w3c_proof",
     "PROOF_TYPE_SECP256K1",
