@@ -100,6 +100,56 @@ func TestGenerateAndVerifyDirectRFC9421OriginProof(t *testing.T) {
 	}
 }
 
+func TestGenerateAndVerifyDirectRFC9421OriginProofWithDefaultOptions(t *testing.T) {
+	bundle, err := authentication.CreateDidWBADocument("example.com", authentication.DidDocumentOptions{PathSegments: []string{"user", "alice"}})
+	if err != nil {
+		t.Fatalf("CreateDidWBADocument failed: %v", err)
+	}
+	privateKey, err := anp.PrivateKeyFromPEM(bundle.Keys[authentication.VMKeyAuth].PrivateKeyPEM)
+	if err != nil {
+		t.Fatalf("PrivateKeyFromPEM failed: %v", err)
+	}
+	did := stringValue(bundle.DidDocument["id"])
+	meta := map[string]any{
+		"anp_version":      "1.0",
+		"profile":          "anp.direct.base.v1",
+		"security_profile": "transport-protected",
+		"sender_did":       did,
+		"target": map[string]any{
+			"kind": "agent",
+			"did":  "did:wba:example.com:user:bob:e1_bob",
+		},
+		"operation_id": "op-default",
+		"message_id":   "msg-default",
+		"content_type": "text/plain",
+	}
+	body := map[string]any{"text": "hello"}
+
+	originProof, err := proof.GenerateRFC9421OriginProof(
+		"direct.send",
+		meta,
+		body,
+		privateKey,
+		did+"#key-1",
+		proof.RFC9421OriginProofGenerationOptions{},
+	)
+	if err != nil {
+		t.Fatalf("GenerateRFC9421OriginProof failed: %v", err)
+	}
+	if _, err := proof.VerifyRFC9421OriginProof(
+		originProof,
+		"direct.send",
+		meta,
+		body,
+		proof.RFC9421OriginProofVerificationOptions{
+			DidDocument:       bundle.DidDocument,
+			ExpectedSignerDID: did,
+		},
+	); err != nil {
+		t.Fatalf("VerifyRFC9421OriginProof failed: %v", err)
+	}
+}
+
 func TestGenerateAndVerifyGroupCreateRFC9421OriginProof(t *testing.T) {
 	bundle, err := authentication.CreateDidWBADocument("example.com", authentication.DidDocumentOptions{PathSegments: []string{"user", "alice"}})
 	if err != nil {

@@ -155,15 +155,14 @@ func GenerateRFC9421OriginProof(method string, meta map[string]any, body map[str
 	if err != nil {
 		return RFC9421OriginProof{}, err
 	}
-	proofValue, err := GenerateIMProof(canonicalRequest, signatureBase, privateKey, keyID, IMGenerationOptions{
-		Label:      normalizedRFC9421OriginLabel(options.Label),
-		Components: append([]string(nil), RFC9421OriginProofDefaultComponents...),
-		Created:    options.Created,
-		Expires:    options.Expires,
-		Nonce:      options.Nonce,
-	})
+	signatureBytes, err := privateKey.SignMessage(signatureBase)
 	if err != nil {
 		return RFC9421OriginProof{}, err
+	}
+	proofValue := RFC9421OriginProof{
+		ContentDigest:  contentDigest,
+		SignatureInput: signatureInput,
+		Signature:      EncodeIMSignature(signatureBytes, normalizedRFC9421OriginLabel(options.Label)),
 	}
 	parsed, err := ParseIMSignatureInput(proofValue.SignatureInput)
 	if err != nil {
