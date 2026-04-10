@@ -9,6 +9,7 @@ pub mod verification_methods;
 pub use did_resolver::{
     resolve_did_document, resolve_did_document_sync, resolve_did_document_with_options,
 };
+#[allow(deprecated)]
 pub use did_wba::{
     build_agent_message_service, build_agent_message_service_with_options,
     build_anp_message_service, build_group_message_service,

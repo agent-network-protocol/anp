@@ -15,6 +15,7 @@
 > **当前 SDK 重要默认行为**
 >
 > - 路径型 DID 默认创建为 `e1_` profile
+> - `create_did_wba_document_with_key_binding()` 已废弃，请改用 `create_did_wba_document(..., did_profile="k1")`
 > - 默认请求认证格式为 HTTP Message Signatures，而不是旧版 `Authorization: DIDWba ...`
 > - `resolve_did_wba_document()` 会自动校验 `e1_` / `k1_` DID 绑定关系
 > - 对 `e1_` DID，DID Document proof 已纳入强绑定校验，必须存在且有效

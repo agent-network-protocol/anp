@@ -14,6 +14,7 @@ import re
 import secrets
 import traceback
 import urllib.parse
+import warnings
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -608,6 +609,9 @@ def create_did_wba_document_with_key_binding(
     """
     Create a compatibility key-bound DID document using the k1 profile.
 
+    Deprecated:
+        Use create_did_wba_document(..., did_profile="k1") instead.
+
     Args:
         hostname: Hostname
         port: Optional port number
@@ -635,6 +639,12 @@ def create_did_wba_document_with_key_binding(
     Raises:
         ValueError: If hostname is empty or is an IP address
     """
+    warnings.warn(
+        "create_did_wba_document_with_key_binding() is deprecated; "
+        'use create_did_wba_document(..., did_profile="k1") instead.',
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if path_prefix is None:
         path_prefix = ["user"]
 

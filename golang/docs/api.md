@@ -9,7 +9,7 @@ Core DID WBA and request-authentication helpers.
 Key APIs:
 
 - `CreateDidWBADocument`
-- `CreateDidWBADocumentWithKeyBinding`
+- `CreateDidWBADocumentWithKeyBinding` (deprecated; use `CreateDidWBADocument` with `DidDocumentOptions{DidProfile: DidProfileK1}`)
 - `ComputeJWKFingerprint`
 - `ComputeMultikeyFingerprint`
 - `BuildANPMessageService`

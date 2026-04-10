@@ -636,6 +636,9 @@ pub fn create_did_wba_document(
     })
 }
 
+#[deprecated(
+    note = "use create_did_wba_document with DidDocumentOptions::with_profile(DidProfile::K1) instead"
+)]
 pub fn create_did_wba_document_with_key_binding(
     hostname: &str,
     mut options: DidDocumentOptions,

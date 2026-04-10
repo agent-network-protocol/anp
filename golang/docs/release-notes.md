@@ -1,8 +1,12 @@
 # ANP Go SDK Release Notes
 
-## Current Snapshot (0.8.2)
+## Current Snapshot (0.8.3)
 
 This Go SDK snapshot delivers the first production-oriented pure-Go implementation of the ANP core SDK surface.
+
+### API Notes
+
+- `CreateDidWBADocumentWithKeyBinding` is deprecated. Use `CreateDidWBADocument` with `DidDocumentOptions{DidProfile: DidProfileK1}` to create `k1_` DIDs.
 
 ### Included
 

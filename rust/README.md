@@ -21,6 +21,10 @@ cargo add anp
 - RFC 9421 origin proof helpers for ANP request objects
 - WNS models, validation, and resolver helpers
 
+## Compatibility Notes
+
+- `create_did_wba_document_with_key_binding` is deprecated. Use `create_did_wba_document` with `DidDocumentOptions::with_profile(DidProfile::K1)` when you need a `k1_` DID.
+
 ## Repository
 
 - Source: <https://github.com/agent-network-protocol/AgentConnect>

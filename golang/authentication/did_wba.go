@@ -233,6 +233,7 @@ func CreateDidWBADocument(hostname string, options DidDocumentOptions) (DidDocum
 	return DidDocumentBundle{DidDocument: signedDocument, Keys: keys}, nil
 }
 
+// Deprecated: Use CreateDidWBADocument with DidDocumentOptions{DidProfile: DidProfileK1} instead.
 // CreateDidWBADocumentWithKeyBinding creates a k1 DID document and injects a path when absent.
 func CreateDidWBADocumentWithKeyBinding(hostname string, options DidDocumentOptions) (DidDocumentBundle, error) {
 	if len(options.PathSegments) == 0 {

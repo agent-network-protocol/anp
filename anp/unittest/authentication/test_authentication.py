@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
@@ -104,10 +105,14 @@ class TestDidDocumentProfiles(unittest.TestCase):
 
     def test_k1_wrapper_maps_to_profile_k1(self):
         """The compatibility wrapper should still produce a k1 DID."""
-        did_document, _ = create_did_wba_document_with_key_binding(
-            "example.com",
-            path_prefix=["user", "alice"],
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            did_document, _ = create_did_wba_document_with_key_binding(
+                "example.com",
+                path_prefix=["user", "alice"],
+            )
+        self.assertTrue(caught)
+        self.assertIn("deprecated", str(caught[0].message).lower())
         self.assertIn(":k1_", did_document["id"])
 
 

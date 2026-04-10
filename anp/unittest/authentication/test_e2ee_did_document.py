@@ -1,6 +1,7 @@
 """Tests for E2EE DID document creation across DID profiles."""
 
 import unittest
+import warnings
 
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -148,10 +149,14 @@ class TestE2eeDIDDocument(unittest.TestCase):
 
     def test_k1_wrapper_with_e2ee(self):
         """The k1 compatibility wrapper should still support E2EE keys."""
-        doc, keys = create_did_wba_document_with_key_binding(
-            "example.com",
-            path_prefix=["user", "alice"],
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            doc, keys = create_did_wba_document_with_key_binding(
+                "example.com",
+                path_prefix=["user", "alice"],
+            )
+        self.assertTrue(caught)
+        self.assertIn("deprecated", str(caught[0].message).lower())
         self.assertEqual(len(doc["verificationMethod"]), 3)
         self.assertIn(":k1_", doc["id"])
         self.assertIn("key-2", keys)
@@ -159,11 +164,15 @@ class TestE2eeDIDDocument(unittest.TestCase):
 
     def test_k1_wrapper_disable_e2ee(self):
         """The k1 compatibility wrapper should still support disabling E2EE."""
-        doc, keys = create_did_wba_document_with_key_binding(
-            "example.com",
-            path_prefix=["user", "alice"],
-            enable_e2ee=False,
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            doc, keys = create_did_wba_document_with_key_binding(
+                "example.com",
+                path_prefix=["user", "alice"],
+                enable_e2ee=False,
+            )
+        self.assertTrue(caught)
+        self.assertIn("deprecated", str(caught[0].message).lower())
         self.assertEqual(len(doc["verificationMethod"]), 1)
         self.assertEqual(set(keys.keys()), {"key-1"})
         self.assertNotIn("keyAgreement", doc)
