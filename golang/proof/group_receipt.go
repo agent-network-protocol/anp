@@ -20,23 +20,16 @@ func GenerateGroupReceiptProof(receipt map[string]any, privateKey anp.PrivateKey
 	if err := validateGroupReceipt(receipt); err != nil {
 		return nil, err
 	}
-	cryptosuite := CryptosuiteDidWbaSecp256k12025
-	if privateKey.Type == anp.KeyTypeEd25519 {
-		cryptosuite = CryptosuiteEddsaJCS2022
-	}
-	return GenerateW3CProof(receipt, privateKey, verificationMethod, GenerationOptions{
-		ProofPurpose: GroupReceiptProofPurpose,
-		ProofType:    ProofTypeDataIntegrity,
-		Cryptosuite:  cryptosuite,
-	})
+	return GenerateObjectProof(receipt, privateKey, verificationMethod, stringValue(receipt["group_did"]), "")
 }
 
 // VerifyGroupReceiptProof verifies a signed group receipt.
-func VerifyGroupReceiptProof(receipt map[string]any, publicKey anp.PublicKeyMaterial) error {
+func VerifyGroupReceiptProof(receipt map[string]any, issuerDocument map[string]any) error {
 	if err := validateGroupReceipt(receipt); err != nil {
 		return err
 	}
-	return VerifyW3CProofDetailed(receipt, publicKey, VerificationOptions{ExpectedPurpose: GroupReceiptProofPurpose})
+	_, err := VerifyObjectProof(receipt, stringValue(receipt["group_did"]), issuerDocument)
+	return err
 }
 
 func validateGroupReceipt(receipt map[string]any) error {

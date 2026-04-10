@@ -88,6 +88,10 @@ def test_prekey_bundle_round_trip(tmp_path: Path) -> None:
         created="2026-03-31T09:58:58Z",
     )
 
+    assert bundle.proof["type"] == "DataIntegrityProof"
+    assert bundle.proof["cryptosuite"] == "eddsa-jcs-2022"
+    assert bundle.proof["proofPurpose"] == "assertionMethod"
+    assert bundle.proof["proofValue"].startswith("z")
     PrekeyManager.verify_prekey_bundle(bundle, bob_doc)
 
 

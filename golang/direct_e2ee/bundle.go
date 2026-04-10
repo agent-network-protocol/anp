@@ -3,6 +3,7 @@ package directe2ee
 import (
 	"crypto/ecdh"
 	"fmt"
+	"strings"
 	"time"
 
 	anp "github.com/agent-network-protocol/anp/golang"
@@ -18,7 +19,7 @@ func SignedPrekeyFromPrivateKey(keyID string, privateKey *ecdh.PrivateKey, expir
 // BuildPrekeyBundle signs and builds a prekey bundle.
 func BuildPrekeyBundle(bundleID string, ownerDID string, staticKeyAgreementID string, signedPrekey SignedPrekey, signingPrivateKey anp.PrivateKeyMaterial, verificationMethod string, created string) (PrekeyBundle, error) {
 	unsigned := map[string]any{"bundle_id": bundleID, "owner_did": ownerDID, "suite": MTIDirectE2EESuite, "static_key_agreement_id": staticKeyAgreementID, "signed_prekey": map[string]any{"key_id": signedPrekey.KeyID, "public_key_b64u": signedPrekey.PublicKeyB64U, "expires_at": signedPrekey.ExpiresAt}}
-	signed, err := proof.GenerateW3CProof(unsigned, signingPrivateKey, verificationMethod, proof.GenerationOptions{ProofPurpose: "assertionMethod", Created: created})
+	signed, err := proof.GenerateObjectProof(unsigned, signingPrivateKey, verificationMethod, ownerDID, created)
 	if err != nil {
 		return PrekeyBundle{}, err
 	}
@@ -34,6 +35,12 @@ func VerifyPrekeyBundle(bundle PrekeyBundle, didDocument map[string]any) error {
 	if bundle.Suite != MTIDirectE2EESuite {
 		return unsupportedSuite(bundle.Suite)
 	}
+	if stringValue(didDocument["id"]) != bundle.OwnerDID {
+		return invalidField("owner_did must match the issuer DID document")
+	}
+	if strings.HasPrefix(bundle.OwnerDID, "did:wba:") && !authentication.ValidateDIDDocumentBinding(didDocument, false) {
+		return invalidField("owner DID document binding validation failed")
+	}
 	keyAgreement, ok := didDocument["keyAgreement"].([]any)
 	if !ok {
 		return missingField("keyAgreement")
@@ -48,19 +55,7 @@ func VerifyPrekeyBundle(bundle PrekeyBundle, didDocument map[string]any) error {
 	if !found {
 		return invalidField("static_key_agreement_id must appear in did_document.keyAgreement")
 	}
-	verificationMethodID, _ := bundle.Proof["verificationMethod"].(string)
-	if verificationMethodID == "" {
-		return missingField("proof.verificationMethod")
-	}
-	method := authentication.FindVerificationMethod(didDocument, verificationMethodID)
-	if method == nil {
-		return invalidField("proof.verificationMethod not found")
-	}
-	publicKey, err := authentication.ExtractPublicKey(method)
-	if err != nil {
-		return invalidField(fmt.Sprintf("invalid verification method: %v", err))
-	}
-	if !proof.VerifyW3CProof(bundleToMap(bundle), publicKey, proof.VerificationOptions{}) {
+	if _, err := proof.VerifyObjectProof(bundleToMap(bundle), bundle.OwnerDID, didDocument); err != nil {
 		return invalidField("bundle proof verification failed")
 	}
 	return nil

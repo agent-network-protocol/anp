@@ -1,10 +1,10 @@
 use super::errors::DirectE2eeError;
 use super::models::{PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE};
-use crate::authentication::{create_verification_method, find_verification_method};
-use crate::keys::base64url_encode;
-use crate::proof::{
-    generate_w3c_proof, verify_w3c_proof_detailed, ProofGenerationOptions, ProofVerificationOptions,
+use crate::authentication::{
+    create_verification_method, find_verification_method, validate_did_document_binding,
 };
+use crate::keys::base64url_encode;
+use crate::proof::{generate_object_proof, verify_object_proof};
 use crate::PrivateKeyMaterial;
 use serde_json::{json, Value};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -38,15 +38,12 @@ pub fn build_prekey_bundle(
         "static_key_agreement_id": static_key_agreement_id,
         "signed_prekey": signed_prekey,
     });
-    let signed = generate_w3c_proof(
+    let signed = generate_object_proof(
         &unsigned,
         signing_private_key,
         verification_method,
-        ProofGenerationOptions {
-            proof_purpose: Some("assertionMethod".to_owned()),
-            created: created.map(ToOwned::to_owned),
-            ..Default::default()
-        },
+        owner_did,
+        created.map(ToOwned::to_owned),
     )?;
     let proof = signed
         .get("proof")
@@ -69,6 +66,18 @@ pub fn verify_prekey_bundle(
     if bundle.suite != MTI_DIRECT_E2EE_SUITE {
         return Err(DirectE2eeError::UnsupportedSuite(bundle.suite.clone()));
     }
+    if did_document.get("id").and_then(Value::as_str) != Some(bundle.owner_did.as_str()) {
+        return Err(DirectE2eeError::invalid_field(
+            "owner_did must match the issuer DID document",
+        ));
+    }
+    if bundle.owner_did.starts_with("did:wba:")
+        && !validate_did_document_binding(did_document, false)
+    {
+        return Err(DirectE2eeError::invalid_field(
+            "owner DID document binding validation failed",
+        ));
+    }
     let key_agreement = did_document
         .get("keyAgreement")
         .and_then(Value::as_array)
@@ -81,25 +90,10 @@ pub fn verify_prekey_bundle(
             "static_key_agreement_id must appear in did_document.keyAgreement",
         ));
     }
-
-    let verification_method_id = bundle
-        .proof
-        .get("verificationMethod")
-        .and_then(Value::as_str)
-        .ok_or_else(|| DirectE2eeError::MissingField("proof.verificationMethod"))?;
-    let method = find_verification_method(did_document, verification_method_id)
-        .ok_or_else(|| DirectE2eeError::invalid_field("proof.verificationMethod not found"))?;
-    let verification_method = create_verification_method(&method).map_err(|error| {
-        DirectE2eeError::invalid_field(format!("invalid verification method: {error}"))
-    })?;
     let signed_bundle = serde_json::to_value(bundle).map_err(|error| {
         DirectE2eeError::invalid_field(format!("invalid bundle serialization: {error}"))
     })?;
-    verify_w3c_proof_detailed(
-        &signed_bundle,
-        &verification_method.public_key,
-        ProofVerificationOptions::default(),
-    )?;
+    verify_object_proof(&signed_bundle, &bundle.owner_did, did_document)?;
     Ok(())
 }
 

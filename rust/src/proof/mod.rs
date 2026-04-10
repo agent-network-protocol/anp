@@ -1,7 +1,9 @@
 //! W3C Data Integrity Proof support for ANP.
 
+pub mod did_wba_binding;
 pub mod group_receipt;
 pub mod im;
+pub mod object_proof;
 pub mod rfc9421_origin;
 
 use chrono::Utc;
@@ -13,8 +15,10 @@ use thiserror::Error;
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
+pub use did_wba_binding::*;
 pub use group_receipt::*;
 pub use im::*;
+pub use object_proof::*;
 pub use rfc9421_origin::*;
 
 pub const PROOF_TYPE_SECP256K1: &str = "EcdsaSecp256k1Signature2019";
@@ -55,12 +59,22 @@ pub enum ProofError {
     MissingProof,
     #[error("Missing proof field: {0}")]
     MissingProofField(String),
+    #[error("Invalid proof field: {0}")]
+    InvalidProofField(String),
     #[error("Verification failed")]
     VerificationFailed,
     #[error("Invalid proof value encoding")]
     InvalidProofValue,
     #[error("Invalid public key for proof verification")]
     InvalidPublicKey,
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(String),
+    #[error("Issuer DID mismatch")]
+    IssuerDidMismatch,
+    #[error("Verification method is not authorized for assertionMethod")]
+    UnauthorizedVerificationMethod,
+    #[error("Issuer DID document binding validation failed")]
+    InvalidIssuerDidDocument,
     #[error("Signing error")]
     SigningError,
 }

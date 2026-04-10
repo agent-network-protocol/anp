@@ -1,4 +1,4 @@
-"""W3C Data Integrity Proof and RFC 9421 origin proof module for ANP.
+"""W3C, Appendix-B object proof, and RFC 9421 origin proof module for ANP.
 
 Provides general-purpose W3C-compatible Proof generation and verification
 for JSON documents, supporting multiple signature suites, and high-level
@@ -9,6 +9,7 @@ Supported proof types:
 - Ed25519Signature2020 (Ed25519)
 - DataIntegrityProof + eddsa-jcs-2022
 - DataIntegrityProof + didwba-jcs-ecdsa-secp256k1-2025
+- Appendix-B Object Proof + eddsa-jcs-2022 + multibase proofValue
 
 Example:
     >>> from anp.proof import generate_w3c_proof, verify_w3c_proof
@@ -35,6 +36,20 @@ from .group_receipt import (
     GROUP_RECEIPT_REQUIRED_FIELDS,
     generate_group_receipt_proof,
     verify_group_receipt_proof,
+)
+from .object_proof import (
+    OBJECT_PROOF_PURPOSE,
+    OBJECT_PROOF_REQUIRED_FIELDS,
+    OBJECT_PROOF_SIGNATURE_MULTIBASE_PREFIX,
+    ObjectProofError,
+    ObjectProofVerificationResult,
+    generate_object_proof,
+    verify_object_proof,
+)
+from .did_wba_binding import (
+    DID_WBA_BINDING_REQUIRED_FIELDS,
+    generate_did_wba_binding,
+    verify_did_wba_binding,
 )
 from .rfc9421_origin import (
     RFC9421_ORIGIN_PROOF_DEFAULT_COMPONENTS,
@@ -99,6 +114,16 @@ __all__ = [
     "GROUP_RECEIPT_REQUIRED_FIELDS",
     "generate_group_receipt_proof",
     "verify_group_receipt_proof",
+    "OBJECT_PROOF_PURPOSE",
+    "OBJECT_PROOF_REQUIRED_FIELDS",
+    "OBJECT_PROOF_SIGNATURE_MULTIBASE_PREFIX",
+    "ObjectProofError",
+    "ObjectProofVerificationResult",
+    "generate_object_proof",
+    "verify_object_proof",
+    "DID_WBA_BINDING_REQUIRED_FIELDS",
+    "generate_did_wba_binding",
+    "verify_did_wba_binding",
     "IM_PROOF_DEFAULT_COMPONENTS",
     "IM_PROOF_RELATION_AUTHENTICATION",
     "IM_PROOF_RELATION_ASSERTION_METHOD",

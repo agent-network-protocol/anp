@@ -36,8 +36,12 @@ Key APIs:
 - `GenerateW3CProof`
 - `VerifyW3CProof`
 - `VerifyW3CProofDetailed`
+- `GenerateObjectProof`
+- `VerifyObjectProof`
 - `GenerateGroupReceiptProof`
 - `VerifyGroupReceiptProof`
+- `GenerateDidWbaBinding`
+- `VerifyDidWbaBinding`
 - `BuildIMSignatureInput`
 - `GenerateIMProof`
 - `VerifyIMProofWithDocument`

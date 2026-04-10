@@ -1,6 +1,6 @@
 # ANP Go SDK Release Notes
 
-## Current Snapshot
+## Current Snapshot (0.8.2)
 
 This Go SDK snapshot delivers the first production-oriented pure-Go implementation of the ANP core SDK surface.
 
@@ -11,6 +11,7 @@ This Go SDK snapshot delivers the first production-oriented pure-Go implementati
 - HTTP Message Signatures helpers
 - DID resolution for `did:wba` and `did:web`
 - W3C Data Integrity proof helpers
+- strict Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`
 - WNS validation, resolution, and binding checks
 - direct E2EE primitives and reference client helpers
 - Go unit tests for authentication, proof, WNS, and direct E2EE

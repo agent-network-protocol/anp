@@ -13,7 +13,9 @@ Agent Network Protocol (ANP) 的纯 Go 核心 SDK 实现。
   - 联邦请求验签辅助
 - `proof`
   - W3C Data Integrity proof 生成与校验
+  - 严格 Appendix-B 对象 proof 辅助
   - group receipt proof
+  - did:wba binding proof
   - IM proof
 - `wns`
   - handle 校验与 URI 解析

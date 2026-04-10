@@ -3,7 +3,7 @@
 Rust SDK for the Agent Network Protocol (ANP).
 
 This crate provides the core Rust implementation for DID WBA authentication,
-proof generation and verification, and WNS helpers used by ANP-compatible
+proof generation and verification, strict Appendix-B object proof helpers, and WNS helpers used by ANP-compatible
 agents and services.
 
 ## Installation
@@ -17,6 +17,7 @@ cargo add anp
 - DID WBA document creation and verification
 - HTTP authentication helpers
 - Proof generation and verification
+- Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`
 - RFC 9421 origin proof helpers for ANP request objects
 - WNS models, validation, and resolver helpers
 

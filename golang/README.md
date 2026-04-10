@@ -15,7 +15,9 @@ Implemented in this directory:
   - federated request verification helpers
 - `proof`
   - W3C Data Integrity proof generation and verification
+  - strict Appendix-B object proof helpers
   - group receipt proof helpers
+  - did:wba binding proof helpers
   - IM proof helpers
   - RFC 9421 origin proof helpers for ANP request objects
 - `wns`

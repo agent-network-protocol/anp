@@ -1,23 +1,28 @@
 """Group receipt proof helpers.
 
-This module provides convenience helpers for signing and verifying ANP group
-receipt objects. A group receipt is a result witness emitted by the Group Host
-for ordered group operations such as ``group.create`` and ``group.send``.
+[INPUT]: Group receipt JSON objects, issuer DID documents, Ed25519 signing
+keys, and group receipt proof metadata such as ``verificationMethod`` and
+``created`` timestamps.
+[OUTPUT]: Appendix-B compliant group receipt proof documents and verification
+results expressed as boolean success values for Python callers.
+[POS]: This module provides the P4 object-proof adapter built on the shared
+Appendix-B object proof core.
+
+[PROTOCOL]:
+1. Treat ``group_did`` as the issuer DID for every group receipt proof.
+2. Rebuild the protected document from the entire receipt without its top-level
+   ``proof`` field.
+3. Require Appendix-B proof semantics during generation and verification.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
+import logging
+from typing import Any, Dict, Optional
 
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from .proof import (
-    CRYPTOSUITE_DIDWBA_SECP256K1_2025,
-    CRYPTOSUITE_EDDSA_JCS_2022,
-    PROOF_TYPE_DATA_INTEGRITY,
-    generate_w3c_proof,
-    verify_w3c_proof,
-)
+from .object_proof import generate_object_proof, verify_object_proof
 
 GROUP_RECEIPT_PROOF_PURPOSE = "assertionMethod"
 GROUP_RECEIPT_REQUIRED_FIELDS = (
@@ -34,45 +39,38 @@ GROUP_RECEIPT_REQUIRED_FIELDS = (
 
 def generate_group_receipt_proof(
     receipt: Dict[str, Any],
-    private_key: Union[ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey],
+    private_key: ed25519.Ed25519PrivateKey,
     verification_method: str,
     *,
     created: Optional[str] = None,
-    domain: Optional[str] = None,
-    challenge: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Generate a W3C Data Integrity proof for a group receipt."""
+    """Generate an Appendix-B object proof for a group receipt."""
     _validate_group_receipt(receipt)
-    cryptosuite = _select_group_receipt_cryptosuite(private_key)
-    return generate_w3c_proof(
-        document=receipt,
-        private_key=private_key,
-        verification_method=verification_method,
-        proof_purpose=GROUP_RECEIPT_PROOF_PURPOSE,
-        proof_type=PROOF_TYPE_DATA_INTEGRITY,
-        cryptosuite=cryptosuite,
+    return generate_object_proof(
+        receipt,
+        private_key,
+        verification_method,
+        issuer_did=receipt["group_did"],
         created=created,
-        domain=domain,
-        challenge=challenge,
     )
 
 
 def verify_group_receipt_proof(
     receipt: Dict[str, Any],
-    public_key: Union[ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey],
-    *,
-    expected_domain: Optional[str] = None,
-    expected_challenge: Optional[str] = None,
+    issuer_did_document: Dict[str, Any],
 ) -> bool:
-    """Verify a W3C Data Integrity proof on a group receipt."""
-    _validate_group_receipt(receipt)
-    return verify_w3c_proof(
-        receipt,
-        public_key,
-        expected_purpose=GROUP_RECEIPT_PROOF_PURPOSE,
-        expected_domain=expected_domain,
-        expected_challenge=expected_challenge,
-    )
+    """Verify an Appendix-B object proof on a group receipt."""
+    try:
+        _validate_group_receipt(receipt)
+        verify_object_proof(
+            receipt,
+            issuer_did=receipt["group_did"],
+            issuer_did_document=issuer_did_document,
+        )
+        return True
+    except Exception as exc:
+        logging.error("group receipt verification failed: %s", exc)
+        return False
 
 
 def _validate_group_receipt(receipt: Dict[str, Any]) -> None:
@@ -85,11 +83,9 @@ def _validate_group_receipt(receipt: Dict[str, Any]) -> None:
         )
 
 
-def _select_group_receipt_cryptosuite(
-    private_key: Union[ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey],
-) -> str:
-    if isinstance(private_key, ed25519.Ed25519PrivateKey):
-        return CRYPTOSUITE_EDDSA_JCS_2022
-    if isinstance(private_key, ec.EllipticCurvePrivateKey):
-        return CRYPTOSUITE_DIDWBA_SECP256K1_2025
-    raise ValueError(f"unsupported group receipt signing key type: {type(private_key).__name__}")
+__all__ = [
+    "GROUP_RECEIPT_PROOF_PURPOSE",
+    "GROUP_RECEIPT_REQUIRED_FIELDS",
+    "generate_group_receipt_proof",
+    "verify_group_receipt_proof",
+]

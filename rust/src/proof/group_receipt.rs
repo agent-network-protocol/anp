@@ -1,11 +1,7 @@
 use serde_json::Value;
 
-use crate::proof::{
-    generate_w3c_proof, verify_w3c_proof_detailed, ProofError, ProofGenerationOptions,
-    ProofVerificationOptions, CRYPTOSUITE_DIDWBA_SECP256K1_2025, CRYPTOSUITE_EDDSA_JCS_2022,
-    PROOF_TYPE_DATA_INTEGRITY,
-};
-use crate::{PrivateKeyMaterial, PublicKeyMaterial};
+use crate::proof::{generate_object_proof, verify_object_proof, ProofError};
+use crate::PrivateKeyMaterial;
 
 pub const GROUP_RECEIPT_PROOF_PURPOSE: &str = "assertionMethod";
 pub const GROUP_RECEIPT_REQUIRED_FIELDS: [&str; 8] = [
@@ -25,48 +21,33 @@ pub fn generate_group_receipt_proof(
     verification_method: &str,
 ) -> Result<Value, ProofError> {
     validate_group_receipt(receipt)?;
-    generate_w3c_proof(
-        receipt,
-        private_key,
-        verification_method,
-        ProofGenerationOptions {
-            proof_purpose: Some(GROUP_RECEIPT_PROOF_PURPOSE.to_string()),
-            proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_string()),
-            cryptosuite: Some(select_group_receipt_cryptosuite(private_key).to_string()),
-            ..ProofGenerationOptions::default()
-        },
-    )
+    let issuer_did = receipt
+        .get("group_did")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProofError::MissingProofField("group_did".to_string()))?;
+    generate_object_proof(receipt, private_key, verification_method, issuer_did, None)
 }
 
 pub fn verify_group_receipt_proof(
     receipt: &Value,
-    public_key: &PublicKeyMaterial,
+    issuer_document: &Value,
 ) -> Result<(), ProofError> {
     validate_group_receipt(receipt)?;
-    verify_w3c_proof_detailed(
-        receipt,
-        public_key,
-        ProofVerificationOptions {
-            expected_purpose: Some(GROUP_RECEIPT_PROOF_PURPOSE.to_string()),
-            ..ProofVerificationOptions::default()
-        },
-    )
+    let issuer_did = receipt
+        .get("group_did")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProofError::MissingProofField("group_did".to_string()))?;
+    verify_object_proof(receipt, issuer_did, issuer_document)
 }
 
 fn validate_group_receipt(receipt: &Value) -> Result<(), ProofError> {
-    let object = receipt.as_object().ok_or(ProofError::VerificationFailed)?;
+    let object = receipt.as_object().ok_or_else(|| {
+        ProofError::InvalidProofField("group receipt must be an object".to_string())
+    })?;
     for field in GROUP_RECEIPT_REQUIRED_FIELDS {
         if !object.contains_key(field) {
             return Err(ProofError::MissingProofField(field.to_string()));
         }
     }
     Ok(())
-}
-
-fn select_group_receipt_cryptosuite(private_key: &PrivateKeyMaterial) -> &'static str {
-    match private_key {
-        PrivateKeyMaterial::Ed25519(_) => CRYPTOSUITE_EDDSA_JCS_2022,
-        PrivateKeyMaterial::Secp256k1(_) => CRYPTOSUITE_DIDWBA_SECP256K1_2025,
-        _ => CRYPTOSUITE_DIDWBA_SECP256K1_2025,
-    }
 }

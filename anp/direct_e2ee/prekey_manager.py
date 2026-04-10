@@ -1,4 +1,17 @@
-"""Prekey helpers for direct_e2ee."""
+"""Prekey helpers for direct_e2ee.
+
+[INPUT]: Local DID metadata, Ed25519 signing material, signed prekey storage,
+remote RPC callbacks, prekey bundle objects, and issuer DID documents.
+[OUTPUT]: Signed prekeys, strict Appendix-B prekey bundles, published RPC
+payloads, and validation errors for invalid remote bundles.
+[POS]: This module is the direct-E2EE adapter that maps the shared Appendix-B
+object proof core onto ``prekey_bundle`` semantics.
+
+[PROTOCOL]:
+1. Treat ``owner_did`` as the issuer DID for every prekey bundle proof.
+2. Require Appendix-B object proof validation for remote bundle acceptance.
+3. Keep bundle business validation separate from proof validation.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +25,9 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PublicKey,
 )
 
-from anp.authentication.did_wba import _extract_public_key
+from anp.authentication.did_wba import validate_did_document_binding
 from anp.e2e_encryption_hpke.key_pair import extract_x25519_public_key_from_did_document
-from anp.proof import generate_w3c_proof, verify_w3c_proof
+from anp.proof import generate_object_proof, verify_object_proof
 
 from .errors import DirectE2eeError
 from .models import MTI_DIRECT_E2EE_SUITE, PrekeyBundle, SignedPrekey
@@ -75,11 +88,11 @@ class PrekeyManager:
             "static_key_agreement_id": self._static_key_agreement_id,
             "signed_prekey": signed_prekey.to_dict(),
         }
-        signed_bundle = generate_w3c_proof(
+        signed_bundle = generate_object_proof(
             unsigned_bundle,
             self._signing_private_key,
             self._signing_verification_method,
-            proof_purpose="assertionMethod",
+            issuer_did=self._local_did,
             created=created,
         )
         return PrekeyBundle(
@@ -129,6 +142,19 @@ class PrekeyManager:
 
     @staticmethod
     def verify_prekey_bundle(bundle: PrekeyBundle, did_document: Dict[str, Any]) -> None:
+        if did_document.get("id") != bundle.owner_did:
+            raise DirectE2eeError(
+                "owner_did must match the issuer DID document",
+                "bundle_invalid",
+            )
+        if did_document.get("id", "").startswith("did:wba:") and not validate_did_document_binding(
+            did_document,
+            verify_proof=False,
+        ):
+            raise DirectE2eeError(
+                "owner DID document binding validation failed",
+                "bundle_invalid",
+            )
         key_agreement_ids = {
             item if isinstance(item, str) else item.get("id")
             for item in did_document.get("keyAgreement", [])
@@ -138,22 +164,14 @@ class PrekeyManager:
                 "static_key_agreement_id must appear in DID document keyAgreement",
                 "bundle_invalid",
             )
-        verification_method = bundle.proof.get("verificationMethod")
-        if not verification_method:
-            raise DirectE2eeError("proof.verificationMethod is required", "bundle_invalid")
-        vm_entry = next(
-            (
-                entry
-                for entry in did_document.get("verificationMethod", [])
-                if isinstance(entry, dict) and entry.get("id") == verification_method
-            ),
-            None,
-        )
-        if vm_entry is None:
-            raise DirectE2eeError("proof verificationMethod not found", "bundle_invalid")
-        public_key = _extract_public_key(vm_entry)
-        if not verify_w3c_proof(bundle.to_dict(), public_key):
-            raise DirectE2eeError("bundle proof verification failed", "bundle_invalid")
+        try:
+            verify_object_proof(
+                bundle.to_dict(),
+                issuer_did=bundle.owner_did,
+                issuer_did_document=did_document,
+            )
+        except Exception as exc:
+            raise DirectE2eeError("bundle proof verification failed", "bundle_invalid") from exc
 
     @staticmethod
     def extract_recipient_static_key(

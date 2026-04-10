@@ -95,7 +95,7 @@ result = await crawler.execute_tool_call("search_poi", {"query": "Beijing"})
 - **`authentication/`**: DID WBA (Web-based Decentralized Identifiers) authentication — DID document creation (`create_did_wba_document`), auth header generation (`DIDWbaAuthHeader`), RS256 JWT signature verification (`DidWbaVerifier`)
 - **`e2e_encryption_v2/`**: Transport-agnostic E2E encryption v2 using HTTP RESTful dict-based messages, ECDHE key exchange, AES-GCM encryption. Session state machine: IDLE → HANDSHAKE_INITIATED → HANDSHAKE_COMPLETING → ACTIVE. Uses `did:wba:` format and snake_case fields (unlike the older `e2e_encryption/` which is WebSocket-coupled with camelCase)
 - **`e2e_encryption/`**: Legacy WebSocket-based E2E encryption (forward compatibility, uses `did:anp:` format)
-- **`proof/`**: W3C Data Integrity Proof generation and verification — supports EcdsaSecp256k1Signature2019 and Ed25519Signature2020
+- **`proof/`**: W3C Data Integrity Proof generation and verification, strict Appendix-B object proof helpers, group receipt proof helpers, `did_wba_binding` helpers, and RFC 9421 origin proof support
 - **`ap2/`**: Agent Payment Protocol v2 — CartMandate (merchant-signed) and PaymentMandate (user-signed) with ES256K (secp256k1) signatures. Two-phase flow: merchant creates CartMandate → user creates PaymentMandate referencing cart hash → merchant verifies. Spec: `docs/ap2/ap2-flow.md`
 - **`meta_protocol/`**: LLM-powered dynamic protocol negotiation — agents negotiate communication protocols using LLM-generated code for requester/provider roles
 - **`fastanp/`**: Older FastAPI plugin framework (predecessor to OpenANP). Uses `FastANP` class with `@anp.interface(path)` decorator. Still functional but OpenANP is now the recommended approach
