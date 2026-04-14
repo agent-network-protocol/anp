@@ -42,7 +42,7 @@ The Go tag format follows the Go subdirectory module rule.
    - `cargo publish --dry-run --manifest-path rust/Cargo.toml`
    - `go test ./...`
 5. Commit and push the version bump if files changed.
-6. Publish Python with `uv publish`.
+6. Publish Python with explicit target-version artifacts only.
 7. Publish Rust with `cargo publish`.
 8. Push the root tag and Go tag.
 

@@ -81,6 +81,8 @@ uv run python skills/anp-multilang-release/scripts/release.py release
    - 根 tag：`<version>`，例如 `0.7.2`
    - Go tag：`golang/v<version>`，例如 `golang/v0.7.2`
 
+Python 发布阶段会显式上传当前目标版本对应的 `dist/` 构件，避免把历史产物一并上传。
+
 ## 使用前提
 
 发布前确保：

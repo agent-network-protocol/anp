@@ -398,6 +398,30 @@ def run_release_validations(paths: ReleasePaths) -> None:
     run_command(["go", "test", "./..."], cwd=paths.repo_root / "golang")
 
 
+def collect_python_publish_files(
+    paths: ReleasePaths,
+    target_version: SemVer,
+) -> list[Path]:
+    """Return the Python distribution files for the target version only."""
+    version_text = str(target_version)
+    sdist_matches = sorted(paths.dist_dir.glob(f"anp-{version_text}*.tar.gz"))
+    wheel_matches = sorted(paths.dist_dir.glob(f"anp-{version_text}*.whl"))
+
+    missing_artifacts: list[str] = []
+    if len(sdist_matches) != 1:
+        missing_artifacts.append(f"dist/anp-{version_text}*.tar.gz")
+    if not wheel_matches:
+        missing_artifacts.append(f"dist/anp-{version_text}*.whl")
+
+    if missing_artifacts:
+        raise FileNotFoundError(
+            "Missing Python distribution files for publish:\n- "
+            + "\n- ".join(missing_artifacts)
+        )
+
+    return [*sdist_matches, *wheel_matches]
+
+
 def maybe_commit_version_bump(
     repo_root: Path,
     changed_paths: Sequence[Path],
@@ -430,9 +454,13 @@ def maybe_commit_version_bump(
     run_command(["git", "push", remote, "HEAD"], cwd=repo_root)
 
 
-def publish_python(repo_root: Path) -> None:
-    """Publish the Python package with uv."""
-    run_command(["uv", "publish"], cwd=repo_root)
+def publish_python(paths: ReleasePaths, target_version: SemVer) -> None:
+    """Publish only the target Python distribution files with uv."""
+    publish_files = collect_python_publish_files(paths, target_version)
+    relative_paths = [
+        str(path.relative_to(paths.repo_root)) for path in publish_files
+    ]
+    run_command(["uv", "publish", *relative_paths], cwd=paths.repo_root)
 
 
 def publish_rust(repo_root: Path) -> None:
@@ -481,7 +509,10 @@ def print_release_plan(
     print("- go test ./... (from golang/)")
     print("Publish steps:")
     print("- git push origin HEAD (after version commit)")
-    print("- uv publish")
+    print(
+        f"- uv publish dist/anp-{target_version}*.tar.gz "
+        f"dist/anp-{target_version}*.whl"
+    )
     print("- cargo publish --manifest-path rust/Cargo.toml")
     print(f"- git push {remote} {root_tag} {go_tag}")
 
@@ -546,7 +577,7 @@ def main() -> int:
     changed_paths = update_version_files(paths, target_version)
     run_release_validations(paths)
     maybe_commit_version_bump(paths.repo_root, changed_paths, target_version, args.remote)
-    publish_python(paths.repo_root)
+    publish_python(paths, target_version)
     publish_rust(paths.repo_root)
     create_and_push_tags(paths.repo_root, args.remote, root_tag, go_tag)
 
