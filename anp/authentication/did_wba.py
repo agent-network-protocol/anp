@@ -866,6 +866,60 @@ def _validate_k1_proof_binding(did_document: Dict[str, Any], did: str) -> bool:
     return compute_jwk_fingerprint(public_key) == expected_fingerprint
 
 
+def is_legacy_secp256k1_authentication_proof(did_document: Dict[str, Any]) -> bool:
+    """Return whether a DID document carries a legacy secp256k1 authentication proof.
+
+    Legacy Python clients before the V0.2 DID proof alignment could produce DID
+    documents whose top-level proof used ``proofPurpose="authentication"``
+    instead of the current ``assertionMethod`` requirement. Those documents were
+    always secp256k1-based. This helper detects that narrow compatibility shape
+    so service-side callers can accept it without weakening the default e1 rules.
+    """
+
+    proof = did_document.get("proof")
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("type") != PROOF_TYPE_SECP256K1:
+        return False
+    if proof.get("proofPurpose") != "authentication":
+        return False
+
+    verification_method_id = proof.get("verificationMethod")
+    if not isinstance(verification_method_id, str) or not verification_method_id:
+        return False
+
+    method = _find_verification_method(did_document, verification_method_id)
+    if not method:
+        return False
+    if method.get("type") != "EcdsaSecp256k1VerificationKey2019":
+        return False
+
+    if not _is_authentication_authorized_in_document(
+        did_document,
+        verification_method_id,
+    ):
+        return False
+
+    try:
+        public_key = _extract_public_key(method)
+    except ValueError:
+        return False
+
+    if not isinstance(public_key, ec.EllipticCurvePublicKey):
+        return False
+    if not isinstance(public_key.curve, ec.SECP256K1):
+        return False
+
+    did = did_document.get("id")
+    if not isinstance(did, str) or not did.startswith("did:wba:"):
+        return False
+
+    last_segment = did.split(":")[-1]
+    if last_segment.startswith("e1_"):
+        return False
+    return True
+
+
 def validate_did_document_binding(
     did_document: Dict[str, Any],
     verify_proof: bool = False,
@@ -879,6 +933,9 @@ def validate_did_document_binding(
     if last_segment.startswith("e1_"):
         return _validate_e1_proof_binding(did_document, did)
     if not last_segment.startswith("k1_"):
+        return True
+
+    if is_legacy_secp256k1_authentication_proof(did_document):
         return True
 
     if verify_proof:

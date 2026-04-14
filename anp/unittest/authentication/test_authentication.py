@@ -20,6 +20,11 @@ from anp.authentication import (
     verify_did_key_binding,
     verify_http_message_signature,
 )
+from anp.authentication.did_wba import (
+    is_legacy_secp256k1_authentication_proof,
+    validate_did_document_binding,
+)
+from anp.proof import PROOF_TYPE_SECP256K1, generate_w3c_proof
 
 
 def _load_private_key(private_key_pem: bytes):
@@ -114,6 +119,62 @@ class TestDidDocumentProfiles(unittest.TestCase):
         self.assertTrue(caught)
         self.assertIn("deprecated", str(caught[0].message).lower())
         self.assertIn(":k1_", did_document["id"])
+
+    def test_legacy_secp256k1_authentication_proof_is_detected_for_plain_legacy(self):
+        """Legacy plain secp256k1 documents should be recognized by the helper."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+            did_profile="plain_legacy",
+        )
+        did_document.pop("proof", None)
+        private_key = _load_private_key(keys["key-1"][0])
+        legacy_document = generate_w3c_proof(
+            document=did_document,
+            private_key=private_key,
+            verification_method=f'{did_document["id"]}#key-1',
+            proof_type=PROOF_TYPE_SECP256K1,
+            proof_purpose="authentication",
+        )
+
+        self.assertTrue(is_legacy_secp256k1_authentication_proof(legacy_document))
+
+    def test_legacy_secp256k1_authentication_proof_is_detected_for_k1(self):
+        """Legacy k1 secp256k1 documents should be recognized by the helper."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+            did_profile="k1",
+        )
+        did_document.pop("proof", None)
+        private_key = _load_private_key(keys["key-1"][0])
+        legacy_document = generate_w3c_proof(
+            document=did_document,
+            private_key=private_key,
+            verification_method=f'{did_document["id"]}#key-1',
+            proof_type=PROOF_TYPE_SECP256K1,
+            proof_purpose="authentication",
+        )
+
+        self.assertTrue(is_legacy_secp256k1_authentication_proof(legacy_document))
+        self.assertTrue(validate_did_document_binding(legacy_document))
+
+    def test_legacy_secp256k1_authentication_proof_rejects_e1_documents(self):
+        """The helper must not classify e1 documents as legacy-compatible."""
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+        )
+        did_document.pop("proof", None)
+        private_key = _load_private_key(keys["key-1"][0])
+        legacy_document = generate_w3c_proof(
+            document=did_document,
+            private_key=private_key,
+            verification_method=f'{did_document["id"]}#key-1',
+            proof_purpose="authentication",
+        )
+
+        self.assertFalse(is_legacy_secp256k1_authentication_proof(legacy_document))
 
 
 class TestHttpSignatureHelpers(unittest.TestCase):
