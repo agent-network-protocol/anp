@@ -1,6 +1,6 @@
 # ANP Go SDK Release Notes
 
-## Current Snapshot (0.8.3)
+## Current Snapshot (0.8.4)
 
 This Go SDK snapshot delivers the first production-oriented pure-Go implementation of the ANP core SDK surface.
 
