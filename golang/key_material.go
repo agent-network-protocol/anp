@@ -7,9 +7,13 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strings"
 
 	btcec "github.com/btcsuite/btcd/btcec/v2"
 	secp256k1ecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
@@ -25,18 +29,12 @@ const (
 	KeyTypeX25519    KeyType = "x25519"
 )
 
-const (
-	secp256k1PrivateLabel = "ANP SECP256K1 PRIVATE KEY"
-	secp256k1PublicLabel  = "ANP SECP256K1 PUBLIC KEY"
-	secp256r1PrivateLabel = "ANP SECP256R1 PRIVATE KEY"
-	secp256r1PublicLabel  = "ANP SECP256R1 PUBLIC KEY"
-	ed25519PrivateLabel   = "ANP ED25519 PRIVATE KEY"
-	ed25519PublicLabel    = "ANP ED25519 PUBLIC KEY"
-	x25519PrivateLabel    = "ANP X25519 PRIVATE KEY"
-	x25519PublicLabel     = "ANP X25519 PUBLIC KEY"
+var (
+	oidPublicKeyECDSA = asn1.ObjectIdentifier{1, 2, 840, 10045, 2, 1}
+	oidSecp256k1      = asn1.ObjectIdentifier{1, 3, 132, 0, 10}
 )
 
-// GeneratedKeyPairPEM stores ANP PEM encodings for a generated key pair.
+// GeneratedKeyPairPEM stores standard PKCS#8/SPKI PEM encodings for a key pair.
 type GeneratedKeyPairPEM struct {
 	PrivateKeyPEM string `json:"private_key_pem"`
 	PublicKeyPEM  string `json:"public_key_pem"`
@@ -241,40 +239,52 @@ func (k PublicKeyMaterial) VerifyMessage(message []byte, signature []byte) error
 	}
 }
 
-// ToPEM encodes the private key using ANP PEM labels.
+// ToPEM encodes the private key as standard PKCS#8 PEM.
 func (k PrivateKeyMaterial) ToPEM() string {
-	return string(pem.EncodeToMemory(&pem.Block{Type: privateKeyLabel(k.Type), Bytes: k.Bytes}))
+	der, err := k.toPKCS8DER()
+	if err != nil {
+		return ""
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-// ToPEM encodes the public key using ANP PEM labels.
+// ToPEM encodes the public key as standard SubjectPublicKeyInfo PEM.
 func (k PublicKeyMaterial) ToPEM() string {
-	return string(pem.EncodeToMemory(&pem.Block{Type: publicKeyLabel(k.Type), Bytes: k.Bytes}))
+	der, err := k.toSPKIDER()
+	if err != nil {
+		return ""
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
-// PrivateKeyFromPEM decodes an ANP private key PEM.
+// PrivateKeyFromPEM decodes a standard PKCS#8 private key PEM.
 func PrivateKeyFromPEM(input string) (PrivateKeyMaterial, error) {
 	block, rest := pem.Decode([]byte(input))
-	if block == nil || len(rest) > 0 {
+	if block == nil || strings.TrimSpace(string(rest)) != "" {
 		return PrivateKeyMaterial{}, &KeyMaterialError{Message: "invalid PEM structure"}
 	}
-	keyType, err := keyTypeFromPrivateLabel(block.Type)
-	if err != nil {
-		return PrivateKeyMaterial{}, err
+	if block.Type != "PRIVATE KEY" {
+		return PrivateKeyMaterial{}, &KeyMaterialError{Message: fmt.Sprintf("invalid PEM label: %s", block.Type)}
 	}
-	return PrivateKeyMaterial{Type: keyType, Bytes: append([]byte(nil), block.Bytes...)}, nil
+	if privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		return privateKeyMaterialFromStandardKey(privateKey)
+	}
+	return parseSecp256k1PKCS8(block.Bytes)
 }
 
-// PublicKeyFromPEM decodes an ANP public key PEM.
+// PublicKeyFromPEM decodes a standard SubjectPublicKeyInfo public key PEM.
 func PublicKeyFromPEM(input string) (PublicKeyMaterial, error) {
 	block, rest := pem.Decode([]byte(input))
-	if block == nil || len(rest) > 0 {
+	if block == nil || strings.TrimSpace(string(rest)) != "" {
 		return PublicKeyMaterial{}, &KeyMaterialError{Message: "invalid PEM structure"}
 	}
-	keyType, err := keyTypeFromPublicLabel(block.Type)
-	if err != nil {
-		return PublicKeyMaterial{}, err
+	if block.Type != "PUBLIC KEY" {
+		return PublicKeyMaterial{}, &KeyMaterialError{Message: fmt.Sprintf("invalid PEM label: %s", block.Type)}
 	}
-	return PublicKeyMaterial{Type: keyType, Bytes: append([]byte(nil), block.Bytes...)}, nil
+	if publicKey, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+		return publicKeyMaterialFromStandardKey(publicKey)
+	}
+	return parseSecp256k1SPKI(block.Bytes)
 }
 
 // PublicKeyToJWK converts a public key to JWK fields used by ANP helpers.
@@ -373,64 +383,219 @@ func PublicKeyFromJWK(jwk map[string]any) (PublicKeyMaterial, error) {
 	}
 }
 
-func privateKeyLabel(keyType KeyType) string {
-	switch keyType {
+func (k PrivateKeyMaterial) toPKCS8DER() ([]byte, error) {
+	switch k.Type {
 	case KeyTypeSecp256k1:
-		return secp256k1PrivateLabel
+		return marshalSecp256k1PKCS8(k.Bytes)
 	case KeyTypeSecp256r1:
-		return secp256r1PrivateLabel
+		privateKey, err := loadP256PrivateKey(k.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return x509.MarshalPKCS8PrivateKey(privateKey)
 	case KeyTypeEd25519:
-		return ed25519PrivateLabel
+		if len(k.Bytes) != ed25519.SeedSize {
+			return nil, &KeyMaterialError{Message: "invalid ed25519 private key bytes"}
+		}
+		return x509.MarshalPKCS8PrivateKey(ed25519.NewKeyFromSeed(k.Bytes))
 	case KeyTypeX25519:
-		return x25519PrivateLabel
+		privateKey, err := ecdh.X25519().NewPrivateKey(k.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return x509.MarshalPKCS8PrivateKey(privateKey)
 	default:
-		return ""
+		return nil, &KeyMaterialError{Message: "unsupported key type"}
 	}
 }
 
-func publicKeyLabel(keyType KeyType) string {
-	switch keyType {
+func (k PublicKeyMaterial) toSPKIDER() ([]byte, error) {
+	switch k.Type {
 	case KeyTypeSecp256k1:
-		return secp256k1PublicLabel
+		return marshalSecp256k1SPKI(k.Bytes)
 	case KeyTypeSecp256r1:
-		return secp256r1PublicLabel
+		publicKey, err := loadP256PublicKey(k.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return x509.MarshalPKIXPublicKey(publicKey)
 	case KeyTypeEd25519:
-		return ed25519PublicLabel
+		if len(k.Bytes) != ed25519.PublicKeySize {
+			return nil, &KeyMaterialError{Message: "invalid ed25519 public key bytes"}
+		}
+		return x509.MarshalPKIXPublicKey(ed25519.PublicKey(k.Bytes))
 	case KeyTypeX25519:
-		return x25519PublicLabel
+		publicKey, err := ecdh.X25519().NewPublicKey(k.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return x509.MarshalPKIXPublicKey(publicKey)
 	default:
-		return ""
+		return nil, &KeyMaterialError{Message: "unsupported key type"}
 	}
 }
 
-func keyTypeFromPrivateLabel(label string) (KeyType, error) {
-	switch label {
-	case secp256k1PrivateLabel:
-		return KeyTypeSecp256k1, nil
-	case secp256r1PrivateLabel:
-		return KeyTypeSecp256r1, nil
-	case ed25519PrivateLabel:
-		return KeyTypeEd25519, nil
-	case x25519PrivateLabel:
-		return KeyTypeX25519, nil
-	default:
-		return "", &KeyMaterialError{Message: fmt.Sprintf("invalid PEM label: %s", label)}
+func privateKeyMaterialFromStandardKey(key any) (PrivateKeyMaterial, error) {
+	switch value := key.(type) {
+	case ed25519.PrivateKey:
+		return PrivateKeyMaterial{Type: KeyTypeEd25519, Bytes: append([]byte(nil), value.Seed()...)}, nil
+	case *ecdsa.PrivateKey:
+		if isP256Curve(value.Curve) {
+			return PrivateKeyMaterial{Type: KeyTypeSecp256r1, Bytes: padScalar(value.D.Bytes(), 32)}, nil
+		}
+	case *ecdh.PrivateKey:
+		if value.Curve() == ecdh.X25519() {
+			return PrivateKeyMaterial{Type: KeyTypeX25519, Bytes: append([]byte(nil), value.Bytes()...)}, nil
+		}
+	}
+	return PrivateKeyMaterial{}, &KeyMaterialError{Message: "unsupported key type"}
+}
+
+func publicKeyMaterialFromStandardKey(key any) (PublicKeyMaterial, error) {
+	switch value := key.(type) {
+	case ed25519.PublicKey:
+		if len(value) != ed25519.PublicKeySize {
+			return PublicKeyMaterial{}, &KeyMaterialError{Message: "invalid ed25519 public key bytes"}
+		}
+		return PublicKeyMaterial{Type: KeyTypeEd25519, Bytes: append([]byte(nil), value...)}, nil
+	case *ecdsa.PublicKey:
+		if isP256Curve(value.Curve) {
+			return PublicKeyMaterial{
+				Type:  KeyTypeSecp256r1,
+				Bytes: elliptic.MarshalCompressed(elliptic.P256(), value.X, value.Y),
+			}, nil
+		}
+	case *ecdh.PublicKey:
+		if value.Curve() == ecdh.X25519() {
+			return PublicKeyMaterial{Type: KeyTypeX25519, Bytes: append([]byte(nil), value.Bytes()...)}, nil
+		}
+	}
+	return PublicKeyMaterial{}, &KeyMaterialError{Message: "unsupported key type"}
+}
+
+type pkcs8PrivateKeyInfo struct {
+	Version    int
+	Algorithm  pkix.AlgorithmIdentifier
+	PrivateKey []byte
+}
+
+type secp256k1ECPrivateKey struct {
+	Version       int
+	PrivateKey    []byte
+	NamedCurveOID asn1.ObjectIdentifier `asn1:"optional,explicit,tag:0"`
+	PublicKey     asn1.BitString        `asn1:"optional,explicit,tag:1"`
+}
+
+type subjectPublicKeyInfo struct {
+	Algorithm pkix.AlgorithmIdentifier
+	PublicKey asn1.BitString
+}
+
+func marshalSecp256k1PKCS8(raw []byte) ([]byte, error) {
+	scalar, err := normalizeSecp256k1Scalar(raw)
+	if err != nil {
+		return nil, err
+	}
+	_, publicKey := btcec.PrivKeyFromBytes(scalar)
+	sec1, err := asn1.Marshal(secp256k1ECPrivateKey{
+		Version:       1,
+		PrivateKey:    scalar,
+		NamedCurveOID: oidSecp256k1,
+		PublicKey: asn1.BitString{
+			Bytes:     publicKey.SerializeUncompressed(),
+			BitLength: len(publicKey.SerializeUncompressed()) * 8,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(pkcs8PrivateKeyInfo{
+		Version:    0,
+		Algorithm:  secp256k1AlgorithmIdentifier(),
+		PrivateKey: sec1,
+	})
+}
+
+func parseSecp256k1PKCS8(der []byte) (PrivateKeyMaterial, error) {
+	var info pkcs8PrivateKeyInfo
+	rest, err := asn1.Unmarshal(der, &info)
+	if err != nil || len(rest) != 0 || !isSecp256k1Algorithm(info.Algorithm) {
+		return PrivateKeyMaterial{}, &KeyMaterialError{Message: "unsupported key type"}
+	}
+	var ecKey secp256k1ECPrivateKey
+	rest, err = asn1.Unmarshal(info.PrivateKey, &ecKey)
+	if err != nil || len(rest) != 0 || ecKey.Version != 1 {
+		return PrivateKeyMaterial{}, &KeyMaterialError{Message: "invalid key bytes"}
+	}
+	scalar, err := normalizeSecp256k1Scalar(ecKey.PrivateKey)
+	if err != nil {
+		return PrivateKeyMaterial{}, err
+	}
+	return PrivateKeyMaterial{Type: KeyTypeSecp256k1, Bytes: scalar}, nil
+}
+
+func marshalSecp256k1SPKI(raw []byte) ([]byte, error) {
+	publicKey, err := btcec.ParsePubKey(raw)
+	if err != nil {
+		return nil, err
+	}
+	uncompressed := publicKey.SerializeUncompressed()
+	return asn1.Marshal(subjectPublicKeyInfo{
+		Algorithm: secp256k1AlgorithmIdentifier(),
+		PublicKey: asn1.BitString{
+			Bytes:     uncompressed,
+			BitLength: len(uncompressed) * 8,
+		},
+	})
+}
+
+func parseSecp256k1SPKI(der []byte) (PublicKeyMaterial, error) {
+	var info subjectPublicKeyInfo
+	rest, err := asn1.Unmarshal(der, &info)
+	if err != nil || len(rest) != 0 || !isSecp256k1Algorithm(info.Algorithm) {
+		return PublicKeyMaterial{}, &KeyMaterialError{Message: "unsupported key type"}
+	}
+	if info.PublicKey.BitLength%8 != 0 {
+		return PublicKeyMaterial{}, &KeyMaterialError{Message: "invalid key bytes"}
+	}
+	publicKey, err := btcec.ParsePubKey(info.PublicKey.RightAlign())
+	if err != nil {
+		return PublicKeyMaterial{}, &KeyMaterialError{Message: "invalid key bytes"}
+	}
+	return PublicKeyMaterial{Type: KeyTypeSecp256k1, Bytes: publicKey.SerializeCompressed()}, nil
+}
+
+func secp256k1AlgorithmIdentifier() pkix.AlgorithmIdentifier {
+	parameters, _ := asn1.Marshal(oidSecp256k1)
+	return pkix.AlgorithmIdentifier{
+		Algorithm:  oidPublicKeyECDSA,
+		Parameters: asn1.RawValue{FullBytes: parameters},
 	}
 }
 
-func keyTypeFromPublicLabel(label string) (KeyType, error) {
-	switch label {
-	case secp256k1PublicLabel:
-		return KeyTypeSecp256k1, nil
-	case secp256r1PublicLabel:
-		return KeyTypeSecp256r1, nil
-	case ed25519PublicLabel:
-		return KeyTypeEd25519, nil
-	case x25519PublicLabel:
-		return KeyTypeX25519, nil
-	default:
-		return "", &KeyMaterialError{Message: fmt.Sprintf("invalid PEM label: %s", label)}
+func isSecp256k1Algorithm(algorithm pkix.AlgorithmIdentifier) bool {
+	if !algorithm.Algorithm.Equal(oidPublicKeyECDSA) {
+		return false
 	}
+	var curve asn1.ObjectIdentifier
+	rest, err := asn1.Unmarshal(algorithm.Parameters.FullBytes, &curve)
+	return err == nil && len(rest) == 0 && curve.Equal(oidSecp256k1)
+}
+
+func normalizeSecp256k1Scalar(raw []byte) ([]byte, error) {
+	if len(raw) == 0 || len(raw) > 32 {
+		return nil, &KeyMaterialError{Message: "invalid secp256k1 private key bytes"}
+	}
+	scalar := padScalar(raw, 32)
+	value := new(big.Int).SetBytes(scalar)
+	if value.Sign() <= 0 || value.Cmp(btcec.S256().Params().N) >= 0 {
+		return nil, &KeyMaterialError{Message: "invalid secp256k1 private key bytes"}
+	}
+	return scalar, nil
+}
+
+func isP256Curve(curve elliptic.Curve) bool {
+	return curve == elliptic.P256() || (curve != nil && curve.Params().Name == elliptic.P256().Params().Name)
 }
 
 func loadP256PrivateKey(raw []byte) (*ecdsa.PrivateKey, error) {

@@ -16,6 +16,7 @@ use p256::ecdsa::{
     Signature as P256Signature, SigningKey as Secp256r1SigningKey,
     VerifyingKey as Secp256r1VerifyingKey,
 };
+use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -97,40 +98,40 @@ impl PrivateKeyMaterial {
 
     pub fn to_pem(&self) -> String {
         match self {
-            Self::Secp256k1(key) => encode_pem("ANP SECP256K1 PRIVATE KEY", &key.to_bytes()),
-            Self::Secp256r1(key) => encode_pem("ANP SECP256R1 PRIVATE KEY", &key.to_bytes()),
-            Self::Ed25519(key) => encode_pem("ANP ED25519 PRIVATE KEY", &key.to_bytes()),
-            Self::X25519(key) => encode_pem("ANP X25519 PRIVATE KEY", &key.to_bytes()),
+            Self::Secp256k1(key) => key
+                .to_pkcs8_pem(LineEnding::LF)
+                .expect("secp256k1 private key should encode as PKCS#8")
+                .to_string(),
+            Self::Secp256r1(key) => key
+                .to_pkcs8_pem(LineEnding::LF)
+                .expect("secp256r1 private key should encode as PKCS#8")
+                .to_string(),
+            Self::Ed25519(key) => encode_pem("PRIVATE KEY", &ed25519_pkcs8_der(&key.to_bytes())),
+            Self::X25519(key) => encode_pem("PRIVATE KEY", &x25519_pkcs8_der(&key.to_bytes())),
         }
     }
 
     pub fn from_pem(input: &str) -> Result<Self, KeyMaterialError> {
         let (label, bytes) = decode_pem(input)?;
-        match label.as_str() {
-            "ANP SECP256K1 PRIVATE KEY" => {
-                let key = Secp256k1SigningKey::from_slice(&bytes)
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Secp256k1(key))
-            }
-            "ANP SECP256R1 PRIVATE KEY" => {
-                let key = Secp256r1SigningKey::from_slice(&bytes)
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Secp256r1(key))
-            }
-            "ANP ED25519 PRIVATE KEY" => {
-                let bytes: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Ed25519(Ed25519SigningKey::from_bytes(&bytes)))
-            }
-            "ANP X25519 PRIVATE KEY" => {
-                let bytes: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::X25519(X25519StaticSecret::from(bytes)))
-            }
-            _ => Err(KeyMaterialError::InvalidPemLabel(label)),
+        if label != "PRIVATE KEY" {
+            return Err(KeyMaterialError::InvalidPemLabel(label));
         }
+        if let Ok(bytes) = ed25519_private_from_pkcs8_der(&bytes) {
+            return Ok(Self::Ed25519(Ed25519SigningKey::from_bytes(&bytes)));
+        }
+        if let Ok(key) = Ed25519SigningKey::from_pkcs8_der(&bytes) {
+            return Ok(Self::Ed25519(key));
+        }
+        if let Ok(key) = Secp256r1SigningKey::from_pkcs8_der(&bytes) {
+            return Ok(Self::Secp256r1(key));
+        }
+        if let Ok(key) = Secp256k1SigningKey::from_pkcs8_der(&bytes) {
+            return Ok(Self::Secp256k1(key));
+        }
+        if let Ok(bytes) = x25519_private_from_pkcs8_der(&bytes) {
+            return Ok(Self::X25519(X25519StaticSecret::from(bytes)));
+        }
+        Err(KeyMaterialError::InvalidKeyBytes)
     }
 }
 
@@ -190,48 +191,40 @@ impl PublicKeyMaterial {
 
     pub fn to_pem(&self) -> String {
         match self {
-            Self::Secp256k1(key) => encode_pem(
-                "ANP SECP256K1 PUBLIC KEY",
-                key.to_encoded_point(true).as_bytes(),
-            ),
-            Self::Secp256r1(key) => encode_pem(
-                "ANP SECP256R1 PUBLIC KEY",
-                key.to_encoded_point(true).as_bytes(),
-            ),
-            Self::Ed25519(key) => encode_pem("ANP ED25519 PUBLIC KEY", &key.to_bytes()),
-            Self::X25519(key) => encode_pem("ANP X25519 PUBLIC KEY", key),
+            Self::Secp256k1(key) => key
+                .to_public_key_pem(LineEnding::LF)
+                .expect("secp256k1 public key should encode as SPKI"),
+            Self::Secp256r1(key) => key
+                .to_public_key_pem(LineEnding::LF)
+                .expect("secp256r1 public key should encode as SPKI"),
+            Self::Ed25519(key) => encode_pem("PUBLIC KEY", &ed25519_spki_der(&key.to_bytes())),
+            Self::X25519(key) => encode_pem("PUBLIC KEY", &x25519_spki_der(key)),
         }
     }
 
     pub fn from_pem(input: &str) -> Result<Self, KeyMaterialError> {
         let (label, bytes) = decode_pem(input)?;
-        match label.as_str() {
-            "ANP SECP256K1 PUBLIC KEY" => {
-                let key = Secp256k1VerifyingKey::from_sec1_bytes(&bytes)
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Secp256k1(key))
-            }
-            "ANP SECP256R1 PUBLIC KEY" => {
-                let key = Secp256r1VerifyingKey::from_sec1_bytes(&bytes)
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Secp256r1(key))
-            }
-            "ANP ED25519 PUBLIC KEY" => {
-                let bytes: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                let key = Ed25519VerifyingKey::from_bytes(&bytes)
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::Ed25519(key))
-            }
-            "ANP X25519 PUBLIC KEY" => {
-                let bytes: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
-                Ok(Self::X25519(bytes))
-            }
-            _ => Err(KeyMaterialError::InvalidPemLabel(label)),
+        if label != "PUBLIC KEY" {
+            return Err(KeyMaterialError::InvalidPemLabel(label));
         }
+        if let Ok(bytes) = ed25519_public_from_spki_der(&bytes) {
+            let key = Ed25519VerifyingKey::from_bytes(&bytes)
+                .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+            return Ok(Self::Ed25519(key));
+        }
+        if let Ok(key) = Ed25519VerifyingKey::from_public_key_der(&bytes) {
+            return Ok(Self::Ed25519(key));
+        }
+        if let Ok(key) = Secp256r1VerifyingKey::from_public_key_der(&bytes) {
+            return Ok(Self::Secp256r1(key));
+        }
+        if let Ok(key) = Secp256k1VerifyingKey::from_public_key_der(&bytes) {
+            return Ok(Self::Secp256k1(key));
+        }
+        if let Ok(bytes) = x25519_public_from_spki_der(&bytes) {
+            return Ok(Self::X25519(bytes));
+        }
+        Err(KeyMaterialError::InvalidKeyBytes)
     }
 }
 
@@ -301,6 +294,83 @@ pub(crate) fn decode_pem(input: &str) -> Result<(String, Vec<u8>), KeyMaterialEr
         .decode(body.as_bytes())
         .map_err(|_| KeyMaterialError::InvalidPemStructure)?;
     Ok((label, bytes))
+}
+
+const ED25519_PKCS8_PREFIX: &[u8] = &[
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+];
+const ED25519_SPKI_PREFIX: &[u8] = &[
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+];
+const X25519_PKCS8_PREFIX: &[u8] = &[
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+];
+const X25519_SPKI_PREFIX: &[u8] = &[
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00,
+];
+
+fn ed25519_pkcs8_der(private_key: &[u8; 32]) -> Vec<u8> {
+    okp_pkcs8_der(ED25519_PKCS8_PREFIX, private_key)
+}
+
+fn ed25519_private_from_pkcs8_der(der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    okp_private_from_pkcs8_der(ED25519_PKCS8_PREFIX, der)
+}
+
+fn ed25519_spki_der(public_key: &[u8; 32]) -> Vec<u8> {
+    okp_spki_der(ED25519_SPKI_PREFIX, public_key)
+}
+
+fn ed25519_public_from_spki_der(der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    okp_public_from_spki_der(ED25519_SPKI_PREFIX, der)
+}
+
+fn x25519_pkcs8_der(private_key: &[u8; 32]) -> Vec<u8> {
+    okp_pkcs8_der(X25519_PKCS8_PREFIX, private_key)
+}
+
+fn x25519_private_from_pkcs8_der(der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    okp_private_from_pkcs8_der(X25519_PKCS8_PREFIX, der)
+}
+
+fn x25519_spki_der(public_key: &[u8; 32]) -> Vec<u8> {
+    okp_spki_der(X25519_SPKI_PREFIX, public_key)
+}
+
+fn x25519_public_from_spki_der(der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    okp_public_from_spki_der(X25519_SPKI_PREFIX, der)
+}
+
+fn okp_pkcs8_der(prefix: &[u8], private_key: &[u8; 32]) -> Vec<u8> {
+    let mut der = Vec::with_capacity(prefix.len() + private_key.len());
+    der.extend_from_slice(prefix);
+    der.extend_from_slice(private_key);
+    der
+}
+
+fn okp_private_from_pkcs8_der(prefix: &[u8], der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    if der.len() != prefix.len() + 32 || !der.starts_with(prefix) {
+        return Err(KeyMaterialError::InvalidKeyBytes);
+    }
+    der[prefix.len()..]
+        .try_into()
+        .map_err(|_| KeyMaterialError::InvalidKeyBytes)
+}
+
+fn okp_spki_der(prefix: &[u8], public_key: &[u8; 32]) -> Vec<u8> {
+    let mut der = Vec::with_capacity(prefix.len() + public_key.len());
+    der.extend_from_slice(prefix);
+    der.extend_from_slice(public_key);
+    der
+}
+
+fn okp_public_from_spki_der(prefix: &[u8], der: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    if der.len() != prefix.len() + 32 || !der.starts_with(prefix) {
+        return Err(KeyMaterialError::InvalidKeyBytes);
+    }
+    der[prefix.len()..]
+        .try_into()
+        .map_err(|_| KeyMaterialError::InvalidKeyBytes)
 }
 
 fn normalize_ecdsa_signature(
