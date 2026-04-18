@@ -25,3 +25,6 @@ uv.lock
 
 examples/python/did_wba_examples/generated/*
 .omx/
+
+dart/.dart_tool/
+dart/build/
