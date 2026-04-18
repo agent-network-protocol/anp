@@ -24,3 +24,4 @@ uv.lock
 .cursor/
 
 examples/python/did_wba_examples/generated/*
+.omx/
