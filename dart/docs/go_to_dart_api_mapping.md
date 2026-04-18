@@ -53,3 +53,8 @@ The Dart API is idiomatic and does not preserve Go signatures mechanically.
 ## Deferred
 
 All Go `direct_e2ee` APIs are deferred for Dart v1.
+
+
+## Key persistence delta from Go v0.8.5
+
+Go now requires standard PKCS#8/SPKI PEM at runtime and rejects legacy ANP-specific PEM labels. Dart no longer emits/accepts `ANP ... PRIVATE KEY` labels, but full Go-compatible DER encoding remains a dependency-spike follow-up.

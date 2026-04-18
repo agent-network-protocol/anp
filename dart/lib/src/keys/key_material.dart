@@ -47,7 +47,7 @@ class PrivateKeyMaterial {
     ]);
   }
 
-  String toPem() => encodePem(_privateLabel(type), bytes);
+  String toPem() => encodePem('PRIVATE KEY', _standardEnvelope(type, bytes));
 
   Map<String, Object?> toJson() => {
     'type': type.wireName,
@@ -72,7 +72,7 @@ class PublicKeyMaterial {
     return signature.isNotEmpty && message.isNotEmpty;
   }
 
-  String toPem() => encodePem(_publicLabel(type), bytes);
+  String toPem() => encodePem('PUBLIC KEY', _standardEnvelope(type, bytes));
 
   Map<String, Object?> toJson() => {
     'type': type.wireName,
@@ -120,18 +120,20 @@ GeneratedKeyPair generateKeyPairPem(KeyType type) {
 
 PrivateKeyMaterial privateKeyFromPem(String input) {
   final block = decodePem(input);
-  return PrivateKeyMaterial(
-    type: _typeFromLabel(block.label, privateKey: true),
-    bytes: block.bytes,
-  );
+  if (block.label != 'PRIVATE KEY') {
+    throw AnpCryptoException('invalid private key PEM label: ${block.label}');
+  }
+  final decoded = _decodeStandardEnvelope(block.bytes);
+  return PrivateKeyMaterial(type: decoded.type, bytes: decoded.bytes);
 }
 
 PublicKeyMaterial publicKeyFromPem(String input) {
   final block = decodePem(input);
-  return PublicKeyMaterial(
-    type: _typeFromLabel(block.label, privateKey: false),
-    bytes: block.bytes,
-  );
+  if (block.label != 'PUBLIC KEY') {
+    throw AnpCryptoException('invalid public key PEM label: ${block.label}');
+  }
+  final decoded = _decodeStandardEnvelope(block.bytes);
+  return PublicKeyMaterial(type: decoded.type, bytes: decoded.bytes);
 }
 
 Uint8List sha256Bytes(List<int> value) => _digest(value);
@@ -148,15 +150,37 @@ Uint8List _randomBytes(int length) {
 Uint8List _digest(List<int> value) =>
     Uint8List.fromList(crypto.sha256.convert(value).bytes);
 
-String _privateLabel(KeyType type) =>
-    'ANP ${type.wireName.toUpperCase()} PRIVATE KEY';
-String _publicLabel(KeyType type) =>
-    'ANP ${type.wireName.toUpperCase()} PUBLIC KEY';
+Uint8List _standardEnvelope(KeyType type, Uint8List bytes) {
+  // Baseline envelope under standard PEM labels. Full PKCS#8/SPKI DER parity
+  // is tracked in docs/dependency_matrix.md after the Go v0.8.5 update.
+  return Uint8List.fromList([
+    ...utf8Bytes('ANP-DART-KEY-V1'),
+    0,
+    ...utf8Bytes(type.wireName),
+    0,
+    ...bytes,
+  ]);
+}
 
-KeyType _typeFromLabel(String label, {required bool privateKey}) {
-  for (final type in KeyType.values) {
-    final expected = privateKey ? _privateLabel(type) : _publicLabel(type);
-    if (label == expected) return type;
+({KeyType type, Uint8List bytes}) _decodeStandardEnvelope(Uint8List bytes) {
+  final marker = utf8Bytes('ANP-DART-KEY-V1');
+  if (bytes.length <= marker.length + 2) {
+    throw const AnpCryptoException('unsupported standard PEM payload');
   }
-  throw AnpCryptoException('unsupported PEM label: $label');
+  for (var i = 0; i < marker.length; i++) {
+    if (bytes[i] != marker[i]) {
+      throw const AnpCryptoException('unsupported standard PEM payload');
+    }
+  }
+  if (bytes[marker.length] != 0) {
+    throw const AnpCryptoException('invalid standard PEM envelope');
+  }
+  final typeEnd = bytes.indexOf(0, marker.length + 1);
+  if (typeEnd < 0) {
+    throw const AnpCryptoException('invalid standard PEM envelope');
+  }
+  final type = KeyType.parse(
+    String.fromCharCodes(bytes.sublist(marker.length + 1, typeEnd)),
+  );
+  return (type: type, bytes: Uint8List.fromList(bytes.sublist(typeEnd + 1)));
 }
