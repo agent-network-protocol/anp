@@ -65,6 +65,33 @@ class AnpMessageServiceOptions {
   final List<String> accept;
 }
 
+class ParsedAuthHeader {
+  const ParsedAuthHeader({
+    required this.did,
+    required this.nonce,
+    required this.timestamp,
+    required this.verificationMethod,
+    required this.signature,
+    this.version = '1.1',
+  });
+
+  final String did;
+  final String nonce;
+  final String timestamp;
+  final String verificationMethod;
+  final String signature;
+  final String version;
+
+  JsonMap toJson() => {
+    'v': version,
+    'did': did,
+    'nonce': nonce,
+    'timestamp': timestamp,
+    'verification_method': verificationMethod,
+    'signature': signature,
+  };
+}
+
 class DidResolutionOptions {
   const DidResolutionOptions({
     this.baseUrlOverride,
@@ -80,17 +107,17 @@ class DidResolutionOptions {
 class HttpSignatureOptions {
   const HttpSignatureOptions({
     this.keyId,
-    this.created,
-    this.expires,
+    this.createdSeconds,
+    this.expiresSeconds,
     this.nonce,
-    this.label = 'sig1',
+    this.coveredComponents = const <String>[],
   });
 
   final String? keyId;
-  final DateTime? created;
-  final DateTime? expires;
+  final int? createdSeconds;
+  final int? expiresSeconds;
   final String? nonce;
-  final String label;
+  final List<String> coveredComponents;
 }
 
 class SignatureMetadata {
@@ -99,20 +126,30 @@ class SignatureMetadata {
     required this.label,
     required this.signatureInput,
     required this.signature,
+    this.components = const <String>[],
+    this.nonce,
+    this.created = 0,
+    this.expires,
   });
 
   final String keyId;
   final String label;
   final String signatureInput;
   final Uint8List signature;
+  final List<String> components;
+  final String? nonce;
+  final int created;
+  final int? expires;
 }
 
 abstract interface class MessageSigner {
   String get keyId;
+  KeyType? get keyType;
   Future<Uint8List> sign(List<int> message);
 }
 
 abstract interface class MessageVerifier {
+  KeyType? keyTypeFor(String keyId) => null;
   Future<bool> verify(List<int> message, List<int> signature, String keyId);
 }
 
@@ -127,6 +164,9 @@ class PrivateKeyMessageSigner implements MessageSigner {
   final PrivateKeyMaterial privateKey;
 
   @override
+  KeyType get keyType => privateKey.type;
+
+  @override
   Future<Uint8List> sign(List<int> message) async => privateKey.sign(message);
 }
 
@@ -134,6 +174,9 @@ class PublicKeyMessageVerifier implements MessageVerifier {
   const PublicKeyMessageVerifier(this.publicKeysById);
 
   final Map<String, PublicKeyMaterial> publicKeysById;
+
+  @override
+  KeyType? keyTypeFor(String keyId) => publicKeysById[keyId]?.type;
 
   @override
   Future<bool> verify(

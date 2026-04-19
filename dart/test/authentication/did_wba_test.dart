@@ -12,29 +12,53 @@ void main() {
     expect(bundle.keys, contains(vmKeyAuth));
   });
 
-  test('http signature headers verify through injected verifier', () async {
-    final key = generatePrivateKeyMaterial(KeyType.ed25519);
-    final signer = PrivateKeyMessageSigner(
-      keyId: 'did:wba:example.com#key-1',
-      privateKey: key,
-    );
-    final verifier = PublicKeyMessageVerifier({signer.keyId: key.publicKey()});
+  test('http signature headers verify through DID document', () async {
+    final bundle = createDidWbaDocument('example.com');
     final body = [1, 2, 3];
     final headers = await generateHttpSignatureHeaders(
-      'POST',
-      'https://example.com/rpc',
-      signer,
-      body,
-    );
-    expect(
-      await verifyHttpMessageSignature(
-        'POST',
-        'https://example.com/rpc',
-        verifier,
-        headers,
-        body,
+      didDocument: bundle.didDocument,
+      requestMethod: 'POST',
+      requestUrl: 'https://example.com/rpc',
+      privateKey: bundle.keys[vmKeyAuth]!.privateKey,
+      body: body,
+      options: const HttpSignatureOptions(
+        createdSeconds: 1,
+        expiresSeconds: 301,
+        nonce: 'nonce',
       ),
-      isTrue,
     );
+    final metadata = await verifyHttpMessageSignature(
+      didDocument: bundle.didDocument,
+      requestMethod: 'POST',
+      requestUrl: 'https://example.com/rpc',
+      headers: headers,
+      body: body,
+    );
+    expect(metadata.keyId, '${bundle.did}#key-1');
+  });
+
+  test('legacy auth header and json verify', () async {
+    final bundle = createDidWbaDocument('example.com');
+    final privateKey = bundle.keys[vmKeyAuth]!.privateKey;
+    final header = await generateAuthHeader(
+      bundle.didDocument,
+      'api.example.com',
+      privateKey,
+      nonce: 'nonce',
+      timestamp: '2026-04-19T00:00:00Z',
+    );
+    await verifyAuthHeaderSignature(
+      header,
+      bundle.didDocument,
+      'api.example.com',
+    );
+    final json = await generateAuthJson(
+      bundle.didDocument,
+      'api.example.com',
+      privateKey,
+      nonce: 'nonce',
+      timestamp: '2026-04-19T00:00:00Z',
+    );
+    await verifyAuthJsonSignature(json, bundle.didDocument, 'api.example.com');
   });
 }

@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import '../codec/base64.dart';
+import '../codec/canonical_json.dart';
+import '../errors.dart';
 import '../keys/keys.dart';
 import 'types.dart';
 import 'verification_methods.dart';
@@ -135,32 +139,203 @@ bool isAssertionMethodAuthorized(
   verificationMethodId,
 );
 
-String generateAuthHeader(
-  String did,
-  MessageSigner signer, {
-  DateTime? created,
-}) {
-  final timestamp = (created ?? DateTime.now().toUtc()).toIso8601String();
-  final payload = '$did|${signer.keyId}|$timestamp';
-  // This sync facade is for simple examples; production callers should use generateAuthJson.
-  return 'DIDWba did="$did", keyId="${signer.keyId}", created="$timestamp", payload="${encodeBase64Url(payload.codeUnits)}"';
+Future<String> generateAuthHeader(
+  JsonMap didDocument,
+  String serviceDomain,
+  PrivateKeyMaterial privateKey, {
+  String version = '1.1',
+  String? nonce,
+  String? timestamp,
+}) async {
+  final payload = await _generateAuthPayload(
+    didDocument,
+    serviceDomain,
+    privateKey,
+    version: version,
+    nonce: nonce,
+    timestamp: timestamp,
+  );
+  return 'DIDWba v="${payload.version}", did="${payload.did}", nonce="${payload.nonce}", timestamp="${payload.timestamp}", verification_method="${payload.verificationMethod}", signature="${payload.signature}"';
 }
 
-Future<JsonMap> generateAuthJson(
-  String did,
-  MessageSigner signer, {
-  DateTime? created,
+Future<String> generateAuthJson(
+  JsonMap didDocument,
+  String serviceDomain,
+  PrivateKeyMaterial privateKey, {
+  String version = '1.1',
+  String? nonce,
+  String? timestamp,
 }) async {
-  final timestamp = (created ?? DateTime.now().toUtc()).toIso8601String();
-  final payload = '$did|${signer.keyId}|$timestamp';
-  final signature = await signer.sign(payload.codeUnits);
-  return {
-    'did': did,
-    'keyId': signer.keyId,
-    'created': timestamp,
-    'signature': encodeBase64Url(signature),
-  };
+  final payload = await _generateAuthPayload(
+    didDocument,
+    serviceDomain,
+    privateKey,
+    version: version,
+    nonce: nonce,
+    timestamp: timestamp,
+  );
+  return jsonEncode(payload.toJson());
 }
+
+ParsedAuthHeader extractAuthHeaderParts(String authHeader) {
+  if (!authHeader.trim().startsWith('DIDWba')) {
+    throw const AnpAuthenticationException(
+      'authentication header must start with DIDWba',
+    );
+  }
+  String field(String name) {
+    final match = RegExp(
+      '$name="([^"]+)"',
+      caseSensitive: false,
+    ).firstMatch(authHeader);
+    if (match == null) {
+      throw AnpAuthenticationException(
+        'missing field in authorization header: $name',
+      );
+    }
+    return match.group(1)!;
+  }
+
+  return ParsedAuthHeader(
+    did: field('did'),
+    nonce: field('nonce'),
+    timestamp: field('timestamp'),
+    verificationMethod: field('verification_method'),
+    signature: field('signature'),
+    version:
+        RegExp(
+          'v="([^"]+)"',
+          caseSensitive: false,
+        ).firstMatch(authHeader)?.group(1) ??
+        '1.1',
+  );
+}
+
+Future<void> verifyAuthHeaderSignature(
+  String authHeader,
+  JsonMap didDocument,
+  String serviceDomain,
+) async => _verifyAuthPayload(
+  extractAuthHeaderParts(authHeader),
+  didDocument,
+  serviceDomain,
+);
+
+Future<void> verifyAuthJsonSignature(
+  String authJson,
+  JsonMap didDocument,
+  String serviceDomain,
+) async {
+  final payload = jsonDecode(authJson);
+  if (payload is! Map) {
+    throw const AnpAuthenticationException('invalid auth JSON');
+  }
+  await _verifyAuthPayload(
+    ParsedAuthHeader(
+      did: payload['did']?.toString() ?? '',
+      nonce: payload['nonce']?.toString() ?? '',
+      timestamp: payload['timestamp']?.toString() ?? '',
+      verificationMethod: payload['verification_method']?.toString() ?? '',
+      signature: payload['signature']?.toString() ?? '',
+      version: payload['v']?.toString() ?? '1.1',
+    ),
+    didDocument,
+    serviceDomain,
+  );
+}
+
+Future<ParsedAuthHeader> _generateAuthPayload(
+  JsonMap didDocument,
+  String serviceDomain,
+  PrivateKeyMaterial privateKey, {
+  required String version,
+  String? nonce,
+  String? timestamp,
+}) async {
+  final did = didDocument['id']?.toString() ?? '';
+  if (did.isEmpty) {
+    throw const AnpAuthenticationException('invalid DID document');
+  }
+  final fragment = _selectAuthenticationFragment(didDocument);
+  final actualNonce = nonce ?? encodeBase64Url(_nonceBytes());
+  final actualTimestamp = timestamp ?? _isoSeconds(DateTime.now().toUtc());
+  final payload = <String, Object?>{
+    'nonce': actualNonce,
+    'timestamp': actualTimestamp,
+    _domainFieldForVersion(version): serviceDomain,
+    'did': did,
+  };
+  final contentHash = sha256Bytes(canonicalJsonBytes(payload));
+  return ParsedAuthHeader(
+    did: did,
+    nonce: actualNonce,
+    timestamp: actualTimestamp,
+    verificationMethod: fragment,
+    signature: encodeBase64Url(privateKey.sign(contentHash)),
+    version: version.isEmpty ? '1.1' : version,
+  );
+}
+
+Future<void> _verifyAuthPayload(
+  ParsedAuthHeader parsed,
+  JsonMap didDocument,
+  String serviceDomain,
+) async {
+  final did = didDocument['id']?.toString() ?? '';
+  if (did.toLowerCase() != parsed.did.toLowerCase()) {
+    throw const AnpAuthenticationException('verification failed');
+  }
+  final payload = <String, Object?>{
+    'nonce': parsed.nonce,
+    'timestamp': parsed.timestamp,
+    _domainFieldForVersion(parsed.version): serviceDomain,
+    'did': parsed.did,
+  };
+  final methodId = '${parsed.did}#${parsed.verificationMethod}';
+  final method = findVerificationMethod(didDocument, methodId);
+  if (method == null) {
+    throw const AnpAuthenticationException('verification method not found');
+  }
+  final publicKey = extractPublicKey(method);
+  if (!publicKey.verify(
+    sha256Bytes(canonicalJsonBytes(payload)),
+    decodeBase64Url(parsed.signature),
+  )) {
+    throw const AnpAuthenticationException('verification failed');
+  }
+}
+
+String _selectAuthenticationFragment(JsonMap didDocument) {
+  final auth = didDocument['authentication'];
+  if (auth is! List || auth.isEmpty) {
+    throw const AnpAuthenticationException('invalid DID document');
+  }
+  final first = auth.first;
+  final id = first is String
+      ? first
+      : first is Map
+      ? first['id']?.toString()
+      : null;
+  if (id == null || id.isEmpty) {
+    throw const AnpAuthenticationException('invalid DID document');
+  }
+  return id.split('#').last;
+}
+
+String _domainFieldForVersion(String version) {
+  if (version.isEmpty) return 'aud';
+  final parsed = double.tryParse(version);
+  if (parsed == null) return 'service';
+  return parsed >= 1.1 ? 'aud' : 'service';
+}
+
+String _isoSeconds(DateTime value) =>
+    value.toUtc().toIso8601String().replaceFirst(RegExp(r'\.\d+Z$'), 'Z');
+
+List<int> _nonceBytes() => List<int>.generate(
+  16,
+  (index) => DateTime.now().microsecondsSinceEpoch >> (index % 8) & 0xff,
+);
 
 JsonMap _verificationMethod(
   String did,

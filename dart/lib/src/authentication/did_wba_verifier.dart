@@ -2,9 +2,9 @@ import 'http_signatures.dart';
 import 'types.dart';
 
 class DidWbaVerifier {
-  const DidWbaVerifier({required this.verifier});
+  const DidWbaVerifier({required this.didDocument});
 
-  final MessageVerifier verifier;
+  final JsonMap didDocument;
 
   Future<VerificationSuccess> verifyRequest(
     String method,
@@ -13,16 +13,13 @@ class DidWbaVerifier {
     List<int> body,
     String did,
   ) async {
-    final ok = await verifyHttpMessageSignature(
-      method,
-      url,
-      verifier,
-      headers,
-      body,
+    await verifyHttpMessageSignature(
+      didDocument: didDocument,
+      requestMethod: method,
+      requestUrl: url,
+      headers: headers,
+      body: body,
     );
-    if (!ok) {
-      throw const FormatException('HTTP message signature verification failed');
-    }
     return VerificationSuccess(did: did);
   }
 }

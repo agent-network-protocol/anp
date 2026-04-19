@@ -3,11 +3,11 @@ import 'package:test/test.dart';
 
 void main() {
   test('validates and builds WBA URI', () {
-    final parsed = validateHandle('Alice@Example.COM');
-    expect(parsed.handle, 'alice@example.com');
+    final parsed = validateHandle('Alice.Example.COM');
+    expect(parsed.handle, 'alice.example.com');
     expect(
       buildWbaUri(parsed.localPart, parsed.domain),
-      'wba://alice@example.com',
+      'wba://alice.example.com',
     );
   });
 

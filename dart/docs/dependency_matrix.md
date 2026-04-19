@@ -9,7 +9,7 @@
 | test | unit test runner | used in baseline |
 | lints | recommended lint set | used in baseline |
 
-Future release-gate work must still deepen canonical JSON, JWK, and HTTP Message Signature parity, but key persistence now has executable Dart↔Go fixture coverage.
+Representative Dart↔Go fixture coverage now exists for key persistence, legacy/HTTP auth, W3C proofs, and WNS handle/service artifacts. Future release-gate work should deepen edge-case coverage for canonical JSON, JWK, nonce/replay verifier policy, WNS network error modes, and all non-representative proof wrappers.
 
 
 ## Go v0.8.5 key persistence update

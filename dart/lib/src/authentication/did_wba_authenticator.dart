@@ -11,6 +11,13 @@ class DidWbaAuthenticator {
     String url,
     List<int> body, {
     Map<String, String> headers = const {},
-  }) =>
-      generateHttpSignatureHeaders(method, url, signer, body, headers: headers);
+  }) => generateHttpSignatureHeaders(
+    didDocument: const <String, Object?>{},
+    requestMethod: method,
+    requestUrl: url,
+    privateKey: (signer as PrivateKeyMessageSigner).privateKey,
+    headers: headers,
+    body: body,
+    options: HttpSignatureOptions(keyId: signer.keyId),
+  );
 }
