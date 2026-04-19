@@ -28,3 +28,7 @@ examples/python/did_wba_examples/generated/*
 
 dart/.dart_tool/
 dart/build/
+dart/**/.dart_tool/
+dart/**/build/
+dart/example/flutter_smoke/.flutter-plugins
+dart/example/flutter_smoke/.flutter-plugins-dependencies

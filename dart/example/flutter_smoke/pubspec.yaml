@@ -1,0 +1,18 @@
+name: anp_flutter_smoke
+publish_to: none
+description: Flutter smoke tests for the local ANP Dart SDK package.
+version: 0.1.0
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  anp:
+    path: ../..
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.1.1

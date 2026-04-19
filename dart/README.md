@@ -47,3 +47,15 @@ dart run tool/interop.dart proof-fixture --case w3c-ed25519 > /tmp/dart-proof.js
 dart run tool/interop.dart wns-fixture --handle alice.example.com > /tmp/dart-wns.json
 (cd ../golang && go run ./cmd/anp-interop verify-wns-fixture --fixture /tmp/dart-wns.json)
 ```
+
+
+## Flutter smoke
+
+```bash
+cd example/flutter_smoke
+flutter pub get
+flutter test
+flutter test --platform chrome
+```
+
+Android/iOS build smoke is not claimed unless the local Android command-line tools/licenses and full Xcode/CocoaPods setup are available.
