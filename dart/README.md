@@ -58,4 +58,4 @@ flutter test
 flutter test --platform chrome
 ```
 
-Android/iOS build smoke is not claimed unless the local Android command-line tools/licenses and full Xcode/CocoaPods setup are available.
+Android debug build smoke has been verified with a temporary Flutter app that path-depends on this package. iOS/macOS build smoke is not claimed unless full Xcode/CocoaPods setup is available.
