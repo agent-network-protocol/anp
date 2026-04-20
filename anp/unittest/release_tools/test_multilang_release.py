@@ -156,3 +156,23 @@ def test_publish_python_passes_explicit_target_files(tmp_path, monkeypatch):
             False,
         )
     ]
+
+
+def test_version_bump_commit_command_uses_lore_trailers():
+    """The generated release commit message must preserve repository lore."""
+    release = _load_release_module()
+
+    command = release.build_version_bump_commit_command(
+        release.SemVer.parse("0.8.6"),
+    )
+    message_parts = [
+        command[index + 1]
+        for index, item in enumerate(command)
+        if item == "-m"
+    ]
+
+    assert message_parts[0] == "Keep Python, Rust, and Go consumers on 0.8.6"
+    assert "Constraint:" in message_parts[2]
+    assert "Rejected:" in message_parts[2]
+    assert "Tested: uv build" in message_parts[2]
+    assert "Not-tested:" in message_parts[2]

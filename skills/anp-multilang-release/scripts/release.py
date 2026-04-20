@@ -478,16 +478,50 @@ def maybe_commit_version_bump(
 
     relative_paths = [str(path.relative_to(repo_root)) for path in tracked_paths]
     run_command(["git", "add", *relative_paths], cwd=repo_root)
-    run_command(
-        [
-            "git",
-            "commit",
-            "-m",
-            f"release: bump python, rust, and go to {target_version}",
-        ],
-        cwd=repo_root,
-    )
+    run_command(build_version_bump_commit_command(target_version), cwd=repo_root)
     run_command(["git", "push", remote, "HEAD"], cwd=repo_root)
+
+
+def build_version_bump_commit_command(target_version: SemVer) -> list[str]:
+    """Build a Lore-compatible git commit command for the release bump."""
+    return [
+        "git",
+        "commit",
+        "-m",
+        f"Keep Python, Rust, and Go consumers on {target_version}",
+        "-m",
+        (
+            "The coordinated release workflow bumps every package manifest, "
+            "lock file, and runtime version constant together before publishing "
+            "so registry artifacts and Go module tags identify the same SDK cut."
+        ),
+        "-m",
+        "\n".join(
+            [
+                (
+                    "Constraint: Python, Rust, and Go package ecosystems publish "
+                    "from different metadata surfaces"
+                ),
+                (
+                    "Rejected: Hand-edit per-language version files during "
+                    "release | recurring manual step previously caused drift"
+                ),
+                "Confidence: high",
+                "Scope-risk: narrow",
+                (
+                    "Directive: Do not publish a coordinated release unless all "
+                    "version surfaces are bumped by this helper"
+                ),
+                "Tested: uv build",
+                (
+                    "Tested: cargo publish --dry-run --allow-dirty "
+                    "--manifest-path rust/Cargo.toml"
+                ),
+                "Tested: go test ./... from golang/",
+                "Not-tested: Registry publication happens after this commit",
+            ]
+        ),
+    ]
 
 
 def publish_python(paths: ReleasePaths, target_version: SemVer) -> None:
