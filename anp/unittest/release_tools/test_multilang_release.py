@@ -32,11 +32,57 @@ def _build_release_paths(release_module, repo_root: Path):
     return release_module.ReleasePaths(
         repo_root=repo_root,
         pyproject_toml=repo_root / "pyproject.toml",
+        python_init=repo_root / "anp" / "__init__.py",
         uv_lock=repo_root / "uv.lock",
         cargo_toml=repo_root / "rust" / "Cargo.toml",
         cargo_lock=repo_root / "rust" / "Cargo.lock",
+        go_version=repo_root / "golang" / "version.go",
         go_mod=repo_root / "golang" / "go.mod",
         dist_dir=dist_dir,
+    )
+
+
+def test_update_version_files_keeps_runtime_versions_aligned(tmp_path):
+    """The release helper must update Python and Go runtime version constants."""
+    release = _load_release_module()
+    (tmp_path / "anp").mkdir()
+    (tmp_path / "rust").mkdir()
+    (tmp_path / "golang").mkdir()
+    paths = _build_release_paths(release, tmp_path)
+    paths.pyproject_toml.write_text(
+        '[project]\nname = "anp"\nversion = "0.8.5"\n',
+        encoding="utf-8",
+    )
+    paths.python_init.write_text('__version__ = "0.8.5"\n', encoding="utf-8")
+    paths.uv_lock.write_text(
+        'name = "anp"\nversion = "0.8.5"\nsource = { editable = "." }\n',
+        encoding="utf-8",
+    )
+    paths.cargo_toml.write_text(
+        '[package]\nname = "anp"\nversion = "0.8.5"\n',
+        encoding="utf-8",
+    )
+    paths.cargo_lock.write_text(
+        'name = "anp"\nversion = "0.8.5"\n',
+        encoding="utf-8",
+    )
+    paths.go_version.write_text(
+        'package anp\n\nconst Version = "0.8.5"\n',
+        encoding="utf-8",
+    )
+
+    changed_paths = release.update_version_files(
+        paths,
+        release.SemVer.parse("0.8.6"),
+    )
+
+    assert paths.python_init in changed_paths
+    assert paths.go_version in changed_paths
+    assert '__version__ = "0.8.6"' in paths.python_init.read_text(
+        encoding="utf-8",
+    )
+    assert 'const Version = "0.8.6"' in paths.go_version.read_text(
+        encoding="utf-8",
     )
 
 

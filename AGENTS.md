@@ -6,6 +6,9 @@ Core protocol logic lives under `anp/meta_protocol/`, with identity in `anp/auth
 ## Build, Test, and Development Commands
 Run `uv sync` to install pinned dependencies, then `uv run pytest` (or `uv run pytest -k "handshake"`) for targeted suites. Package releases with `uv build --wheel`. Validate negotiation flows using `uv run python examples/ping_pong.py`, and inspect the CLI via `uv run python -m anp.meta_protocol.cli --help`. Keep a clean virtual environment by preferring `uv run <script>` over activating shells manually.
 
+## Multi-language Release Workflow
+Use the bundled release helper for synchronized Python, Rust, and Go releases: `uv run python skills/anp-multilang-release/scripts/release.py ...`. Start with `plan` before publishing, for example `uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8.6`, or use `next-version` to print the next single-digit semver. The `release` command checks a clean worktree, validates aligned versions in `pyproject.toml`, `anp/__init__.py`, `uv.lock`, `rust/Cargo.toml`, tracked `rust/Cargo.lock`, and `golang/version.go`, runs `uv build`, `cargo publish --dry-run --manifest-path rust/Cargo.toml`, and `go test ./...` from `golang/`, then commits/pushes the version bump, publishes Python with `uv publish`, publishes Rust with `cargo publish`, and pushes both tags: root `<version>` and Go submodule `golang/v<version>`. Read `skills/anp-multilang-release/references/release-policy.md` before changing the version rules or release order.
+
 ## Coding Style & Naming Conventions
 Follow Google Python Style: four-space indentation, type hints, and Google-style docstrings on public APIs. Use `snake_case` for modules/functions, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants. Comments and logs must be in English. Group utilities in the closest existing package and avoid hidden globals; prefer dependency injection or explicit configuration objects.
 

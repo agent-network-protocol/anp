@@ -72,9 +72,11 @@ class ReleasePaths:
 
     repo_root: Path
     pyproject_toml: Path
+    python_init: Path
     uv_lock: Path
     cargo_toml: Path
     cargo_lock: Path
+    go_version: Path
     go_mod: Path
     dist_dir: Path
 
@@ -169,16 +171,20 @@ def get_release_paths(repo_root: Path) -> ReleasePaths:
     paths = ReleasePaths(
         repo_root=repo_root,
         pyproject_toml=repo_root / "pyproject.toml",
+        python_init=repo_root / "anp" / "__init__.py",
         uv_lock=repo_root / "uv.lock",
         cargo_toml=repo_root / "rust" / "Cargo.toml",
         cargo_lock=repo_root / "rust" / "Cargo.lock",
+        go_version=repo_root / "golang" / "version.go",
         go_mod=repo_root / "golang" / "go.mod",
         dist_dir=repo_root / "dist",
     )
     required_paths = [
         paths.pyproject_toml,
+        paths.python_init,
         paths.uv_lock,
         paths.cargo_toml,
+        paths.go_version,
         paths.go_mod,
     ]
     missing = [str(path) for path in required_paths if not path.exists()]
@@ -202,13 +208,17 @@ def write_text(path: Path, content: str) -> None:
 def extract_current_version(paths: ReleasePaths) -> SemVer:
     """Read and validate the current shared release version."""
     python_version = extract_project_version(paths.pyproject_toml)
+    python_runtime_version = extract_python_init_version(paths.python_init)
     rust_version = extract_cargo_package_version(paths.cargo_toml)
     uv_lock_version = extract_uv_lock_version(paths.uv_lock)
+    go_runtime_version = extract_go_runtime_version(paths.go_version)
 
     versions = {
         "pyproject.toml": python_version,
+        "anp/__init__.py": python_runtime_version,
         "rust/Cargo.toml": rust_version,
         "uv.lock": uv_lock_version,
+        "golang/version.go": go_runtime_version,
     }
     if paths.cargo_lock.exists() and is_git_tracked(paths.repo_root, paths.cargo_lock):
         cargo_lock_version = extract_cargo_lock_version(paths.cargo_lock)
@@ -237,6 +247,15 @@ def extract_project_version(path: Path) -> SemVer:
     return SemVer.parse(match.group(1))
 
 
+def extract_python_init_version(path: Path) -> SemVer:
+    """Extract the runtime package version from anp/__init__.py."""
+    text = read_text(path)
+    match = re.search(r'(?m)^__version__ = "(\d+\.\d+\.\d+)"$', text)
+    if not match:
+        raise ValueError(f"Could not find __version__ in {path}.")
+    return SemVer.parse(match.group(1))
+
+
 def extract_cargo_package_version(path: Path) -> SemVer:
     """Extract the package version from rust/Cargo.toml."""
     text = read_text(path)
@@ -246,6 +265,15 @@ def extract_cargo_package_version(path: Path) -> SemVer:
     )
     if not match:
         raise ValueError(f"Could not find [package] version in {path}.")
+    return SemVer.parse(match.group(1))
+
+
+def extract_go_runtime_version(path: Path) -> SemVer:
+    """Extract the runtime package version from golang/version.go."""
+    text = read_text(path)
+    match = re.search(r'(?m)^const Version = "(\d+\.\d+\.\d+)"$', text)
+    if not match:
+        raise ValueError(f"Could not find Version const in {path}.")
     return SemVer.parse(match.group(1))
 
 
@@ -295,8 +323,16 @@ def update_version_files(paths: ReleasePaths, target_version: SemVer) -> list[Pa
             r'(?ms)(^\[project\]\s+.*?^version = ")(\d+\.\d+\.\d+)(".*$)',
         ),
         (
+            paths.python_init,
+            r'(?m)^(__version__ = ")(\d+\.\d+\.\d+)(")$',
+        ),
+        (
             paths.cargo_toml,
             r'(?ms)(^\[package\]\s+.*?^version = ")(\d+\.\d+\.\d+)(".*$)',
+        ),
+        (
+            paths.go_version,
+            r'(?m)^(const Version = ")(\d+\.\d+\.\d+)(")$',
         ),
         (
             paths.uv_lock,
@@ -499,8 +535,10 @@ def print_release_plan(
     print(f"Go module tag: {go_tag}")
     print("Files to update:")
     print(f"- {paths.pyproject_toml.relative_to(paths.repo_root)}")
+    print(f"- {paths.python_init.relative_to(paths.repo_root)}")
     print(f"- {paths.uv_lock.relative_to(paths.repo_root)}")
     print(f"- {paths.cargo_toml.relative_to(paths.repo_root)}")
+    print(f"- {paths.go_version.relative_to(paths.repo_root)}")
     if paths.cargo_lock.exists():
         print(f"- {paths.cargo_lock.relative_to(paths.repo_root)}")
     print("Validation steps:")

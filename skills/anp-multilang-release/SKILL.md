@@ -1,6 +1,6 @@
 ---
 name: anp-multilang-release
-description: 在 ANP SDK 仓库里统一发布 Go、Python、Rust 三个 SDK。用于同时更新 pyproject.toml、uv.lock、rust/Cargo.toml、rust/Cargo.lock，执行 uv/cargo/go 校验，发布 PyPI 与 crates.io，并按 Go 子目录 module 规则推送 golang/vX.Y.Z tag。用户提到 Go/Python/Rust 一起发版、统一版本号、固定发布 0.7.2、下一版自动 +1、保持版本段为一位数时使用此 skill。
+description: 在 ANP SDK 仓库里统一发布 Go、Python、Rust 三个 SDK。用于同时更新 pyproject.toml、anp/__init__.py、uv.lock、rust/Cargo.toml、rust/Cargo.lock、golang/version.go，执行 uv/cargo/go 校验，发布 PyPI 与 crates.io，并按 Go 子目录 module 规则推送 golang/vX.Y.Z tag。用户提到 Go/Python/Rust 一起发版、统一版本号、固定发布 0.7.2、下一版自动 +1、保持版本段为一位数时使用此 skill。
 ---
 
 # ANP Multi SDK Release
@@ -67,9 +67,11 @@ uv run python skills/anp-multilang-release/scripts/release.py release
 2. 检查 Python、Rust、锁文件版本是否一致
 3. 更新：
    - `pyproject.toml`
+   - `anp/__init__.py`
    - `uv.lock`
    - `rust/Cargo.toml`
    - `rust/Cargo.lock`
+   - `golang/version.go`
 4. 执行校验：
    - `uv build`
    - `cargo publish --dry-run --manifest-path rust/Cargo.toml`
