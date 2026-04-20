@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
+	github.com/gowebpki/jcs v1.0.1
 	golang.org/x/crypto v0.31.0
 )
 
