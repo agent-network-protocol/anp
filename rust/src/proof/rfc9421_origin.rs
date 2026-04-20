@@ -7,9 +7,10 @@ use thiserror::Error;
 
 use crate::canonical_json::canonicalize_json;
 use crate::proof::{
-    build_im_content_digest, build_im_signature_input, generate_im_proof, parse_im_signature_input,
-    verify_im_proof_with_document, verify_im_proof_with_public_key, ImProof, ImProofError,
-    ImProofGenerationOptions, ImProofVerificationResult, IM_PROOF_DEFAULT_COMPONENTS,
+    build_im_content_digest, build_im_signature_input, encode_im_signature,
+    parse_im_signature_input, verify_im_proof_with_document, verify_im_proof_with_public_key,
+    ImProof, ImProofError, ImProofGenerationOptions, ImProofVerificationResult,
+    IM_PROOF_DEFAULT_COMPONENTS,
 };
 use crate::PrivateKeyMaterial;
 
@@ -292,13 +293,14 @@ pub fn generate_rfc9421_origin_proof(
         &content_digest,
         &signature_input,
     )?;
-    let proof = generate_im_proof(
-        &canonical_request,
-        &signature_base,
-        private_key,
-        keyid,
-        proof_options,
-    )?;
+    let signature = private_key
+        .sign_message(&signature_base)
+        .map_err(|_| Rfc9421OriginProofError::ImProof(ImProofError::SigningError))?;
+    let proof = Rfc9421OriginProof {
+        content_digest,
+        signature_input,
+        signature: encode_im_signature(&signature, normalized_label),
+    };
     let parsed = parse_im_signature_input(&proof.signature_input)?;
     validate_parsed_signature_input(&parsed.label, &parsed.components)?;
     Ok(proof.into())
@@ -497,6 +499,53 @@ mod tests {
                 .map(|component| (*component).to_owned())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn generates_and_verifies_direct_origin_proof_with_angle_brackets_and_arrow() {
+        let bundle = create_did_wba_document(
+            "example.com",
+            DidDocumentOptions {
+                path_segments: vec!["user".to_owned(), "alice".to_owned()],
+                ..DidDocumentOptions::default()
+            },
+        )
+        .expect("bundle should be created");
+        let private_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+            .expect("private key should load");
+        let did = bundle.did().expect("did should exist").to_owned();
+        let meta = json!({
+            "anp_version": "1.0",
+            "profile": "anp.direct.base.v1",
+            "security_profile": "transport-protected",
+            "sender_did": did.clone(),
+            "target": {"kind": "agent", "did": "did:wba:example.com:user:bob:e1_bob"},
+            "operation_id": "op-html-chars",
+            "message_id": "msg-html-chars",
+            "content_type": "text/plain"
+        });
+        let body = json!({"text": "alice->bob <hello> & goodbye"});
+        let origin_proof = generate_rfc9421_origin_proof(
+            "direct.send",
+            &meta,
+            &body,
+            &private_key,
+            &format!("{did}#key-1"),
+            Rfc9421OriginProofGenerationOptions::default(),
+        )
+        .expect("origin proof should generate");
+        verify_rfc9421_origin_proof(
+            &origin_proof,
+            "direct.send",
+            &meta,
+            &body,
+            Rfc9421OriginProofVerificationOptions {
+                did_document: Some(bundle.did_document.clone()),
+                expected_signer_did: Some(did),
+                ..Rfc9421OriginProofVerificationOptions::default()
+            },
+        )
+        .expect("origin proof should verify");
     }
 
     #[test]

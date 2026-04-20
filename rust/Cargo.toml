@@ -41,6 +41,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 url = "2"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 tiny_http = "0.12"
+serde_json_canonicalizer = "0.3.2"
 
 [dev-dependencies]
 tempfile = "3"
