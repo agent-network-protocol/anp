@@ -27,7 +27,7 @@ from .direct_e2ee import (
     PrekeyManager,
 )
 
-__version__ = "0.8.6"
+__version__ = "0.8.7"
 
 # interfaces
 # from .authentication import didallclient
