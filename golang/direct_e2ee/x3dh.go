@@ -8,17 +8,21 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// InitialMaterial contains the symmetric material derived from X3DH.
+// InitialMaterial contains the symmetric material derived from P5 X3DH-like.
 type InitialMaterial struct {
-	InitialSecret     [32]byte
-	RootKey           [32]byte
-	InitiatorChainKey [32]byte
-	ResponderChainKey [32]byte
-	SessionID         string
+	InitialSecret [32]byte
+	RootKey       [32]byte
+	ChainKey      [32]byte
+	SessionID     string
 }
 
 // DeriveInitialMaterialForInitiator derives session material for the initiator.
 func DeriveInitialMaterialForInitiator(senderStaticPrivate *ecdh.PrivateKey, senderEphemeralPrivate *ecdh.PrivateKey, recipientStaticPublic [32]byte, recipientSignedPrekeyPublic [32]byte) (InitialMaterial, error) {
+	return DeriveInitialMaterialForInitiatorWithOPK(senderStaticPrivate, senderEphemeralPrivate, recipientStaticPublic, recipientSignedPrekeyPublic, nil)
+}
+
+// DeriveInitialMaterialForInitiatorWithOPK derives session material with optional OPK DH4.
+func DeriveInitialMaterialForInitiatorWithOPK(senderStaticPrivate *ecdh.PrivateKey, senderEphemeralPrivate *ecdh.PrivateKey, recipientStaticPublic [32]byte, recipientSignedPrekeyPublic [32]byte, recipientOneTimePrekeyPublic *[32]byte) (InitialMaterial, error) {
 	recipientStatic, err := ecdh.X25519().NewPublicKey(recipientStaticPublic[:])
 	if err != nil {
 		return InitialMaterial{}, err
@@ -39,11 +43,28 @@ func DeriveInitialMaterialForInitiator(senderStaticPrivate *ecdh.PrivateKey, sen
 	if err != nil {
 		return InitialMaterial{}, err
 	}
-	return deriveInitialMaterial(dh1, dh2, dh3)
+	chunks := [][]byte{dh1, dh2, dh3}
+	if recipientOneTimePrekeyPublic != nil {
+		recipientOPK, err := ecdh.X25519().NewPublicKey(recipientOneTimePrekeyPublic[:])
+		if err != nil {
+			return InitialMaterial{}, err
+		}
+		dh4, err := senderEphemeralPrivate.ECDH(recipientOPK)
+		if err != nil {
+			return InitialMaterial{}, err
+		}
+		chunks = append(chunks, dh4)
+	}
+	return deriveInitialMaterial(chunks...)
 }
 
 // DeriveInitialMaterialForResponder derives session material for the responder.
 func DeriveInitialMaterialForResponder(recipientStaticPrivate *ecdh.PrivateKey, recipientSignedPrekeyPrivate *ecdh.PrivateKey, senderStaticPublic [32]byte, senderEphemeralPublic [32]byte) (InitialMaterial, error) {
+	return DeriveInitialMaterialForResponderWithOPK(recipientStaticPrivate, recipientSignedPrekeyPrivate, nil, senderStaticPublic, senderEphemeralPublic)
+}
+
+// DeriveInitialMaterialForResponderWithOPK derives session material with optional OPK DH4.
+func DeriveInitialMaterialForResponderWithOPK(recipientStaticPrivate *ecdh.PrivateKey, recipientSignedPrekeyPrivate *ecdh.PrivateKey, recipientOneTimePrekeyPrivate *ecdh.PrivateKey, senderStaticPublic [32]byte, senderEphemeralPublic [32]byte) (InitialMaterial, error) {
 	senderStatic, err := ecdh.X25519().NewPublicKey(senderStaticPublic[:])
 	if err != nil {
 		return InitialMaterial{}, err
@@ -64,24 +85,15 @@ func DeriveInitialMaterialForResponder(recipientStaticPrivate *ecdh.PrivateKey, 
 	if err != nil {
 		return InitialMaterial{}, err
 	}
-	return deriveInitialMaterial(dh1, dh2, dh3)
-}
-
-// InitialSecretKeyAndNonce derives the init-message AEAD key and nonce.
-func InitialSecretKeyAndNonce(initialSecret [32]byte) ([32]byte, [12]byte, error) {
-	keyBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Init AEAD Key"), 32)
-	if err != nil {
-		return [32]byte{}, [12]byte{}, err
+	chunks := [][]byte{dh1, dh2, dh3}
+	if recipientOneTimePrekeyPrivate != nil {
+		dh4, err := recipientOneTimePrekeyPrivate.ECDH(senderEphemeral)
+		if err != nil {
+			return InitialMaterial{}, err
+		}
+		chunks = append(chunks, dh4)
 	}
-	nonceBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Init AEAD Nonce"), 12)
-	if err != nil {
-		return [32]byte{}, [12]byte{}, err
-	}
-	var key [32]byte
-	var nonce [12]byte
-	copy(key[:], keyBytes)
-	copy(nonce[:], nonceBytes)
-	return key, nonce, nil
+	return deriveInitialMaterial(chunks...)
 }
 
 func deriveInitialMaterial(chunks ...[]byte) (InitialMaterial, error) {
@@ -89,46 +101,37 @@ func deriveInitialMaterial(chunks ...[]byte) (InitialMaterial, error) {
 	for _, chunk := range chunks {
 		ikm = append(ikm, chunk...)
 	}
-	initialSecretBytes, err := hkdfExpandFromIKM(ikm, []byte("ANP Direct E2EE v1 Initial Secret"), 32)
+	prk := hkdf.Extract(hashProvider, ikm, make([]byte, 32))
+	initialSecretBytes, err := hkdfExpandOnly(prk, []byte("ANP Direct E2EE v1 Initial Secret"), 32)
 	if err != nil {
 		return InitialMaterial{}, err
 	}
 	var initialSecret [32]byte
 	copy(initialSecret[:], initialSecretBytes)
-	rootKeyBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Root Key"), 32)
+	rootKeyBytes, err := hkdfExpandOnly(initialSecret[:], []byte("ANP Direct E2EE v1 Root Key"), 32)
 	if err != nil {
 		return InitialMaterial{}, err
 	}
-	initiatorChainBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Initiator Chain Key"), 32)
+	chainBytes, err := hkdfExpandOnly(initialSecret[:], []byte("ANP Direct E2EE v1 Chain Key"), 32)
 	if err != nil {
 		return InitialMaterial{}, err
 	}
-	responderChainBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Responder Chain Key"), 32)
-	if err != nil {
-		return InitialMaterial{}, err
-	}
-	sessionIDBytes, err := hkdfExpand(initialSecret[:], []byte("ANP Direct E2EE v1 Session ID"), 16)
+	sessionIDBytes, err := hkdfExpandOnly(initialSecret[:], []byte("ANP Direct E2EE v1 Session ID"), 16)
 	if err != nil {
 		return InitialMaterial{}, err
 	}
 	var rootKey [32]byte
-	var initiatorChainKey [32]byte
-	var responderChainKey [32]byte
+	var chainKey [32]byte
 	copy(rootKey[:], rootKeyBytes)
-	copy(initiatorChainKey[:], initiatorChainBytes)
-	copy(responderChainKey[:], responderChainBytes)
-	return InitialMaterial{InitialSecret: initialSecret, RootKey: rootKey, InitiatorChainKey: initiatorChainKey, ResponderChainKey: responderChainKey, SessionID: anp.EncodeBase64URL(sessionIDBytes)}, nil
+	copy(chainKey[:], chainBytes)
+	return InitialMaterial{InitialSecret: initialSecret, RootKey: rootKey, ChainKey: chainKey, SessionID: anp.EncodeBase64URL(sessionIDBytes)}, nil
 }
 
-func hkdfExpandFromIKM(ikm []byte, info []byte, length int) ([]byte, error) {
-	reader := hkdf.New(hashProvider, ikm, make([]byte, 32), info)
+func hkdfExpandOnly(secret []byte, info []byte, length int) ([]byte, error) {
+	reader := hkdf.Expand(hashProvider, secret, info)
 	buffer := make([]byte, length)
 	if _, err := io.ReadFull(reader, buffer); err != nil {
 		return nil, cryptoError("hkdf fill failed")
 	}
 	return buffer, nil
-}
-
-func hkdfExpand(secret []byte, info []byte, length int) ([]byte, error) {
-	return hkdfExpandFromIKM(secret, info, length)
 }

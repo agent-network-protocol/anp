@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	anp "github.com/agent-network-protocol/anp/golang"
@@ -19,6 +20,14 @@ type SignedPrekeyStore interface {
 	SaveSignedPrekey(keyID string, privateKey anp.PrivateKeyMaterial, metadata SignedPrekey) error
 	LoadSignedPrekey(keyID string) (anp.PrivateKeyMaterial, SignedPrekey, error)
 	LoadLatestSignedPrekey() (anp.PrivateKeyMaterial, SignedPrekey, bool, error)
+}
+
+// OneTimePrekeyStore loads and stores OPKs.
+type OneTimePrekeyStore interface {
+	SaveOneTimePrekey(keyID string, privateKey anp.PrivateKeyMaterial, metadata OneTimePrekey) error
+	LoadOneTimePrekey(keyID string) (anp.PrivateKeyMaterial, OneTimePrekey, error)
+	ListOneTimePrekeys() ([]OneTimePrekey, error)
+	DeleteOneTimePrekey(keyID string) error
 }
 
 // SessionStore loads and stores direct E2EE sessions.
@@ -48,7 +57,7 @@ func NewFileSessionStore(root string) (*FileSessionStore, error) {
 }
 
 func (s *FileSessionStore) SaveSession(session DirectSessionState) error {
-	return writeJSON(filepath.Join(s.root, session.SessionID+".json"), session, 0o644)
+	return writeJSON(filepath.Join(s.root, session.SessionID+".json"), session, 0o600)
 }
 func (s *FileSessionStore) LoadSession(sessionID string) (DirectSessionState, error) {
 	var session DirectSessionState
@@ -133,6 +142,72 @@ func (s *FileSignedPrekeyStore) LoadLatestSignedPrekey() (anp.PrivateKeyMaterial
 		return anp.PrivateKeyMaterial{}, SignedPrekey{}, false, err
 	}
 	return privateKey, metadata, true, nil
+}
+
+// FileOneTimePrekeyStore persists one-time prekeys and metadata to disk.
+type FileOneTimePrekeyStore struct{ root string }
+
+// NewFileOneTimePrekeyStore creates a file-backed OPK store.
+func NewFileOneTimePrekeyStore(root string) (*FileOneTimePrekeyStore, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	return &FileOneTimePrekeyStore{root: root}, nil
+}
+
+func (s *FileOneTimePrekeyStore) SaveOneTimePrekey(keyID string, privateKey anp.PrivateKeyMaterial, metadata OneTimePrekey) error {
+	if err := os.WriteFile(filepath.Join(s.root, keyID+".pem"), []byte(privateKey.ToPEM()), 0o600); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(s.root, keyID+".json"), metadata, 0o644)
+}
+
+func (s *FileOneTimePrekeyStore) LoadOneTimePrekey(keyID string) (anp.PrivateKeyMaterial, OneTimePrekey, error) {
+	data, err := os.ReadFile(filepath.Join(s.root, keyID+".pem"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return anp.PrivateKeyMaterial{}, OneTimePrekey{}, invalidField("one-time prekey not found: " + keyID)
+		}
+		return anp.PrivateKeyMaterial{}, OneTimePrekey{}, err
+	}
+	privateKey, err := anp.PrivateKeyFromPEM(string(data))
+	if err != nil {
+		return anp.PrivateKeyMaterial{}, OneTimePrekey{}, err
+	}
+	var metadata OneTimePrekey
+	if err := readJSON(filepath.Join(s.root, keyID+".json"), &metadata); err != nil {
+		return anp.PrivateKeyMaterial{}, OneTimePrekey{}, err
+	}
+	return privateKey, metadata, nil
+}
+
+func (s *FileOneTimePrekeyStore) ListOneTimePrekeys() ([]OneTimePrekey, error) {
+	entries, err := filepath.Glob(filepath.Join(s.root, "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	result := make([]OneTimePrekey, 0, len(entries))
+	for _, path := range entries {
+		var metadata OneTimePrekey
+		if err := readJSON(path, &metadata); err != nil {
+			return nil, err
+		}
+		result = append(result, metadata)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].KeyID < result[j].KeyID
+	})
+	return result, nil
+}
+
+func (s *FileOneTimePrekeyStore) DeleteOneTimePrekey(keyID string) error {
+	if err := os.Remove(filepath.Join(s.root, keyID+".pem")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.root, keyID+".json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // FilePendingOutboundStore persists pending outbound messages as JSON files.

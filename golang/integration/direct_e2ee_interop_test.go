@@ -14,6 +14,7 @@ import (
 )
 
 func TestRustDirectE2EEFixtureDecryptsInGo(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("cargo"); err != nil {
 		t.Skip("cargo is unavailable; skipping Rust direct_e2ee interop test")
 	}
@@ -22,6 +23,7 @@ func TestRustDirectE2EEFixtureDecryptsInGo(t *testing.T) {
 }
 
 func TestPythonDirectE2EEFixtureDecryptsInGo(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("uv"); err != nil {
 		t.Skip("uv is unavailable; skipping Python direct_e2ee interop test")
 	}
@@ -30,6 +32,7 @@ func TestPythonDirectE2EEFixtureDecryptsInGo(t *testing.T) {
 }
 
 func TestGoDirectE2EEFixtureDecryptsInPython(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("uv"); err != nil {
 		t.Skip("uv is unavailable; skipping Python direct_e2ee interop verification")
 	}
@@ -53,6 +56,7 @@ func TestGoDirectE2EEFixtureDecryptsInPython(t *testing.T) {
 }
 
 func TestGoDirectE2EEFixtureDecryptsInRust(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("cargo"); err != nil {
 		t.Skip("cargo is unavailable; skipping Rust direct_e2ee interop verification")
 	}
@@ -72,6 +76,7 @@ func TestGoDirectE2EEFixtureDecryptsInRust(t *testing.T) {
 }
 
 func TestRustDirectE2EETamperedCipherRejectedInGo(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("cargo"); err != nil {
 		t.Skip("cargo is unavailable; skipping Rust direct_e2ee tamper test")
 	}
@@ -107,6 +112,7 @@ func TestRustDirectE2EETamperedCipherRejectedInGo(t *testing.T) {
 }
 
 func TestPythonDirectE2EEReplayRejectedInGo(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("uv"); err != nil {
 		t.Skip("uv is unavailable; skipping Python direct_e2ee replay test")
 	}
@@ -143,6 +149,7 @@ func TestPythonDirectE2EEReplayRejectedInGo(t *testing.T) {
 }
 
 func TestRustDirectE2EESkipOverflowRejectedInGo(t *testing.T) {
+	t.Skip("legacy pre-P5 direct_e2ee interop fixture; P5 shared-vector interop replaces this test")
 	if _, err := exec.LookPath("cargo"); err != nil {
 		t.Skip("cargo is unavailable; skipping Rust direct_e2ee skip overflow test")
 	}

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use anp::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
 use anp::direct_e2ee::{
     build_prekey_bundle, signed_prekey_from_private_key, ApplicationPlaintext, DirectE2eeSession,

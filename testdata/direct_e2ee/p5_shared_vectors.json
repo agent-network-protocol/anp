@@ -1,0 +1,121 @@
+{
+  "version": "anp-direct-e2ee-p5-shared-vectors-v1",
+  "normative_sources": [
+    "AgentNetworkProtocol/chinese/message/05-私聊端到端加密.md: P5 direct init AAD includes content_type and omits absent OPK fields",
+    "AgentNetworkProtocol/chinese/message/05-私聊端到端加密.md: P5 message AAD excludes application_content_type",
+    "AgentNetworkProtocol/chinese/message/05-私聊端到端加密.md: P5 X3DH optional OPK adds DH4",
+    "AgentNetworkProtocol/chinese/message/05-私聊端到端加密.md: P5 kdf_ck and kdf_rk use HKDF-SHA256 labels"
+  ],
+  "x3dh": [
+    {
+      "name": "p5_x3dh_no_opk",
+      "sender_static_private_b64u": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "sender_ephemeral_private_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "recipient_static_private_b64u": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+      "recipient_signed_prekey_private_b64u": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+      "recipient_static_public_b64u": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI",
+      "recipient_signed_prekey_public_b64u": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+      "initial_secret_b64u": "iYp1ZUZLNn9RD4Lr1bmWiHI4fF1ApLiTUJluPJJ2QpU",
+      "root_key_b64u": "1Ka99JVHEkEvDuQwJUZ7lvzjAT-P1WkH57w91dZ0vPc",
+      "chain_key_b64u": "QpMaGGUNo7Fox5A4k2kvOYn1MLUql5sO9VTq-laXxmg",
+      "session_id": "zOhq6y_9zNOQTVwRqKEkoQ"
+    },
+    {
+      "name": "p5_x3dh_with_opk",
+      "sender_static_private_b64u": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "sender_ephemeral_private_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "recipient_static_private_b64u": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+      "recipient_signed_prekey_private_b64u": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+      "recipient_one_time_prekey_private_b64u": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+      "recipient_static_public_b64u": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI",
+      "recipient_signed_prekey_public_b64u": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+      "recipient_one_time_prekey_public_b64u": "UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0",
+      "initial_secret_b64u": "_IngCZtPEtnmzQwWzHZWjZ93RdytsivSHcGsXe1jZXg",
+      "root_key_b64u": "rfzOymlTnBWmK9IK6HNyaMXqARn_DPLxNfFcTTZXTfc",
+      "chain_key_b64u": "8Zlwlzy_Irtpk8d3XADPaJuSaw47QS-r2QTyjhtjp0U",
+      "session_id": "or8NgG6Q0INmcN79HzN2Nw"
+    }
+  ],
+  "kdf_ck": [
+    {
+      "name": "p5_kdf_ck",
+      "chain_key_b64u": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+      "next_chain_key_b64u": "yCAdzu9yOGZlIqjCyikVZojP53iZiOtDUtHKhIDPOW4",
+      "message_key_b64u": "UTeRzg1yZgiAtpjEq8W2mrnt8dG1z0Q71jXu_FwpTBM",
+      "nonce_b64u": "cpWTf3QHO3s9_VAm"
+    }
+  ],
+  "kdf_rk": [
+    {
+      "name": "p5_kdf_rk",
+      "root_key_b64u": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo",
+      "dh_out_b64u": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+      "next_root_key_b64u": "yukSoIrVndezt584swiEbXaBN0EgWcMT98CLG-C-7ig",
+      "chain_key_b64u": "f-kJw3tAYuub0A3XF565IXgvq3rT98OIQHFyMRIdjOQ"
+    }
+  ],
+  "aad": [
+    {
+      "name": "p5_aad_init_no_opk",
+      "metadata": {
+        "sender_did": "did:wba:a.example:agents:alice:e1",
+        "recipient_did": "did:wba:b.example:agents:bob:e1",
+        "message_id": "msg-001",
+        "profile": "anp.direct.e2ee.v1",
+        "security_profile": "direct-e2ee"
+      },
+      "init_body": {
+        "session_id": "SESSION123",
+        "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+        "sender_static_key_agreement_id": "did:wba:a.example:agents:alice:e1#key-3",
+        "recipient_bundle_id": "bundle-001",
+        "recipient_signed_prekey_id": "spk-001",
+        "sender_ephemeral_pub_b64u": "EPHEMERAL",
+        "ciphertext_b64u": "CIPHERTEXT"
+      },
+      "expected_aad": "{\"content_type\":\"application/anp-direct-init+json\",\"message_id\":\"msg-001\",\"profile\":\"anp.direct.e2ee.v1\",\"recipient_bundle_id\":\"bundle-001\",\"recipient_did\":\"did:wba:b.example:agents:bob:e1\",\"recipient_signed_prekey_id\":\"spk-001\",\"security_profile\":\"direct-e2ee\",\"sender_did\":\"did:wba:a.example:agents:alice:e1\",\"sender_static_key_agreement_id\":\"did:wba:a.example:agents:alice:e1#key-3\",\"session_id\":\"SESSION123\",\"suite\":\"ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1\"}"
+    },
+    {
+      "name": "p5_aad_init_with_opk",
+      "metadata": {
+        "sender_did": "did:wba:a.example:agents:alice:e1",
+        "recipient_did": "did:wba:b.example:agents:bob:e1",
+        "message_id": "msg-001",
+        "profile": "anp.direct.e2ee.v1",
+        "security_profile": "direct-e2ee"
+      },
+      "init_body": {
+        "session_id": "SESSION123",
+        "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+        "sender_static_key_agreement_id": "did:wba:a.example:agents:alice:e1#key-3",
+        "recipient_bundle_id": "bundle-001",
+        "recipient_signed_prekey_id": "spk-001",
+        "recipient_one_time_prekey_id": "opk-001",
+        "sender_ephemeral_pub_b64u": "EPHEMERAL",
+        "ciphertext_b64u": "CIPHERTEXT"
+      },
+      "expected_aad": "{\"content_type\":\"application/anp-direct-init+json\",\"message_id\":\"msg-001\",\"profile\":\"anp.direct.e2ee.v1\",\"recipient_bundle_id\":\"bundle-001\",\"recipient_did\":\"did:wba:b.example:agents:bob:e1\",\"recipient_one_time_prekey_id\":\"opk-001\",\"recipient_signed_prekey_id\":\"spk-001\",\"security_profile\":\"direct-e2ee\",\"sender_did\":\"did:wba:a.example:agents:alice:e1\",\"sender_static_key_agreement_id\":\"did:wba:a.example:agents:alice:e1#key-3\",\"session_id\":\"SESSION123\",\"suite\":\"ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1\"}"
+    },
+    {
+      "name": "p5_aad_msg",
+      "metadata": {
+        "sender_did": "did:wba:a.example:agents:alice:e1",
+        "recipient_did": "did:wba:b.example:agents:bob:e1",
+        "message_id": "msg-001",
+        "profile": "anp.direct.e2ee.v1",
+        "security_profile": "direct-e2ee"
+      },
+      "cipher_body": {
+        "session_id": "SESSION123",
+        "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+        "ratchet_header": {
+          "dh_pub_b64u": "RATCHETPUB",
+          "pn": "0",
+          "n": "1"
+        },
+        "ciphertext_b64u": "MESSAGE"
+      },
+      "expected_aad": "{\"content_type\":\"application/anp-direct-cipher+json\",\"message_id\":\"msg-001\",\"profile\":\"anp.direct.e2ee.v1\",\"ratchet_header\":{\"dh_pub_b64u\":\"RATCHETPUB\",\"n\":\"1\",\"pn\":\"0\"},\"recipient_did\":\"did:wba:b.example:agents:bob:e1\",\"security_profile\":\"direct-e2ee\",\"sender_did\":\"did:wba:a.example:agents:alice:e1\",\"session_id\":\"SESSION123\"}"
+    }
+  ]
+}

@@ -90,6 +90,13 @@ func bundleToMap(bundle PrekeyBundle) map[string]any {
 	}
 }
 
+func oneTimePrekeyToMap(oneTimePrekey OneTimePrekey) map[string]any {
+	return map[string]any{
+		"key_id":          oneTimePrekey.KeyID,
+		"public_key_b64u": oneTimePrekey.PublicKeyB64U,
+	}
+}
+
 func defaultSignedPrekeyExpiry() string {
 	return time.Now().UTC().Add(7 * 24 * time.Hour).Format(time.RFC3339)
 }

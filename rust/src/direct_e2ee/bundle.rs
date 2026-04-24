@@ -81,7 +81,7 @@ pub fn verify_prekey_bundle(
     let key_agreement = did_document
         .get("keyAgreement")
         .and_then(Value::as_array)
-        .ok_or_else(|| DirectE2eeError::MissingField("keyAgreement"))?;
+        .ok_or(DirectE2eeError::MissingField("keyAgreement"))?;
     let static_key_found = key_agreement
         .iter()
         .any(|entry| entry.as_str() == Some(&bundle.static_key_agreement_id));

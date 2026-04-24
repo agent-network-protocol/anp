@@ -1,6 +1,6 @@
 use super::errors::DirectE2eeError;
+use super::x3dh::{hkdf_expand_prk, hkdf_extract};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
-use sha2::{Digest, Sha256};
 
 pub const MAX_SKIP: u32 = 1000;
 
@@ -11,17 +11,40 @@ pub struct ChainStep {
     pub next_chain_key: [u8; 32],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootStep {
+    pub root_key: [u8; 32],
+    pub chain_key: [u8; 32],
+}
+
 pub fn derive_chain_step(chain_key: &[u8; 32]) -> ChainStep {
-    let next_chain_key = digest_with_label(chain_key, b"ANP Direct E2EE v1 Next Chain Key");
-    let message_key = digest_with_label(chain_key, b"ANP Direct E2EE v1 Message Key");
-    let nonce_material = digest_with_label(chain_key, b"ANP Direct E2EE v1 Message Nonce");
+    let prk = hkdf_extract(&[0u8; 32], chain_key);
+    let out = hkdf_expand_prk(&prk, b"ANP Direct E2EE v1 KDF_CK", 76)
+        .expect("hkdf expand should support fixed length");
+    let mut next_chain_key = [0u8; 32];
+    let mut message_key = [0u8; 32];
     let mut nonce = [0u8; 12];
-    nonce.copy_from_slice(&nonce_material[..12]);
+    next_chain_key.copy_from_slice(&out[0..32]);
+    message_key.copy_from_slice(&out[32..64]);
+    nonce.copy_from_slice(&out[64..76]);
     ChainStep {
         message_key,
         nonce,
         next_chain_key,
     }
+}
+
+pub fn derive_root_step(root_key: &[u8; 32], dh_out: &[u8]) -> Result<RootStep, DirectE2eeError> {
+    let prk = hkdf_extract(root_key, dh_out);
+    let out = hkdf_expand_prk(&prk, b"ANP Direct E2EE v1 KDF_RK", 64)?;
+    let mut next_root = [0u8; 32];
+    let mut chain_key = [0u8; 32];
+    next_root.copy_from_slice(&out[0..32]);
+    chain_key.copy_from_slice(&out[32..64]);
+    Ok(RootStep {
+        root_key: next_root,
+        chain_key,
+    })
 }
 
 pub fn encrypt_with_step(
@@ -55,17 +78,9 @@ pub fn decrypt_with_step(
     Ok(plaintext.to_vec())
 }
 
-fn digest_with_label(chain_key: &[u8; 32], label: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(label);
-    hasher.update(chain_key);
-    hasher.finalize().into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{decrypt_with_step, derive_chain_step, encrypt_with_step};
-
     #[test]
     fn chain_step_encrypts_and_decrypts() {
         let step = derive_chain_step(&[9u8; 32]);

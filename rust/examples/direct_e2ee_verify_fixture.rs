@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use anp::direct_e2ee::{
-    extract_x25519_public_key, ApplicationPlaintext, DirectCipherBody, DirectE2eeSession,
-    DirectEnvelopeMetadata, DirectInitBody,
+    extract_x25519_public_key, DirectCipherBody, DirectE2eeSession, DirectEnvelopeMetadata,
+    DirectInitBody,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;

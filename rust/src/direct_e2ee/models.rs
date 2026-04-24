@@ -2,12 +2,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const MTI_DIRECT_E2EE_SUITE: &str = "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1";
+pub const SESSION_STATUS_PENDING_CONFIRMATION: &str = "pending-confirmation";
+pub const SESSION_STATUS_ESTABLISHED: &str = "established";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedPrekey {
     pub key_id: String,
     pub public_key_b64u: String,
     pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OneTimePrekey {
+    pub key_id: String,
+    pub public_key_b64u: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,7 +50,6 @@ pub struct DirectInitBody {
     pub suite: String,
     pub sender_static_key_agreement_id: String,
     pub recipient_bundle_id: String,
-    pub recipient_static_key_agreement_id: String,
     pub recipient_signed_prekey_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipient_one_time_prekey_id: Option<String>,
@@ -53,7 +60,8 @@ pub struct DirectInitBody {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DirectCipherBody {
     pub session_id: String,
-    pub suite: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suite: Option<String>,
     pub ratchet_header: RatchetHeader,
     pub ciphertext_b64u: String,
 }
@@ -71,6 +79,8 @@ pub struct ApplicationPlaintext {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_b64u: Option<String>,
 }
 
 impl ApplicationPlaintext {
@@ -82,6 +92,7 @@ impl ApplicationPlaintext {
             annotations: None,
             text: Some(text.into()),
             payload: None,
+            payload_b64u: None,
         }
     }
 
@@ -93,12 +104,14 @@ impl ApplicationPlaintext {
             annotations: None,
             text: None,
             payload: Some(payload),
+            payload_b64u: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkippedMessageKey {
+    pub dh_pub_b64u: String,
     pub n: u32,
     pub message_key_b64u: String,
     pub nonce_b64u: String,
@@ -112,8 +125,11 @@ pub struct DirectSessionState {
     pub local_key_agreement_id: String,
     pub peer_key_agreement_id: String,
     pub root_key_b64u: String,
-    pub send_chain_key_b64u: String,
-    pub recv_chain_key_b64u: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_chain_key_b64u: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recv_chain_key_b64u: Option<String>,
+    pub ratchet_private_key_b64u: String,
     pub ratchet_public_key_b64u: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_ratchet_public_key_b64u: Option<String>,
@@ -123,6 +139,7 @@ pub struct DirectSessionState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_message_keys: Vec<SkippedMessageKey>,
     pub is_initiator: bool,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
