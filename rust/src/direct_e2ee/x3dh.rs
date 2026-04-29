@@ -101,7 +101,14 @@ fn derive_initial_material(chunks: &[&[u8]]) -> Result<InitialMaterial, DirectE2
         .iter()
         .flat_map(|chunk| chunk.iter().copied())
         .collect::<Vec<_>>();
-    let prk = hkdf_extract(&[0u8; 32], &ikm);
+
+    let mut salt = [0u8; 32];
+    if let Some(first_chunk) = chunks.first() {
+        let copy_len = core::cmp::min(first_chunk.len(), salt.len());
+        salt[..copy_len].copy_from_slice(&first_chunk[..copy_len]);
+    }
+
+    let prk = hkdf_extract(&salt, &ikm);
     let initial_secret: [u8; 32] = hkdf_expand_prk(&prk, b"ANP Direct E2EE v1 Initial Secret", 32)?
         .try_into()
         .map_err(|_| DirectE2eeError::crypto("invalid initial secret length"))?;
