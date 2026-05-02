@@ -1,5 +1,5 @@
-//! [INPUT] One-shot `anp-mls` JSON requests on stdin plus CLI domain/action and optional `--data-dir`.
-//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state in SQLite and contract-test mode emits explicit non-cryptographic fixtures.
+//! [INPUT] One-shot `anp-mls` JSON requests on stdin plus CLI domain/action and optional `--data-dir`; `system version` is the no-state compatibility probe.
+//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state in SQLite, validates local group bindings, and contract-test mode emits explicit non-cryptographic fixtures.
 //! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir`.
 
 use anp::group_e2ee::{deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, MTI_SUITE};
@@ -26,6 +26,18 @@ use std::{
 
 const API_VERSION: &str = "anp-mls/v1";
 const DEVICE_ID_DEFAULT: &str = "default";
+const BINARY_NAME: &str = "anp-mls";
+const SUPPORTED_COMMANDS: &[&str] = &[
+    "system version",
+    "key-package generate",
+    "group create",
+    "group add-member",
+    "welcome process",
+    "message encrypt",
+    "message decrypt",
+    "group restore",
+    "group status",
+];
 
 fn main() {
     let code = match run() {
@@ -69,6 +81,14 @@ fn run() -> Result<Value, Value> {
         .unwrap_or(false)
         || std::env::var("ANP_MLS_CONTRACT_TEST").ok().as_deref() == Some("1");
     let params = request_params(&req);
+    if command == "system version" {
+        return Ok(json!({
+            "ok": true,
+            "api_version": API_VERSION,
+            "request_id": request_id,
+            "result": system_version(),
+        }));
+    }
     if contract_enabled {
         return run_contract_mode(&command, &request_id, &params, invocation.data_dir.as_ref());
     }
@@ -286,9 +306,40 @@ fn run_real_mode(
         "request_id": request_id,
         "result": result,
     });
-    record_operation(&app_conn, operation_id, command, &input_digest, &response)
-        .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    let recorded_response = response_for_operation_log(command, &response);
+    record_operation(
+        &app_conn,
+        operation_id,
+        command,
+        &input_digest,
+        &recorded_response,
+    )
+    .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
     Ok(response)
+}
+
+fn system_version() -> Value {
+    json!({
+        "api_version": API_VERSION,
+        "binary_name": BINARY_NAME,
+        "binary_version": env!("CARGO_PKG_VERSION"),
+        "build_version": env!("CARGO_PKG_VERSION"),
+        "supported_commands": SUPPORTED_COMMANDS,
+    })
+}
+
+fn response_for_operation_log(command: &str, response: &Value) -> Value {
+    let mut stored = response.clone();
+    if command == "message decrypt" {
+        if let Some(result) = stored.get_mut("result").and_then(Value::as_object_mut) {
+            result.remove("application_plaintext");
+            result.insert(
+                "plaintext_redacted".to_owned(),
+                json!({"redacted": true, "reason": "plaintext is never persisted in operations"}),
+            );
+        }
+    }
+    stored
 }
 
 struct StateLock {
@@ -567,6 +618,7 @@ fn real_group_add_member(
     let device_id = device_id(params);
     let binding = binding(conn, actor, device_id, group_did, request_id)?;
     let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
     let signer = load_signer(provider, conn, actor, device_id, request_id)?;
     let kp_b64u = params
         .pointer("/group_key_package/mls_key_package_b64u")
@@ -707,6 +759,8 @@ fn real_message_encrypt(
     let device_id = device_id(params);
     let binding = binding(conn, sender, device_id, group_did, request_id)?;
     let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    validate_group_binding_claims(&binding, &group_state_ref, request_id)?;
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
     let signer = load_signer(provider, conn, sender, device_id, request_id)?;
     let plaintext = application_plaintext_bytes(params, request_id)?;
     let message = group
@@ -760,6 +814,16 @@ fn real_message_decrypt(
         .ok_or_else(|| error("missing_field", "private_message_b64u is required", None))?;
     let binding = binding(conn, recipient, device_id, group_did, request_id)?;
     let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    if let Some(group_cipher_object) = params.get("group_cipher_object") {
+        validate_group_binding_claims(&binding, group_cipher_object, request_id)?;
+        if let Some(group_state_ref) = group_cipher_object.get("group_state_ref") {
+            validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+        }
+    }
+    if let Some(group_state_ref) = params.get("group_state_ref") {
+        validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+    }
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
     let message_in =
         MlsMessageIn::tls_deserialize_exact(decode_b64u(private_message_b64u, request_id)?)
             .map_err(|e| mls_error("message_decode_failed", e, request_id))?;
@@ -867,6 +931,7 @@ fn real_group_status(
 
 struct Binding {
     openmls_group_id: GroupId,
+    epoch: u64,
     role: String,
 }
 
@@ -904,15 +969,15 @@ fn binding(
     group_did: &str,
     request_id: &str,
 ) -> Result<Binding, Value> {
-    let row: Option<(String, String)> = conn
+    let row: Option<(String, String, i64)> = conn
         .query_row(
-            "SELECT openmls_group_id_b64u, role FROM group_bindings WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3 AND status = 'active'",
+            "SELECT openmls_group_id_b64u, role, epoch FROM group_bindings WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3 AND status = 'active'",
             params![agent_did, device_id, group_did],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|e| sqlite_error("state_read_failed", e, request_id))?;
-    let Some((group_id_b64u, role)) = row else {
+    let Some((group_id_b64u, role, epoch)) = row else {
         return Err(error(
             "group_not_found",
             "no local MLS group binding found for agent/device/group",
@@ -921,8 +986,62 @@ fn binding(
     };
     Ok(Binding {
         openmls_group_id: GroupId::from_slice(&decode_b64u(&group_id_b64u, request_id)?),
+        epoch: epoch as u64,
         role,
     })
+}
+
+fn validate_group_binding_claims(
+    binding: &Binding,
+    claims: &Value,
+    request_id: &str,
+) -> Result<(), Value> {
+    let expected_group_id = encode_b64u(binding.openmls_group_id.as_slice());
+    for key in ["crypto_group_id_b64u", "openmls_group_id_b64u"] {
+        if let Some(actual) = claims.get(key).and_then(Value::as_str) {
+            if actual != expected_group_id {
+                return Err(error(
+                    "group_binding_mismatch",
+                    &format!("{key} does not match the local MLS group binding"),
+                    Some(request_id.to_owned()),
+                ));
+            }
+        }
+    }
+    for key in ["group_state_version", "epoch"] {
+        if let Some(actual) = claims.get(key).and_then(epoch_claim_as_u64) {
+            if actual != binding.epoch {
+                return Err(error(
+                    "group_epoch_mismatch",
+                    &format!("{key} does not match the local MLS group epoch"),
+                    Some(request_id.to_owned()),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_loaded_group_matches_binding(
+    binding: &Binding,
+    group: &MlsGroup,
+    request_id: &str,
+) -> Result<(), Value> {
+    let actual_epoch = group.epoch().as_u64();
+    if actual_epoch != binding.epoch {
+        return Err(error(
+            "group_epoch_mismatch",
+            "local binding epoch does not match the persisted OpenMLS group epoch",
+            Some(request_id.to_owned()),
+        ));
+    }
+    Ok(())
+}
+
+fn epoch_claim_as_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
 }
 
 fn load_group(

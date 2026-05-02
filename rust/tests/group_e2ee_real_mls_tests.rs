@@ -1,4 +1,5 @@
 use fs2::FileExt;
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -60,6 +61,26 @@ fn run_anp_mls_error(data_dir: &Path, domain: &str, action: &str, request: Value
     serde_json::from_slice(&output.stdout).expect("json error")
 }
 
+fn run_anp_mls_no_data_dir(domain: &str, action: &str, request: Value) -> Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_anp-mls"))
+        .args([domain, action, "--json-in", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn anp-mls");
+    serde_json::to_writer(child.stdin.as_mut().expect("stdin"), &request).expect("write request");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("output");
+    assert!(
+        output.status.success(),
+        "request={request}\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("json response")
+}
+
 fn alice() -> &'static str {
     "did:wba:example.com:users:alice:e1"
 }
@@ -68,8 +89,97 @@ fn bob() -> &'static str {
     "did:wba:example.com:users:bob:e1"
 }
 
+fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) -> Value {
+    let bob_kp = run_anp_mls(
+        bob_dir,
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bootstrap-bob-kp",
+            "operation_id": "op-bootstrap-bob-kp",
+            "params": {"owner_did": bob(), "device_id": "phone"}
+        }),
+    );
+    run_anp_mls(
+        alice_dir,
+        "group",
+        "create",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bootstrap-create",
+            "operation_id": "op-bootstrap-create",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    let add = run_anp_mls(
+        alice_dir,
+        "group",
+        "add-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bootstrap-add",
+            "operation_id": "op-bootstrap-add",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    run_anp_mls(
+        bob_dir,
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bootstrap-welcome",
+            "operation_id": "op-bootstrap-welcome",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome")
+            }
+        }),
+    );
+    add
+}
+
 #[test]
-fn anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
+fn group_e2ee_anp_mls_system_version_probe_is_stable_json() {
+    let response = run_anp_mls_no_data_dir(
+        "system",
+        "version",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-version-probe"
+        }),
+    );
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["api_version"], "anp-mls/v1");
+    assert_eq!(response["request_id"], "req-version-probe");
+    assert_eq!(response["result"]["api_version"], "anp-mls/v1");
+    assert_eq!(response["result"]["binary_name"], "anp-mls");
+    assert!(response["result"]["binary_version"]
+        .as_str()
+        .unwrap()
+        .starts_with("0."));
+    let supported_commands = response["result"]["supported_commands"]
+        .as_array()
+        .expect("supported commands");
+    assert!(supported_commands
+        .iter()
+        .any(|value| value.as_str() == Some("system version")));
+    assert!(supported_commands
+        .iter()
+        .any(|value| value.as_str() == Some("message encrypt")));
+}
+
+#[test]
+fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
     let alice_dir = tempdir().expect("alice state");
     let bob_dir = tempdir().expect("bob state");
     let group_did = "did:wba:example.com:groups:mls-demo:e1";
@@ -196,7 +306,182 @@ fn anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
 }
 
 #[test]
-fn anp_mls_operation_id_is_idempotent_and_conflicting_input_fails() {
+fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:binding-mismatch:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+
+    let wrong_epoch = run_anp_mls_error(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-wrong-epoch",
+            "operation_id": "op-wrong-epoch",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "0",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
+            }
+        }),
+    );
+    assert_eq!(wrong_epoch["error"]["code"], "group_epoch_mismatch");
+
+    let wrong_crypto_group = run_anp_mls_error(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-wrong-crypto-group",
+            "operation_id": "op-wrong-crypto-group",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "1",
+                    "crypto_group_id_b64u": "wrong-local-group"
+                },
+                "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
+            }
+        }),
+    );
+    assert_eq!(
+        wrong_crypto_group["error"]["code"],
+        "group_binding_mismatch"
+    );
+}
+
+#[test]
+fn group_e2ee_anp_mls_rejects_mismatched_cipher_group_binding_before_decrypt() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:cipher-binding:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+
+    let encrypted = run_anp_mls(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-cipher-binding-encrypt",
+            "operation_id": "op-cipher-binding-encrypt",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "application_plaintext": {"application_content_type": "text/plain", "text": "binding protected"}
+            }
+        }),
+    );
+    let mut cipher = encrypted["result"]["group_cipher_object"].clone();
+    cipher["crypto_group_id_b64u"] = json!("wrong-cipher-group");
+
+    let rejected = run_anp_mls_error(
+        bob_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-cipher-binding-decrypt",
+            "operation_id": "op-cipher-binding-decrypt",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "group_cipher_object": cipher
+            }
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "group_binding_mismatch");
+}
+
+#[test]
+fn group_e2ee_anp_mls_operation_log_redacts_decrypted_plaintext() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:operation-log:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+    let secret = "operation log must not persist this plaintext";
+
+    let encrypted = run_anp_mls(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-log-encrypt",
+            "operation_id": "op-log-encrypt",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "application_plaintext": {"application_content_type": "text/plain", "text": secret}
+            }
+        }),
+    );
+    let decrypted = run_anp_mls(
+        bob_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-log-decrypt",
+            "operation_id": "op-log-decrypt",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "group_cipher_object": encrypted["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(decrypted["result"]["application_plaintext"]["text"], secret);
+
+    let conn = Connection::open(bob_dir.path().join("state.db")).expect("open bob state");
+    let mut stmt = conn
+        .prepare("SELECT command, response_json FROM operations ORDER BY operation_id")
+        .expect("prepare operations query");
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("query operations");
+    for row in rows {
+        let (command, response_json) = row.expect("operation row");
+        assert!(
+            !response_json.contains(secret),
+            "plaintext leaked into {command} operation row: {response_json}"
+        );
+        if command == "message decrypt" {
+            assert!(
+                !response_json.contains("application_plaintext"),
+                "decrypt operation row must redact plaintext field: {response_json}"
+            );
+            assert!(response_json.contains("\"redacted\":true"));
+        }
+    }
+}
+
+#[test]
+fn group_e2ee_anp_mls_operation_id_is_idempotent_and_conflicting_input_fails() {
     let data_dir = tempdir().expect("state");
     let request = json!({
         "api_version": "anp-mls/v1",
@@ -224,7 +509,7 @@ fn anp_mls_operation_id_is_idempotent_and_conflicting_input_fails() {
 }
 
 #[test]
-fn anp_mls_file_lock_rejects_concurrent_mutation() {
+fn group_e2ee_anp_mls_file_lock_rejects_concurrent_mutation() {
     let data_dir = tempdir().expect("state");
     let lock_path = data_dir.path().join("state.lock");
     let mut lock_file = OpenOptions::new()
@@ -252,7 +537,7 @@ fn anp_mls_file_lock_rejects_concurrent_mutation() {
 }
 
 #[test]
-fn anp_mls_real_mode_does_not_emit_contract_test_markers() {
+fn group_e2ee_anp_mls_real_mode_does_not_emit_contract_test_markers() {
     let data_dir = tempdir().expect("state");
     let response = run_anp_mls(
         data_dir.path(),
@@ -271,7 +556,7 @@ fn anp_mls_real_mode_does_not_emit_contract_test_markers() {
 }
 
 #[test]
-fn anp_mls_accepts_exec_provider_top_level_envelope_defaults() {
+fn group_e2ee_anp_mls_accepts_exec_provider_top_level_envelope_defaults() {
     let data_dir = tempdir().expect("state");
     let response = run_anp_mls(
         data_dir.path(),
