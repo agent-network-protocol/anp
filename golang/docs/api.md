@@ -112,6 +112,18 @@ Common production entry points:
 - `MessageServiceDirectE2eeClient.ProcessIncoming`
 - `MessageServiceDirectE2eeClient.DecryptHistoryPage`
 
+### `group_e2ee`
+
+Contract-first wire models and an `ExecProvider` for `anp.group.e2ee.v1`. The current surface is test-only scaffolding for P6 API/storage integration; deterministic artifacts must be marked `non_cryptographic=true` and `artifact_mode=contract-test` until real OpenMLS support lands.
+
+Key APIs:
+
+- `ExecProvider.Call`
+- `GroupKeyPackage`
+- `GroupCipherObject`
+- `GroupStateRef`
+- `ApplicationPlaintext`
+
 ## Compatibility Notes
 
 - Pure Go implementation only

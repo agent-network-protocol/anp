@@ -94,6 +94,7 @@ result = await crawler.execute_tool_call("search_poi", {"query": "Beijing"})
 
 - **`authentication/`**: DID WBA (Web-based Decentralized Identifiers) authentication — DID document creation (`create_did_wba_document`), auth header generation (`DIDWbaAuthHeader`), RS256 JWT signature verification (`DidWbaVerifier`)
 - **`direct_e2ee/`**: ANP-P5 private-chat E2EE SDK surface for Go/Rust parity. It owns P5 wire models, JCS AAD builders, X3DH-like initial material, HKDF `kdf_rk`/`kdf_ck`, pending-confirmation bootstrap, Double Ratchet-like session state, and top-level OPK publish/get sidecar handling for product clients/services to consume.
+- **`group_e2ee/`**: ANP-P6 group E2EE contract-first SDK surface. It owns P6 wire models, group send AAD/JCS helpers, and an explicit non-cryptographic contract-test artifact mode so services/CLI can stabilize API and storage before real OpenMLS is connected.
 - Shared P5 direct E2EE vector fixtures live under `testdata/direct_e2ee/`; Go (`golang/direct_e2ee/shared_vectors_test.go`) and Rust (`rust/tests/direct_e2ee_shared_vectors.rs`) must pass the same JSON vectors before product integrations claim cross-language parity.
 - P5 key-service calls (`direct.e2ee.publish_prekey_bundle` / `direct.e2ee.get_prekey_bundle`) must bind `meta.target.kind="service"` and use the caller DID document's advertised `ANPMessageService.serviceDid`; do not send legacy target-less control-plane requests.
 - **`e2e_encryption_v2/`**: Legacy transport-agnostic E2E encryption v2 using HTTP RESTful dict-based messages, ECDHE key exchange, AES-GCM encryption. Session state machine: IDLE → HANDSHAKE_INITIATED → HANDSHAKE_COMPLETING → ACTIVE. Uses `did:wba:` format and snake_case fields (unlike the older `e2e_encryption/` which is WebSocket-coupled with camelCase). Do not use it for new ANP-P5 direct E2EE service behavior.
@@ -141,6 +142,7 @@ Google Python Style Guide: 4-space indentation, type hints on function signature
 
 - Always use `uv run` prefix when running scripts to ensure correct environment
 - Go SDK work under `golang/` must remain pure Go and must not use cgo; prefer cross-platform standard-library or pure-Go dependencies only
+- `rust/src/bin/anp-mls.rs` is currently a one-shot contract-test binary: JSON request via stdin, JSON response via stdout, logs/errors via stderr, and every generated artifact must be marked `non_cryptographic=true` / `artifact_mode=contract-test` until OpenMLS replaces it.
 - OpenANP `@interface` method names must be unique within a class (tracked by function reference)
 - OpenANP `Context` parameter (`ctx: Context`) is auto-injected and excluded from OpenRPC schemas; detected by parameter name `ctx`/`context` or type annotation
 - OpenANP `router()` works as both class method (tries no-arg instantiation) and instance method (recommended for constructors with arguments)
