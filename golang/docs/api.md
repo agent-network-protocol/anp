@@ -114,7 +114,7 @@ Common production entry points:
 
 ### `group_e2ee`
 
-Contract-first wire models and an `ExecProvider` for `anp.group.e2ee.v1`. The current surface is test-only scaffolding for P6 API/storage integration; deterministic artifacts must be marked `non_cryptographic=true` and `artifact_mode=contract-test` until real OpenMLS support lands.
+Wire models and an `ExecProvider` for `anp.group.e2ee.v1`. Real group E2EE flows are owned by the Rust `anp-mls` one-shot binary, which keeps OpenMLS private state in its local SQLite state directory and receives plaintext through stdin, not argv. Contract-test artifacts are still available only when explicitly enabled for compatibility tests, and those deterministic artifacts must be marked `non_cryptographic=true` and `artifact_mode=contract-test`.
 
 Key APIs:
 
