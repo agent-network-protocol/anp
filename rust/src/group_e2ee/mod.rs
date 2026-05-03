@@ -1,9 +1,9 @@
-//! Contract-first helpers for ANP P6 group E2EE.
+//! P6 wire helpers for ANP group E2EE.
 //!
-//! This module intentionally does not implement MLS cryptography yet. It owns
-//! the P6 wire models and a deterministic contract-test artifact generator so
-//! product integrations can stabilize API/storage boundaries before OpenMLS is
-//! wired in.
+//! This module owns P6 data models, canonical AAD helpers, and the explicit
+//! non-cryptographic contract-test artifact generator. Real OpenMLS group
+//! operations live in the `anp-mls` binary so SDK/product integrations can share
+//! wire semantics without embedding local MLS private state in this helper module.
 
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -188,6 +188,29 @@ mod tests {
         }))
         .expect("aad");
         assert!(String::from_utf8(aad).unwrap().starts_with("{"));
+    }
+
+    #[test]
+    fn send_aad_has_stable_p6_golden_vector() {
+        let aad = build_send_aad(&json!({
+            "operation_id": "op-golden",
+            "message_id": "msg-golden",
+            "sender_did": "did:wba:example.com:users:alice:e1",
+            "security_profile": "group-e2ee",
+            "group_did": "did:wba:example.com:groups:golden:e1",
+            "content_type": "application/anp-group-cipher+json",
+            "crypto_group_id_b64u": "ZGlkOndiYTpleGFtcGxlLmNvbTpncm91cHM6Z29sZGVuOmUx",
+            "group_state_ref": {
+                "policy_hash": "sha256:policy",
+                "group_state_version": "7",
+                "group_did": "did:wba:example.com:groups:golden:e1"
+            }
+        }))
+        .expect("aad");
+        assert_eq!(
+            String::from_utf8(aad).expect("utf8 aad"),
+            r#"{"content_type":"application/anp-group-cipher+json","crypto_group_id_b64u":"ZGlkOndiYTpleGFtcGxlLmNvbTpncm91cHM6Z29sZGVuOmUx","group_did":"did:wba:example.com:groups:golden:e1","group_state_ref":{"group_did":"did:wba:example.com:groups:golden:e1","group_state_version":"7","policy_hash":"sha256:policy"},"message_id":"msg-golden","operation_id":"op-golden","security_profile":"group-e2ee","sender_did":"did:wba:example.com:users:alice:e1"}"#
+        );
     }
 
     #[test]

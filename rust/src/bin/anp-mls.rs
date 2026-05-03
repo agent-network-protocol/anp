@@ -2,8 +2,12 @@
 //! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state in SQLite, validates local group bindings, and contract-test mode emits explicit non-cryptographic fixtures.
 //! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir`.
 
-use anp::group_e2ee::{deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, MTI_SUITE};
+use anp::group_e2ee::{
+    build_send_aad, deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, MTI_SUITE,
+    SECURITY_PROFILE,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use fs2::FileExt;
 use openmls::prelude::{
     tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize},
@@ -27,6 +31,7 @@ use std::{
 const API_VERSION: &str = "anp-mls/v1";
 const DEVICE_ID_DEFAULT: &str = "default";
 const BINARY_NAME: &str = "anp-mls";
+const GROUP_CIPHER_CONTENT_TYPE: &str = "application/anp-group-cipher+json";
 const SUPPORTED_COMMANDS: &[&str] = &[
     "system version",
     "key-package generate",
@@ -645,7 +650,8 @@ fn real_group_add_member(
     let key_package = key_package_in
         .validate(provider.crypto(), ProtocolVersion::Mls10)
         .map_err(|e| mls_error("key_package_validate_failed", e, request_id))?;
-    let (commit, welcome, group_info) = group
+    validate_key_package_did_wba_binding(params, member_did, &key_package, request_id)?;
+    let (commit, welcome, _group_info) = group
         .add_members(provider, &signer, core::slice::from_ref(&key_package))
         .map_err(|e| mls_error("group_add_member_failed", e, request_id))?;
     group
@@ -681,21 +687,19 @@ fn real_group_add_member(
             .tls_serialize_detached()
             .map_err(|e| mls_error("welcome_encode_failed", e, request_id))?,
     );
-    let group_info_b64u = match group_info {
-        Some(info) => {
-            Some(encode_b64u(&info.tls_serialize_detached().map_err(
-                |e| mls_error("group_info_encode_failed", e, request_id),
-            )?))
-        }
-        None => None,
-    };
+    let ratchet_tree: RatchetTreeIn = group.export_ratchet_tree().into();
+    let ratchet_tree_b64u = encode_b64u(
+        &ratchet_tree
+            .tls_serialize_detached()
+            .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?,
+    );
     Ok(json!({
         "crypto_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
         "openmls_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
         "epoch": group.epoch().as_u64().to_string(),
         "commit_b64u": commit_b64u,
         "welcome_b64u": welcome_b64u,
-        "ratchet_tree_b64u": group_info_b64u,
+        "ratchet_tree_b64u": ratchet_tree_b64u,
         "member_did": member_did,
         "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
     }))
@@ -712,11 +716,16 @@ fn real_welcome_process(
     ensure_agent(provider, conn, agent, device_id, request_id)?;
     let group_did = required(params, "group_did")?;
     let welcome_b64u = required(params, "welcome_b64u")?;
+    let ratchet_tree_b64u = required(params, "ratchet_tree_b64u")?;
     let welcome = Welcome::tls_deserialize_exact(decode_b64u(welcome_b64u, request_id)?)
         .map_err(|e| mls_error("welcome_decode_failed", e, request_id))?;
+    let ratchet_tree =
+        RatchetTreeIn::tls_deserialize_exact(decode_b64u(ratchet_tree_b64u, request_id)?)
+            .map_err(|e| mls_error("ratchet_tree_decode_failed", e, request_id))?;
     let join_config = group_join_config();
-    let staged = StagedWelcome::new_from_welcome(provider, &join_config, welcome, None)
-        .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?;
+    let staged =
+        StagedWelcome::new_from_welcome(provider, &join_config, welcome, Some(ratchet_tree))
+            .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?;
     let group = staged
         .into_group(provider)
         .map_err(|e| mls_error("welcome_process_failed", e, request_id))?;
@@ -763,6 +772,8 @@ fn real_message_encrypt(
     validate_loaded_group_matches_binding(&binding, &group, request_id)?;
     let signer = load_signer(provider, conn, sender, device_id, request_id)?;
     let plaintext = application_plaintext_bytes(params, request_id)?;
+    let aad = build_message_aad(params, &binding, &group_state_ref, request_id)?;
+    group.set_aad(aad.clone());
     let message = group
         .create_message(provider, &signer, &plaintext)
         .map_err(|e| mls_error("message_encrypt_failed", e, request_id))?;
@@ -789,7 +800,8 @@ fn real_message_encrypt(
             "private_message_b64u": private_message_b64u,
             "group_state_ref": group_state_ref,
             "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice())
-        }
+        },
+        "authenticated_data_sha256_b64u": encode_b64u(&Sha256::digest(&aad)),
     }))
 }
 
@@ -799,8 +811,24 @@ fn real_message_decrypt(
     params: &Value,
     request_id: &str,
 ) -> Result<Value, Value> {
-    let recipient = agent_did(params)?;
+    let recipient = params
+        .get("recipient_did")
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "recipient_did or agent_did is required",
+                None,
+            )
+        })?;
     let device_id = device_id(params);
+    let group_state_ref = params
+        .get("group_state_ref")
+        .or_else(|| params.pointer("/group_cipher_object/group_state_ref"))
+        .cloned()
+        .ok_or_else(|| error("missing_field", "group_state_ref is required", None))?;
     let group_did = params
         .pointer("/group_state_ref/group_did")
         .or_else(|| params.pointer("/group_cipher_object/group_state_ref/group_did"))
@@ -824,6 +852,7 @@ fn real_message_decrypt(
         validate_group_binding_claims(&binding, group_state_ref, request_id)?;
     }
     validate_loaded_group_matches_binding(&binding, &group, request_id)?;
+    let expected_aad = build_message_aad(params, &binding, &group_state_ref, request_id)?;
     let message_in =
         MlsMessageIn::tls_deserialize_exact(decode_b64u(private_message_b64u, request_id)?)
             .map_err(|e| mls_error("message_decode_failed", e, request_id))?;
@@ -837,6 +866,13 @@ fn real_message_decrypt(
     let processed = group
         .process_message(provider, protocol)
         .map_err(|e| mls_error("message_decrypt_failed", e, request_id))?;
+    if processed.aad() != expected_aad.as_slice() {
+        return Err(error(
+            "aad_mismatch",
+            "MLS authenticated_data does not match P6 outer message binding",
+            Some(request_id.to_owned()),
+        ));
+    }
     upsert_binding(
         conn,
         recipient,
@@ -1008,7 +1044,7 @@ fn validate_group_binding_claims(
             }
         }
     }
-    for key in ["group_state_version", "epoch"] {
+    for key in ["epoch"] {
         if let Some(actual) = claims.get(key).and_then(epoch_claim_as_u64) {
             if actual != binding.epoch {
                 return Err(error(
@@ -1036,6 +1072,279 @@ fn validate_loaded_group_matches_binding(
         ));
     }
     Ok(())
+}
+
+fn validate_key_package_did_wba_binding(
+    params: &Value,
+    member_did: &str,
+    key_package: &KeyPackage,
+    request_id: &str,
+) -> Result<(), Value> {
+    if let Some(owner_did) = params
+        .pointer("/group_key_package/owner_did")
+        .and_then(Value::as_str)
+    {
+        if owner_did != member_did {
+            return Err(error(
+                "did_wba_binding_mismatch",
+                "group_key_package.owner_did does not match member_did",
+                Some(request_id.to_owned()),
+            ));
+        }
+    }
+    let binding = params
+        .pointer("/group_key_package/did_wba_binding")
+        .or_else(|| params.get("did_wba_binding"))
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "group_key_package.did_wba_binding is required",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let agent_did = binding
+        .get("agent_did")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "invalid_did_wba_binding",
+                "did_wba_binding.agent_did is required",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    if agent_did != member_did {
+        return Err(error(
+            "did_wba_binding_mismatch",
+            "did_wba_binding.agent_did does not match member_did",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let verification_method = binding
+        .get("verification_method")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            value.starts_with(&format!("{member_did}#")) && value.len() > member_did.len() + 1
+        })
+        .ok_or_else(|| {
+            error(
+                "invalid_did_wba_binding",
+                "did_wba_binding.verification_method must be a fragment under member_did",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let leaf_signature_key = binding
+        .get("leaf_signature_key_b64u")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            error(
+                "invalid_did_wba_binding",
+                "did_wba_binding.leaf_signature_key_b64u is required",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let leaf_signature_key = decode_b64u(leaf_signature_key, request_id)?;
+    if leaf_signature_key.as_slice() != key_package.leaf_node().signature_key().as_slice() {
+        return Err(error(
+            "did_wba_binding_mismatch",
+            "did_wba_binding.leaf_signature_key_b64u does not match the MLS KeyPackage leaf signature key",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let credential: BasicCredential = key_package
+        .leaf_node()
+        .credential()
+        .clone()
+        .try_into()
+        .map_err(|e| mls_error("key_package_credential_decode_failed", e, request_id))?;
+    if credential.identity() != member_did.as_bytes() {
+        return Err(error(
+            "did_wba_binding_mismatch",
+            "MLS KeyPackage credential identity does not match member_did",
+            Some(request_id.to_owned()),
+        ));
+    }
+    validate_binding_time_window(binding, request_id)?;
+    if let Some(proof) = binding.get("proof") {
+        validate_binding_proof_shape(proof, verification_method, request_id)?;
+    }
+    Ok(())
+}
+
+fn validate_binding_time_window(binding: &Value, request_id: &str) -> Result<(), Value> {
+    let issued_at = parse_binding_time(binding, "issued_at", request_id)?;
+    let expires_at = parse_binding_time(binding, "expires_at", request_id)?;
+    if expires_at <= issued_at {
+        return Err(error(
+            "invalid_did_wba_binding",
+            "did_wba_binding.expires_at must be after issued_at",
+            Some(request_id.to_owned()),
+        ));
+    }
+    if expires_at <= Utc::now() {
+        return Err(error(
+            "did_wba_binding_expired",
+            "did_wba_binding.expires_at is in the past",
+            Some(request_id.to_owned()),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_binding_time(
+    binding: &Value,
+    field: &'static str,
+    request_id: &str,
+) -> Result<DateTime<Utc>, Value> {
+    let raw = binding
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "invalid_did_wba_binding",
+                &format!("did_wba_binding.{field} is required"),
+                Some(request_id.to_owned()),
+            )
+        })?;
+    DateTime::parse_from_rfc3339(raw)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|e| {
+            error(
+                "invalid_did_wba_binding",
+                &format!("did_wba_binding.{field} must be RFC3339: {e}"),
+                Some(request_id.to_owned()),
+            )
+        })
+}
+
+fn validate_binding_proof_shape(
+    proof: &Value,
+    verification_method: &str,
+    request_id: &str,
+) -> Result<(), Value> {
+    let Some(proof_object) = proof.as_object() else {
+        return Err(error(
+            "invalid_did_wba_binding",
+            "did_wba_binding.proof must be an object when present",
+            Some(request_id.to_owned()),
+        ));
+    };
+    let proof_verification_method = proof_object
+        .get("verificationMethod")
+        .or_else(|| proof_object.get("verification_method"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "invalid_did_wba_binding",
+                "did_wba_binding.proof.verificationMethod is required when proof is present",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    if proof_verification_method != verification_method {
+        return Err(error(
+            "did_wba_binding_mismatch",
+            "did_wba_binding.proof.verificationMethod does not match verification_method",
+            Some(request_id.to_owned()),
+        ));
+    }
+    Ok(())
+}
+
+fn build_message_aad(
+    params: &Value,
+    binding: &Binding,
+    group_state_ref: &Value,
+    request_id: &str,
+) -> Result<Vec<u8>, Value> {
+    let group_did = group_state_ref
+        .get("group_did")
+        .and_then(Value::as_str)
+        .or_else(|| params.get("group_did").and_then(Value::as_str))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "group_state_ref.group_did is required",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let sender_did = params
+        .get("sender_did")
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "sender_did is required for P6 MLS AAD",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let message_id = params
+        .get("message_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "message_id is required for P6 MLS AAD",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let operation_id = params
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "operation_id is required for P6 MLS AAD",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let content_type = params
+        .get("content_type")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(GROUP_CIPHER_CONTENT_TYPE);
+    if content_type != GROUP_CIPHER_CONTENT_TYPE {
+        return Err(error(
+            "invalid_aad_binding",
+            "group.e2ee.send content_type must be application/anp-group-cipher+json",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let security_profile = params
+        .get("security_profile")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(SECURITY_PROFILE);
+    if security_profile != SECURITY_PROFILE {
+        return Err(error(
+            "invalid_aad_binding",
+            "group.e2ee.send security_profile must be group-e2ee",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let value = json!({
+        "content_type": content_type,
+        "group_did": group_did,
+        "crypto_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
+        "group_state_ref": group_state_ref,
+        "security_profile": security_profile,
+        "sender_did": sender_did,
+        "message_id": message_id,
+        "operation_id": operation_id,
+    });
+    build_send_aad(&value).map_err(|e| {
+        error(
+            "invalid_aad_binding",
+            &format!("build P6 send AAD: {e}"),
+            Some(request_id.to_owned()),
+        )
+    })
 }
 
 fn epoch_claim_as_u64(value: &Value) -> Option<u64> {
@@ -1189,13 +1498,15 @@ fn device_id(params: &Value) -> &str {
 }
 
 fn did_wba_binding(owner: &str, device_id: &str, signer: &SignatureKeyPair) -> Value {
+    let issued_at = Utc::now();
+    let expires_at = issued_at + ChronoDuration::days(365);
     json!({
         "agent_did": owner,
         "device_id": device_id,
         "verification_method": format!("{}#{}", owner, device_id),
         "leaf_signature_key_b64u": encode_b64u(&signer.to_public_vec()),
-        "issued_at": "2026-01-01T00:00:00Z",
-        "expires_at": "2027-01-01T00:00:00Z"
+        "issued_at": issued_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     })
 }
 
@@ -1275,7 +1586,7 @@ fn contract_key_package(params: &Value) -> Result<Value, Value> {
                 "verification_method": format!("{}#key-1", owner),
                 "leaf_signature_key_b64u": artifact["digest_b64u"],
                 "issued_at": "2026-01-01T00:00:00Z",
-                "expires_at": "2027-01-01T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
                 "non_cryptographic": true,
                 "artifact_mode": CONTRACT_ARTIFACT_MODE
             })),
@@ -1318,6 +1629,7 @@ fn contract_group_add_member(params: &Value) -> Result<Value, Value> {
 
 fn contract_welcome_process(params: &Value) -> Result<Value, Value> {
     required(params, "welcome_b64u")?;
+    required(params, "ratchet_tree_b64u")?;
     let artifact = artifact("welcome-process", params)?;
     Ok(json!({
         "crypto_group_id_b64u": params.get("crypto_group_id_b64u").cloned().unwrap_or_else(|| artifact["digest_b64u"].clone()),

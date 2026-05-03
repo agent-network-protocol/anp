@@ -89,7 +89,11 @@ fn bob() -> &'static str {
     "did:wba:example.com:users:bob:e1"
 }
 
-fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) -> Value {
+fn bootstrap_alice_bob_group_without_welcome(
+    alice_dir: &Path,
+    bob_dir: &Path,
+    group_did: &str,
+) -> Value {
     let bob_kp = run_anp_mls(
         bob_dir,
         "key-package",
@@ -129,6 +133,11 @@ fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) 
             }
         }),
     );
+    add
+}
+
+fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) -> Value {
+    let add = bootstrap_alice_bob_group_without_welcome(alice_dir, bob_dir, group_did);
     run_anp_mls(
         bob_dir,
         "welcome",
@@ -141,7 +150,8 @@ fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) 
                 "agent_did": bob(),
                 "device_id": "phone",
                 "group_did": group_did,
-                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome")
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
+                "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree")
             }
         }),
     );
@@ -236,7 +246,11 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
     );
     assert_eq!(add["result"]["epoch"], "1");
     let welcome_b64u = add["result"]["welcome_b64u"].as_str().expect("welcome");
+    let ratchet_tree_b64u = add["result"]["ratchet_tree_b64u"]
+        .as_str()
+        .expect("ratchet tree");
     assert!(!welcome_b64u.is_empty());
+    assert!(!ratchet_tree_b64u.is_empty());
 
     let welcome = run_anp_mls(
         bob_dir.path(),
@@ -246,7 +260,7 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
             "api_version": "anp-mls/v1",
             "request_id": "req-welcome",
             "operation_id": "op-welcome",
-            "params": {"agent_did": bob(), "device_id": "phone", "group_did": group_did, "welcome_b64u": welcome_b64u}
+            "params": {"agent_did": bob(), "device_id": "phone", "group_did": group_did, "welcome_b64u": welcome_b64u, "ratchet_tree_b64u": ratchet_tree_b64u}
         }),
     );
     assert_eq!(welcome["result"]["status"], "active");
@@ -264,6 +278,10 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
                 "sender_did": alice(),
                 "device_id": "phone",
                 "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-encrypt",
+                "operation_id": "op-encrypt",
                 "application_plaintext": {"application_content_type": "text/plain", "text": secret}
             }
         }),
@@ -283,6 +301,11 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
                 "recipient_did": bob(),
                 "device_id": "phone",
                 "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-encrypt",
+                "operation_id": "op-encrypt",
                 "group_cipher_object": cipher
             }
         }),
@@ -312,6 +335,32 @@ fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
     let group_did = "did:wba:example.com:groups:binding-mismatch:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
+    let server_state_version_is_not_mls_epoch = run_anp_mls(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-server-version",
+            "operation_id": "op-server-version",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "42",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-server-version",
+                "operation_id": "op-server-version",
+                "application_plaintext": {"application_content_type": "text/plain", "text": "server version is aad only"}
+            }
+        }),
+    );
+    assert!(server_state_version_is_not_mls_epoch["result"]["group_cipher_object"].is_object());
+
     let wrong_epoch = run_anp_mls_error(
         alice_dir.path(),
         "message",
@@ -325,9 +374,13 @@ fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
                 "device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
-                    "group_state_version": "0",
+                    "epoch": "0",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-wrong-epoch",
+                "operation_id": "op-wrong-epoch",
                 "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
             }
         }),
@@ -350,6 +403,10 @@ fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
                     "group_state_version": "1",
                     "crypto_group_id_b64u": "wrong-local-group"
                 },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-wrong-crypto-group",
+                "operation_id": "op-wrong-crypto-group",
                 "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
             }
         }),
@@ -383,6 +440,10 @@ fn group_e2ee_anp_mls_rejects_mismatched_cipher_group_binding_before_decrypt() {
                     "group_state_version": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-cipher-binding",
+                "operation_id": "op-cipher-binding-encrypt",
                 "application_plaintext": {"application_content_type": "text/plain", "text": "binding protected"}
             }
         }),
@@ -402,11 +463,175 @@ fn group_e2ee_anp_mls_rejects_mismatched_cipher_group_binding_before_decrypt() {
                 "recipient_did": bob(),
                 "device_id": "phone",
                 "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-cipher-binding",
+                "operation_id": "op-cipher-binding-encrypt",
                 "group_cipher_object": cipher
             }
         }),
     );
     assert_eq!(rejected["error"]["code"], "group_binding_mismatch");
+}
+
+#[test]
+fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:ratchet-required:e1";
+    let add =
+        bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
+
+    let missing = run_anp_mls_error(
+        bob_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-missing-ratchet-tree",
+            "operation_id": "op-missing-ratchet-tree",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome")
+            }
+        }),
+    );
+    assert_eq!(missing["error"]["code"], "missing_field");
+
+    let invalid = run_anp_mls_error(
+        bob_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-invalid-ratchet-tree",
+            "operation_id": "op-invalid-ratchet-tree",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
+                "ratchet_tree_b64u": "AAAA"
+            }
+        }),
+    );
+    assert!([
+        "ratchet_tree_decode_failed",
+        "welcome_stage_failed",
+        "invalid_base64url"
+    ]
+    .contains(&invalid["error"]["code"].as_str().unwrap()));
+}
+
+#[test]
+fn group_e2ee_anp_mls_rejects_tampered_send_aad_before_plaintext_release() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:aad-binding:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+
+    let encrypted = run_anp_mls(
+        alice_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-aad-encrypt",
+            "operation_id": "op-aad-encrypt",
+            "params": {
+                "sender_did": alice(),
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "group_state_version": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-aad-original",
+                "operation_id": "op-aad-encrypt",
+                "application_plaintext": {"application_content_type": "text/plain", "text": "aad protected"}
+            }
+        }),
+    );
+    assert!(encrypted["result"]["authenticated_data_sha256_b64u"]
+        .as_str()
+        .is_some());
+
+    let rejected = run_anp_mls_error(
+        bob_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-aad-decrypt",
+            "operation_id": "op-aad-decrypt",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-aad-tampered",
+                "operation_id": "op-aad-encrypt",
+                "group_cipher_object": encrypted["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "aad_mismatch");
+}
+
+#[test]
+fn group_e2ee_anp_mls_rejects_key_package_did_wba_binding_mismatch() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:binding-validation:e1";
+    let mut bob_kp = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-binding-bob-kp",
+            "operation_id": "op-binding-bob-kp",
+            "params": {"owner_did": bob(), "device_id": "phone"}
+        }),
+    );
+    run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "create",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-binding-create",
+            "operation_id": "op-binding-create",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    bob_kp["result"]["group_key_package"]["did_wba_binding"]["agent_did"] = json!(alice());
+
+    let rejected = run_anp_mls_error(
+        alice_dir.path(),
+        "group",
+        "add-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-binding-add",
+            "operation_id": "op-binding-add",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "did_wba_binding_mismatch");
 }
 
 #[test]
@@ -433,6 +658,10 @@ fn group_e2ee_anp_mls_operation_log_redacts_decrypted_plaintext() {
                     "group_state_version": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-log-encrypt",
+                "operation_id": "op-log-encrypt",
                 "application_plaintext": {"application_content_type": "text/plain", "text": secret}
             }
         }),
@@ -449,6 +678,11 @@ fn group_e2ee_anp_mls_operation_log_redacts_decrypted_plaintext() {
                 "recipient_did": bob(),
                 "device_id": "phone",
                 "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-log-encrypt",
+                "operation_id": "op-log-encrypt",
                 "group_cipher_object": encrypted["result"]["group_cipher_object"].clone()
             }
         }),
