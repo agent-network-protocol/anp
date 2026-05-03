@@ -1,10 +1,13 @@
 package groupe2ee
 
 const (
-	Profile              = "anp.group.e2ee.v1"
-	SecurityProfile      = "group-e2ee"
-	ContractArtifactMode = "contract-test"
-	MTISuite             = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
+	Profile                   = "anp.group.e2ee.v1"
+	SecurityProfile           = "group-e2ee"
+	TransportSecurityProfile  = "transport-protected"
+	ContractArtifactMode      = "contract-test"
+	MTISuite                  = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
+	MethodLeaveRequest        = "group.e2ee.leave_request"
+	MethodLeaveRequestProcess = "group.e2ee.leave_request.process"
 )
 
 type TargetRef struct {
@@ -47,6 +50,32 @@ type GroupCipherObject struct {
 	PrivateMessageB64U string        `json:"private_message_b64u"`
 	GroupStateRef      GroupStateRef `json:"group_state_ref"`
 	EpochAuthenticator string        `json:"epoch_authenticator,omitempty"`
+	NonCryptographic   bool          `json:"non_cryptographic,omitempty"`
+	ArtifactMode       string        `json:"artifact_mode,omitempty"`
+}
+
+type GroupLeaveRequestObject struct {
+	LeaveRequestID   string        `json:"leave_request_id"`
+	GroupDID         string        `json:"group_did"`
+	RequesterDID     string        `json:"requester_did"`
+	GroupStateRef    GroupStateRef `json:"group_state_ref"`
+	ReasonText       string        `json:"reason_text,omitempty"`
+	RequestedAt      string        `json:"requested_at,omitempty"`
+	NonCryptographic bool          `json:"non_cryptographic,omitempty"`
+	ArtifactMode     string        `json:"artifact_mode,omitempty"`
+}
+
+type GroupLeaveRequestProcessObject struct {
+	LeaveRequestID     string        `json:"leave_request_id"`
+	GroupDID           string        `json:"group_did"`
+	RequesterDID       string        `json:"requester_did"`
+	ProcessorDID       string        `json:"processor_did"`
+	GroupStateRef      GroupStateRef `json:"group_state_ref"`
+	CryptoGroupIDB64U  string        `json:"crypto_group_id_b64u"`
+	Epoch              string        `json:"epoch"`
+	CommitB64U         string        `json:"commit_b64u"`
+	EpochAuthenticator string        `json:"epoch_authenticator,omitempty"`
+	ReasonText         string        `json:"reason_text,omitempty"`
 	NonCryptographic   bool          `json:"non_cryptographic,omitempty"`
 	ArtifactMode       string        `json:"artifact_mode,omitempty"`
 }

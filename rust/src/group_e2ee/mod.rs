@@ -14,8 +14,11 @@ use thiserror::Error;
 
 pub const PROFILE: &str = "anp.group.e2ee.v1";
 pub const SECURITY_PROFILE: &str = "group-e2ee";
+pub const TRANSPORT_SECURITY_PROFILE: &str = "transport-protected";
 pub const CONTRACT_ARTIFACT_MODE: &str = "contract-test";
 pub const MTI_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
+pub const METHOD_LEAVE_REQUEST: &str = "group.e2ee.leave_request";
+pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.leave_request.process";
 
 #[derive(Debug, Error)]
 pub enum GroupE2eeError {
@@ -69,6 +72,42 @@ pub struct GroupCipherObject {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupLeaveRequestObject {
+    pub leave_request_id: String,
+    pub group_did: String,
+    pub requester_did: String,
+    pub group_state_ref: GroupStateRef,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_at: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub non_cryptographic: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupLeaveRequestProcessObject {
+    pub leave_request_id: String,
+    pub group_did: String,
+    pub requester_did: String,
+    pub processor_did: String,
+    pub group_state_ref: GroupStateRef,
+    pub crypto_group_id_b64u: String,
+    pub epoch: String,
+    pub commit_b64u: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch_authenticator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_text: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub non_cryptographic: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct E2eeNoticeObject {
     pub notice_id: String,
     pub notice_type: String,
@@ -115,6 +154,58 @@ pub struct ContractArtifact {
     pub digest_b64u: String,
     pub non_cryptographic: bool,
     pub artifact_mode: String,
+}
+
+pub fn build_leave_request_control_aad(value: &Value) -> Result<Vec<u8>, GroupE2eeError> {
+    let method = value
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or(GroupE2eeError::MissingField("method"))?;
+    match method {
+        METHOD_LEAVE_REQUEST => {
+            for field in [
+                "method",
+                "security_profile",
+                "group_did",
+                "group_state_ref",
+                "requester_did",
+                "operation_id",
+            ] {
+                if value.get(field).is_none() {
+                    return Err(GroupE2eeError::MissingField(field));
+                }
+            }
+            if value.get("security_profile").and_then(Value::as_str)
+                != Some(TRANSPORT_SECURITY_PROFILE)
+            {
+                return Err(GroupE2eeError::InvalidField("security_profile"));
+            }
+        }
+        METHOD_LEAVE_REQUEST_PROCESS => {
+            for field in [
+                "method",
+                "security_profile",
+                "group_did",
+                "group_state_ref",
+                "leave_request_id",
+                "requester_did",
+                "processor_did",
+                "crypto_group_id_b64u",
+                "epoch",
+                "commit_b64u",
+                "operation_id",
+            ] {
+                if value.get(field).is_none() {
+                    return Err(GroupE2eeError::MissingField(field));
+                }
+            }
+            if value.get("security_profile").and_then(Value::as_str) != Some(SECURITY_PROFILE) {
+                return Err(GroupE2eeError::InvalidField("security_profile"));
+            }
+        }
+        _ => return Err(GroupE2eeError::InvalidField("method")),
+    }
+    Ok(canonicalize_json(value)?)
 }
 
 pub fn build_send_aad(value: &Value) -> Result<Vec<u8>, GroupE2eeError> {
@@ -173,6 +264,48 @@ fn is_false(value: &bool) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn leave_request_control_aad_has_stable_golden_vector() {
+        let aad = build_leave_request_control_aad(&json!({
+            "method": METHOD_LEAVE_REQUEST,
+            "operation_id": "op-leave-request",
+            "security_profile": TRANSPORT_SECURITY_PROFILE,
+            "group_did": "did:wba:example.com:groups:golden:e1",
+            "requester_did": "did:wba:example.com:users:bob:e1",
+            "reason_text": "leaving this workspace",
+            "group_state_ref": {
+                "group_state_version": "7",
+                "group_did": "did:wba:example.com:groups:golden:e1"
+            }
+        }))
+        .expect("leave request aad");
+        assert_eq!(
+            String::from_utf8(aad).expect("utf8 aad"),
+            r#"{"group_did":"did:wba:example.com:groups:golden:e1","group_state_ref":{"group_did":"did:wba:example.com:groups:golden:e1","group_state_version":"7"},"method":"group.e2ee.leave_request","operation_id":"op-leave-request","reason_text":"leaving this workspace","requester_did":"did:wba:example.com:users:bob:e1","security_profile":"transport-protected"}"#
+        );
+    }
+
+    #[test]
+    fn leave_request_process_requires_epoch_advancing_commit_fields() {
+        let err = build_leave_request_control_aad(&json!({
+            "method": METHOD_LEAVE_REQUEST_PROCESS,
+            "operation_id": "op-process",
+            "security_profile": SECURITY_PROFILE,
+            "group_did": "did:wba:example.com:groups:golden:e1",
+            "group_state_ref": {
+                "group_state_version": "7",
+                "group_did": "did:wba:example.com:groups:golden:e1"
+            },
+            "leave_request_id": "leave-req-1",
+            "requester_did": "did:wba:example.com:users:bob:e1",
+            "processor_did": "did:wba:example.com:users:alice:e1",
+            "crypto_group_id_b64u": "Y3J5cHRv",
+            "epoch": "8"
+        }))
+        .expect_err("missing commit");
+        assert!(matches!(err, GroupE2eeError::MissingField("commit_b64u")));
+    }
 
     #[test]
     fn send_aad_canonicalizes_required_fields() {

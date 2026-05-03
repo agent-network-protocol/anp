@@ -46,8 +46,9 @@ cargo add anp
   clears the pending commit after deterministic service rejection.
 - `group leave` records a local terminal pending artifact because OpenMLS 0.8 rejects
   same-member self-remove commits; finalizing it marks the local binding `left` without
-  advancing the local epoch, while the service/remaining members must advance MLS through
-  the composite leave flow and commit notice.
+  advancing the local epoch. PR-B1 service/CLI integrations should use the hidden
+  `group.e2ee.leave_request` control plane and process it through an authorized
+  epoch-advancing remove commit for remaining members.
 
 ## Repository
 
