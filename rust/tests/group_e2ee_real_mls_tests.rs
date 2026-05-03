@@ -158,6 +158,40 @@ fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) 
     add
 }
 
+fn encrypt_text(
+    data_dir: &Path,
+    sender_did: &str,
+    group_did: &str,
+    epoch: &str,
+    op: &str,
+    message_id: &str,
+    text: &str,
+) -> Value {
+    run_anp_mls(
+        data_dir,
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": format!("req-{op}"),
+            "operation_id": op,
+            "params": {
+                "sender_did": sender_did,
+                "device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": epoch,
+                },
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": message_id,
+                "operation_id": op,
+                "application_plaintext": {"application_content_type": "text/plain", "text": text}
+            }
+        }),
+    )
+}
+
 #[test]
 fn group_e2ee_anp_mls_system_version_probe_is_stable_json() {
     let response = run_anp_mls_no_data_dir(
@@ -186,6 +220,12 @@ fn group_e2ee_anp_mls_system_version_probe_is_stable_json() {
     assert!(supported_commands
         .iter()
         .any(|value| value.as_str() == Some("message encrypt")));
+    assert!(supported_commands
+        .iter()
+        .any(|value| value.as_str() == Some("group remove-member")));
+    assert!(supported_commands
+        .iter()
+        .any(|value| value.as_str() == Some("group commit-finalize")));
 }
 
 #[test]
@@ -326,6 +366,291 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
     assert_eq!(status["result"]["status"], "active");
     assert!(alice_dir.path().join("state.db").exists());
     assert!(bob_dir.path().join("state.db").exists());
+}
+
+#[test]
+fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:remove-member:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+    assert_eq!(add["result"]["epoch"], "1");
+
+    let remove = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "remove-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-bob",
+            "operation_id": "op-remove-bob",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                }
+            }
+        }),
+    );
+    assert_eq!(remove["result"]["status"], "pending");
+    assert_eq!(remove["result"]["subject_did"], bob());
+    assert_eq!(remove["result"]["subject_status"], "removed");
+    assert_eq!(remove["result"]["from_epoch"], "1");
+    assert_eq!(remove["result"]["epoch"], "2");
+    assert_eq!(remove["result"]["local_epoch"], "1");
+    assert!(remove["result"]["pending_commit_id"].as_str().is_some());
+    assert!(remove["result"]["commit_b64u"].as_str().unwrap().len() > 64);
+
+    let status_before_finalize = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-status-before-finalize",
+            "operation_id": "op-remove-status-before-finalize",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(status_before_finalize["result"]["epoch"], "1");
+
+    let replay = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "remove-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-bob-replay",
+            "operation_id": "op-remove-bob",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                }
+            }
+        }),
+    );
+    assert_eq!(replay["result"], remove["result"]);
+    assert_eq!(replay["request_id"], "req-remove-bob-replay");
+
+    let finalized = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-finalize",
+            "operation_id": "op-remove-finalize",
+            "params": {
+                "pending_commit_id": remove["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "2");
+
+    let post_remove = encrypt_text(
+        alice_dir.path(),
+        alice(),
+        group_did,
+        "2",
+        "op-post-remove-encrypt",
+        "msg-post-remove",
+        "Bob must not decrypt this",
+    );
+    let cannot_decrypt = run_anp_mls_error(
+        bob_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-decrypt-post-remove",
+            "operation_id": "op-bob-decrypt-post-remove",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-post-remove",
+                "operation_id": "op-post-remove-encrypt",
+                "group_cipher_object": post_remove["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(cannot_decrypt["error"]["code"], "group_epoch_mismatch");
+
+    let processed = run_anp_mls(
+        bob_dir.path(),
+        "commit",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-process-remove",
+            "operation_id": "op-bob-process-remove",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "from_epoch": "1",
+                "commit_b64u": remove["result"]["commit_b64u"].as_str().unwrap(),
+                "subject_did": bob(),
+                "subject_status": "removed"
+            }
+        }),
+    );
+    assert_eq!(processed["result"]["self_removed"], true);
+    assert_eq!(processed["result"]["status"], "inactive");
+
+    let bob_send = run_anp_mls_error(
+        bob_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-send-after-remove",
+            "operation_id": "op-bob-send-after-remove",
+            "params": {
+                "sender_did": bob(),
+                "device_id": "phone",
+                "group_state_ref": {"group_did": group_did, "epoch": "2"},
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-bob-after-remove",
+                "operation_id": "op-bob-send-after-remove",
+                "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
+            }
+        }),
+    );
+    assert_eq!(bob_send["error"]["code"], "group_not_found");
+}
+
+#[test]
+fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:remove-abort:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+
+    let remove = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "remove-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-abort",
+            "operation_id": "op-remove-abort",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_state_ref": {"group_did": group_did, "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
+            }
+        }),
+    );
+    let aborted = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-abort",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-remove-abort-clear",
+            "operation_id": "op-remove-abort-clear",
+            "params": {"pending_commit_id": remove["result"]["pending_commit_id"].as_str().unwrap()}
+        }),
+    );
+    assert_eq!(aborted["result"]["status"], "aborted");
+    assert_eq!(aborted["result"]["local_epoch"], "1");
+
+    let still_epoch_one = encrypt_text(
+        alice_dir.path(),
+        alice(),
+        group_did,
+        "1",
+        "op-after-abort-encrypt",
+        "msg-after-abort",
+        "still epoch one",
+    );
+    assert_eq!(
+        still_epoch_one["result"]["group_cipher_object"]["epoch"],
+        "1"
+    );
+}
+
+#[test]
+fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:leave:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+
+    let leave = run_anp_mls(
+        bob_dir.path(),
+        "group",
+        "leave",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-leave",
+            "operation_id": "op-bob-leave",
+            "params": {
+                "actor_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "group_state_ref": {"group_did": group_did, "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
+            }
+        }),
+    );
+    assert_eq!(leave["result"]["status"], "pending");
+    assert_eq!(leave["result"]["subject_status"], "left");
+    assert_eq!(leave["result"]["local_epoch"], "1");
+
+    let finalized = run_anp_mls(
+        bob_dir.path(),
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-leave-finalize",
+            "operation_id": "op-bob-leave-finalize",
+            "params": {"pending_commit_id": leave["result"]["pending_commit_id"].as_str().unwrap()}
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["subject_status"], "left");
+
+    let bob_send = run_anp_mls_error(
+        bob_dir.path(),
+        "message",
+        "encrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-send-after-leave",
+            "operation_id": "op-bob-send-after-leave",
+            "params": {
+                "sender_did": bob(),
+                "device_id": "phone",
+                "group_state_ref": {"group_did": group_did, "epoch": "2"},
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-bob-after-leave",
+                "operation_id": "op-bob-send-after-leave",
+                "application_plaintext": {"application_content_type": "text/plain", "text": "blocked"}
+            }
+        }),
+    );
+    assert_eq!(bob_send["error"]["code"], "group_not_found");
 }
 
 #[test]

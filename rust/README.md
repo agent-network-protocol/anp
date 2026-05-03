@@ -21,8 +21,9 @@ cargo add anp
 - RFC 9421 origin proof helpers for ANP request objects
 - WNS models, validation, and resolver helpers
 - `anp-mls` one-shot group E2EE helper for ANP-P6 real OpenMLS key-package, group create/add,
-  welcome processing, message encrypt/decrypt, and local status operations backed by a
-  `state.db` SQLite store plus `state.lock` mutation lock. Contract-test artifacts remain
+  MLS-backed member removal, local leave terminal-state handling, commit notice processing,
+  pending commit finalize/abort, welcome processing, message encrypt/decrypt, and local status
+  operations backed by a `state.db` SQLite store plus `state.lock` mutation lock. Contract-test artifacts remain
   available only when explicitly enabled by request or `ANP_MLS_CONTRACT_TEST=1`. Packaging
   and doctor integrations can probe compatibility with `anp-mls system version --json-in -`.
 
@@ -39,6 +40,14 @@ cargo add anp
   SQLite group binding before invoking OpenMLS.
 - Decrypted plaintext is returned to stdout for the active request only and is redacted from
   the local operation idempotency table.
+- `group remove-member` creates a durable OpenMLS pending commit and returns opaque commit,
+  ratchet-tree/group-info-compatible public artifacts, from/to epochs, and `pending_commit_id`;
+  local epoch remains unchanged until `group commit-finalize`, while `group commit-abort`
+  clears the pending commit after deterministic service rejection.
+- `group leave` records a local terminal pending artifact because OpenMLS 0.8 rejects
+  same-member self-remove commits; finalizing it marks the local binding `left` without
+  advancing the local epoch, while the service/remaining members must advance MLS through
+  the composite leave flow and commit notice.
 
 ## Repository
 

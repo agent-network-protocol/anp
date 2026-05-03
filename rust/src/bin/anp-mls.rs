@@ -1,6 +1,6 @@
 //! [INPUT] One-shot `anp-mls` JSON requests on stdin plus CLI domain/action and optional `--data-dir`; `system version` is the no-state compatibility probe.
-//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state in SQLite, validates local group bindings, and contract-test mode emits explicit non-cryptographic fixtures.
-//! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir`.
+//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state, pending membership commits, local active/inactive bindings, and contract-test mode emits explicit non-cryptographic fixtures.
+//! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir` while exposing opaque P6 remove/leave/commit artifacts.
 
 use anp::group_e2ee::{
     build_send_aad, deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, MTI_SUITE,
@@ -37,7 +37,13 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "key-package generate",
     "group create",
     "group add-member",
+    "group remove-member",
+    "group leave",
+    "group commit-finalize",
+    "group commit-abort",
     "welcome process",
+    "commit process",
+    "notice process",
     "message encrypt",
     "message decrypt",
     "group restore",
@@ -197,7 +203,12 @@ fn run_contract_mode(
         "key-package generate" => contract_key_package(params)?,
         "group create" => contract_group_create(params)?,
         "group add-member" => contract_group_add_member(params)?,
+        "group remove-member" => contract_group_remove_member(params)?,
+        "group leave" => contract_group_leave(params)?,
+        "group commit-finalize" => contract_group_commit_finalize(params)?,
+        "group commit-abort" => contract_group_commit_abort(params)?,
         "welcome process" => contract_welcome_process(params)?,
+        "commit process" | "notice process" => contract_commit_process(params)?,
         "message encrypt" => contract_message_encrypt(params)?,
         "message decrypt" => contract_message_decrypt(params)?,
         "group restore" | "group status" => contract_group_status(params, data_dir)?,
@@ -284,8 +295,27 @@ fn run_real_mode(
             "group add-member" => {
                 real_group_add_member(&mut provider, &app_conn, params, request_id)?
             }
+            "group remove-member" => real_group_remove_member(
+                &mut provider,
+                &app_conn,
+                params,
+                operation_id,
+                request_id,
+            )?,
+            "group leave" => {
+                real_group_leave(&mut provider, &app_conn, params, operation_id, request_id)?
+            }
+            "group commit-finalize" => {
+                real_group_commit_finalize(&mut provider, &app_conn, params, request_id)?
+            }
+            "group commit-abort" => {
+                real_group_commit_abort(&mut provider, &app_conn, params, request_id)?
+            }
             "welcome process" => {
                 real_welcome_process(&mut provider, &app_conn, params, request_id)?
+            }
+            "commit process" | "notice process" => {
+                real_commit_process(&mut provider, &app_conn, params, request_id)?
             }
             "message encrypt" => {
                 real_message_encrypt(&mut provider, &app_conn, params, request_id)?
@@ -484,7 +514,30 @@ fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
             status TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(agent_did, device_id, group_did)
-         );",
+         );
+         CREATE TABLE IF NOT EXISTS pending_commits (
+            pending_commit_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            command TEXT NOT NULL,
+            agent_did TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            group_did TEXT NOT NULL,
+            crypto_group_id_b64u TEXT NOT NULL,
+            subject_did TEXT NOT NULL,
+            subject_status TEXT NOT NULL,
+            from_epoch INTEGER NOT NULL,
+            to_epoch INTEGER NOT NULL,
+            commit_b64u TEXT NOT NULL,
+            ratchet_tree_b64u TEXT,
+            group_info_b64u TEXT,
+            epoch_authenticator_b64u TEXT,
+            status TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_commits_operation_id
+            ON pending_commits(operation_id);",
     )
 }
 
@@ -705,6 +758,243 @@ fn real_group_add_member(
     }))
 }
 
+fn real_group_remove_member(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    operation_id: &str,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let group_did = required(params, "group_did")?;
+    let subject = params
+        .get("subject_did")
+        .or_else(|| params.get("member_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "subject_did/member_did is required", None))?;
+    let actor = params
+        .get("actor_did")
+        .or_else(|| params.get("owner_did"))
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "actor_did/agent_did is required", None))?;
+    prepare_membership_remove(
+        provider,
+        conn,
+        params,
+        operation_id,
+        request_id,
+        actor,
+        subject,
+        group_did,
+        "group remove-member",
+        "removed",
+    )
+}
+
+fn real_group_leave(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    operation_id: &str,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let group_did = required(params, "group_did")?;
+    let actor = params
+        .get("actor_did")
+        .or_else(|| params.get("agent_did"))
+        .or_else(|| params.get("owner_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "actor_did/agent_did is required", None))?;
+    let device_id = device_id(params);
+    let binding = binding(conn, actor, device_id, group_did, request_id)?;
+    let group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    if let Some(group_state_ref) = params.get("group_state_ref") {
+        validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+    }
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
+    let commit_b64u = encode_b64u(
+        serde_json::to_vec(&json!({
+            "artifact_type": "local-terminal-leave",
+            "group_did": group_did,
+            "actor_did": actor,
+            "epoch": binding.epoch.to_string(),
+            "protocol_limitation": "OpenMLS 0.8 rejects same-member self-remove commits; service must record leave status and remaining members advance MLS with a separate remove commit/notice."
+        }))
+        .map_err(|e| error("artifact_failed", &e.to_string(), Some(request_id.to_owned())))?
+        .as_slice(),
+    );
+    let pending_commit_id = params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "pc-{}",
+                short_digest(&json!({"operation_id": operation_id}))
+            )
+        });
+    let epoch_authenticator_b64u = encode_b64u(group.epoch_authenticator().as_slice());
+    let result = membership_prepare_response(MembershipPrepare {
+        pending_commit_id: &pending_commit_id,
+        operation_id,
+        command: "group leave",
+        actor_did: actor,
+        subject_did: actor,
+        subject_status: "left",
+        group_did,
+        crypto_group_id_b64u: &encode_b64u(binding.openmls_group_id.as_slice()),
+        from_epoch: binding.epoch,
+        to_epoch: binding.epoch,
+        commit_b64u: &commit_b64u,
+        ratchet_tree_b64u: None,
+        group_info_b64u: None,
+        epoch_authenticator_b64u: Some(&epoch_authenticator_b64u),
+    });
+    let mut result = result;
+    result["artifact_type"] = json!("local-terminal-leave");
+    result["protocol_limitation"] = json!("OpenMLS 0.8 rejects same-member self-remove commits; local finalize marks the leaver inactive without advancing local epoch.");
+    insert_pending_commit(
+        conn,
+        &pending_commit_id,
+        operation_id,
+        "group leave",
+        actor,
+        device_id,
+        group_did,
+        actor,
+        "left",
+        binding.epoch,
+        binding.epoch,
+        &commit_b64u,
+        None,
+        None,
+        Some(&epoch_authenticator_b64u),
+        &result,
+        request_id,
+    )?;
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_membership_remove(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    operation_id: &str,
+    request_id: &str,
+    actor: &str,
+    subject: &str,
+    group_did: &str,
+    command: &str,
+    subject_status: &str,
+) -> Result<Value, Value> {
+    let device_id = device_id(params);
+    let binding = binding(conn, actor, device_id, group_did, request_id)?;
+    let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    if let Some(group_state_ref) = params.get("group_state_ref") {
+        validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+    }
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
+    let target_leaf = member_leaf_index_by_did(&group, subject).ok_or_else(|| {
+        error(
+            "member_not_found",
+            "subject_did/member_did is not an active MLS leaf in the local group",
+            Some(request_id.to_owned()),
+        )
+    })?;
+    let signer = load_signer(provider, conn, actor, device_id, request_id)?;
+    let original_tree = group.export_ratchet_tree();
+    let (commit, _welcome, group_info) = group
+        .remove_members(provider, &signer, &[target_leaf])
+        .map_err(|e| mls_error("group_remove_member_failed", e, request_id))?;
+    let pending = group.pending_commit().ok_or_else(|| {
+        error(
+            "pending_commit_missing",
+            "OpenMLS did not persist a pending membership commit",
+            Some(request_id.to_owned()),
+        )
+    })?;
+    let to_epoch = pending.epoch().as_u64();
+    let epoch_authenticator_b64u = pending
+        .epoch_authenticator()
+        .map(|value| encode_b64u(value.as_slice()));
+    let ratchet_tree_b64u = pending
+        .export_ratchet_tree(provider.crypto(), original_tree)
+        .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?
+        .map(|tree| {
+            let tree_in: RatchetTreeIn = tree.into();
+            tree_in
+                .tls_serialize_detached()
+                .map(|bytes| encode_b64u(&bytes))
+                .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))
+        })
+        .transpose()?;
+    let group_info_b64u = group_info
+        .map(|value| {
+            value
+                .tls_serialize_detached()
+                .map(|bytes| encode_b64u(&bytes))
+                .map_err(|e| mls_error("group_info_encode_failed", e, request_id))
+        })
+        .transpose()?;
+    let commit_b64u = encode_b64u(
+        &commit
+            .tls_serialize_detached()
+            .map_err(|e| mls_error("commit_encode_failed", e, request_id))?,
+    );
+    let pending_commit_id = params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "pc-{}",
+                short_digest(&json!({"operation_id": operation_id}))
+            )
+        });
+    let result = membership_prepare_response(MembershipPrepare {
+        pending_commit_id: &pending_commit_id,
+        operation_id,
+        command,
+        actor_did: actor,
+        subject_did: subject,
+        subject_status,
+        group_did,
+        crypto_group_id_b64u: &encode_b64u(binding.openmls_group_id.as_slice()),
+        from_epoch: binding.epoch,
+        to_epoch,
+        commit_b64u: &commit_b64u,
+        ratchet_tree_b64u: ratchet_tree_b64u.as_deref(),
+        group_info_b64u: group_info_b64u.as_deref(),
+        epoch_authenticator_b64u: epoch_authenticator_b64u.as_deref(),
+    });
+    insert_pending_commit(
+        conn,
+        &pending_commit_id,
+        operation_id,
+        command,
+        actor,
+        device_id,
+        group_did,
+        subject,
+        subject_status,
+        binding.epoch,
+        to_epoch,
+        &commit_b64u,
+        ratchet_tree_b64u.as_deref(),
+        group_info_b64u.as_deref(),
+        epoch_authenticator_b64u.as_deref(),
+        &result,
+        request_id,
+    )?;
+    Ok(result)
+}
+
 fn real_welcome_process(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
@@ -899,6 +1189,236 @@ fn real_message_decrypt(
     }))
 }
 
+fn real_group_commit_finalize(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let pending_commit_id = pending_commit_id(params)?;
+    let pending = pending_commit(conn, pending_commit_id, request_id)?;
+    if pending.status == "finalized" {
+        return Ok(json!({
+            "pending_commit_id": pending.pending_commit_id,
+            "operation_id": pending.operation_id,
+            "group_did": pending.group_did,
+            "status": "finalized",
+            "epoch": pending.to_epoch.to_string(),
+            "local_epoch": pending.to_epoch.to_string(),
+            "subject_did": pending.subject_did,
+            "subject_status": pending.subject_status,
+        }));
+    }
+    if pending.status == "aborted" {
+        return Err(error(
+            "pending_commit_aborted",
+            "pending commit was already aborted",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let mut epoch_authenticator = None;
+    if pending.command != "group leave" {
+        let mut group = load_group(
+            provider,
+            &GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?),
+            request_id,
+        )?;
+        if group.pending_commit().is_none() {
+            return Err(error(
+                "pending_commit_missing",
+                "OpenMLS pending commit is missing; abort and retry prepare",
+                Some(request_id.to_owned()),
+            ));
+        }
+        group
+            .merge_pending_commit(provider)
+            .map_err(|e| mls_error("pending_commit_finalize_failed", e, request_id))?;
+        epoch_authenticator = Some(encode_b64u(group.epoch_authenticator().as_slice()));
+    }
+    if pending.subject_did == pending.agent_did {
+        mark_binding_inactive(
+            conn,
+            &pending.agent_did,
+            &pending.device_id,
+            &pending.group_did,
+            pending.to_epoch,
+            &pending.subject_status,
+            request_id,
+        )?;
+    } else {
+        set_binding_epoch_status(
+            conn,
+            &pending.agent_did,
+            &pending.device_id,
+            &pending.group_did,
+            pending.to_epoch,
+            "active",
+            request_id,
+        )?;
+    }
+    update_pending_commit_status(conn, &pending.pending_commit_id, "finalized", request_id)?;
+    Ok(json!({
+        "pending_commit_id": pending.pending_commit_id,
+        "operation_id": pending.operation_id,
+        "group_did": pending.group_did,
+        "crypto_group_id_b64u": pending.crypto_group_id_b64u,
+        "status": "finalized",
+        "from_epoch": pending.from_epoch.to_string(),
+        "epoch": pending.to_epoch.to_string(),
+        "local_epoch": pending.to_epoch.to_string(),
+        "subject_did": pending.subject_did,
+        "subject_status": pending.subject_status,
+        "epoch_authenticator": epoch_authenticator,
+    }))
+}
+
+fn real_group_commit_abort(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let pending_commit_id = pending_commit_id(params)?;
+    let pending = pending_commit(conn, pending_commit_id, request_id)?;
+    if pending.status == "finalized" {
+        return Err(error(
+            "pending_commit_finalized",
+            "finalized pending commits cannot be aborted",
+            Some(request_id.to_owned()),
+        ));
+    }
+    if pending.status != "aborted" {
+        if pending.command != "group leave" {
+            let mut group = load_group(
+                provider,
+                &GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?),
+                request_id,
+            )?;
+            group
+                .clear_pending_commit(provider.storage())
+                .map_err(|e| mls_error("pending_commit_abort_failed", e, request_id))?;
+        }
+        update_pending_commit_status(conn, &pending.pending_commit_id, "aborted", request_id)?;
+    }
+    Ok(json!({
+        "pending_commit_id": pending.pending_commit_id,
+        "operation_id": pending.operation_id,
+        "group_did": pending.group_did,
+        "crypto_group_id_b64u": pending.crypto_group_id_b64u,
+        "status": "aborted",
+        "local_epoch": pending.from_epoch.to_string(),
+        "subject_did": pending.subject_did,
+        "subject_status": pending.subject_status,
+    }))
+}
+
+fn real_commit_process(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let agent = params
+        .get("recipient_did")
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "recipient_did/agent_did is required", None))?;
+    let device_id = device_id(params);
+    let group_did = required(params, "group_did")?;
+    let commit_b64u = params
+        .get("commit_b64u")
+        .or_else(|| params.pointer("/notice/commit_b64u"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "commit_b64u is required", None))?;
+    let binding = binding(conn, agent, device_id, group_did, request_id)?;
+    if let Some(from_epoch) = params.get("from_epoch").and_then(epoch_claim_as_u64) {
+        if from_epoch != binding.epoch {
+            return Err(error(
+                "group_epoch_mismatch",
+                "commit from_epoch does not match the local MLS group epoch",
+                Some(request_id.to_owned()),
+            ));
+        }
+    }
+    let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
+    let original_tree = group.export_ratchet_tree();
+    let message_in = MlsMessageIn::tls_deserialize_exact(decode_b64u(commit_b64u, request_id)?)
+        .map_err(|e| mls_error("commit_decode_failed", e, request_id))?;
+    let protocol = message_in.try_into_protocol_message().map_err(|_| {
+        error(
+            "commit_decode_failed",
+            "commit_b64u is not an MLS protocol message",
+            Some(request_id.to_owned()),
+        )
+    })?;
+    let processed = group
+        .process_message(provider, protocol)
+        .map_err(|e| mls_error("commit_process_failed", e, request_id))?;
+    let staged_commit = match processed.into_content() {
+        ProcessedMessageContent::StagedCommitMessage(staged_commit) => *staged_commit,
+        other => {
+            return Err(error(
+                "commit_process_failed",
+                &format!("expected MLS staged commit, got {other:?}"),
+                Some(request_id.to_owned()),
+            ))
+        }
+    };
+    let self_removed = staged_commit.self_removed();
+    let to_epoch = staged_commit.epoch().as_u64();
+    let epoch_authenticator_b64u = staged_commit
+        .epoch_authenticator()
+        .map(|value| encode_b64u(value.as_slice()));
+    let ratchet_tree_b64u = staged_commit
+        .export_ratchet_tree(provider.crypto(), original_tree)
+        .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?
+        .map(|tree| {
+            let tree_in: RatchetTreeIn = tree.into();
+            tree_in
+                .tls_serialize_detached()
+                .map(|bytes| encode_b64u(&bytes))
+                .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))
+        })
+        .transpose()?;
+    group
+        .merge_staged_commit(provider, staged_commit)
+        .map_err(|e| mls_error("commit_merge_failed", e, request_id))?;
+    let subject_status = params
+        .get("subject_status")
+        .and_then(Value::as_str)
+        .unwrap_or(if self_removed { "removed" } else { "active" });
+    if self_removed {
+        mark_binding_inactive(
+            conn,
+            agent,
+            device_id,
+            group_did,
+            to_epoch,
+            subject_status,
+            request_id,
+        )?;
+    } else {
+        set_binding_epoch_status(
+            conn, agent, device_id, group_did, to_epoch, "active", request_id,
+        )?;
+    }
+    Ok(json!({
+        "group_did": group_did,
+        "crypto_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
+        "status": if self_removed { "inactive" } else { "active" },
+        "self_removed": self_removed,
+        "from_epoch": binding.epoch.to_string(),
+        "epoch": to_epoch.to_string(),
+        "epoch_authenticator": epoch_authenticator_b64u,
+        "ratchet_tree_b64u": ratchet_tree_b64u,
+        "subject_did": params.get("subject_did").cloned().unwrap_or_else(|| json!(agent)),
+        "subject_status": subject_status,
+    }))
+}
+
 fn real_group_status(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
@@ -971,6 +1491,63 @@ struct Binding {
     role: String,
 }
 
+struct MembershipPrepare<'a> {
+    pending_commit_id: &'a str,
+    operation_id: &'a str,
+    command: &'a str,
+    actor_did: &'a str,
+    subject_did: &'a str,
+    subject_status: &'a str,
+    group_did: &'a str,
+    crypto_group_id_b64u: &'a str,
+    from_epoch: u64,
+    to_epoch: u64,
+    commit_b64u: &'a str,
+    ratchet_tree_b64u: Option<&'a str>,
+    group_info_b64u: Option<&'a str>,
+    epoch_authenticator_b64u: Option<&'a str>,
+}
+
+struct PendingCommitRecord {
+    pending_commit_id: String,
+    operation_id: String,
+    command: String,
+    agent_did: String,
+    device_id: String,
+    group_did: String,
+    subject_did: String,
+    subject_status: String,
+    crypto_group_id_b64u: String,
+    from_epoch: u64,
+    to_epoch: u64,
+    status: String,
+}
+
+fn membership_prepare_response(input: MembershipPrepare<'_>) -> Value {
+    json!({
+        "pending_commit_id": input.pending_commit_id,
+        "operation_id": input.operation_id,
+        "command": input.command,
+        "status": "pending",
+        "actor_did": input.actor_did,
+        "subject_did": input.subject_did,
+        "subject_status": input.subject_status,
+        "group_did": input.group_did,
+        "crypto_group_id_b64u": input.crypto_group_id_b64u,
+        "openmls_group_id_b64u": input.crypto_group_id_b64u,
+        "from_epoch": input.from_epoch.to_string(),
+        "epoch": input.to_epoch.to_string(),
+        "to_epoch": input.to_epoch.to_string(),
+        "local_epoch": input.from_epoch.to_string(),
+        "commit_b64u": input.commit_b64u,
+        "ratchet_tree_b64u": input.ratchet_tree_b64u,
+        "group_info_b64u": input.group_info_b64u,
+        "epoch_authenticator": input.epoch_authenticator_b64u,
+        "epoch_authenticator_b64u": input.epoch_authenticator_b64u,
+        "suite": MTI_SUITE,
+    })
+}
+
 fn upsert_binding(
     conn: &Connection,
     agent_did: &str,
@@ -993,6 +1570,163 @@ fn upsert_binding(
            status = 'active',
            updated_at = CURRENT_TIMESTAMP",
         params![agent_did, device_id, group_did, group_id_b64u, epoch as i64, role],
+    )
+    .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    Ok(())
+}
+
+fn set_binding_epoch_status(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    epoch: u64,
+    status: &str,
+    request_id: &str,
+) -> Result<(), Value> {
+    conn.execute(
+        "UPDATE group_bindings
+         SET epoch = ?4, status = ?5, updated_at = CURRENT_TIMESTAMP
+         WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3",
+        params![agent_did, device_id, group_did, epoch as i64, status],
+    )
+    .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    Ok(())
+}
+
+fn mark_binding_inactive(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    epoch: u64,
+    status: &str,
+    request_id: &str,
+) -> Result<(), Value> {
+    let inactive_status = match status {
+        "left" => "left",
+        "removed" => "removed",
+        other => other,
+    };
+    set_binding_epoch_status(
+        conn,
+        agent_did,
+        device_id,
+        group_did,
+        epoch,
+        inactive_status,
+        request_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_pending_commit(
+    conn: &Connection,
+    pending_commit_id: &str,
+    operation_id: &str,
+    command: &str,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    subject_did: &str,
+    subject_status: &str,
+    from_epoch: u64,
+    to_epoch: u64,
+    commit_b64u: &str,
+    ratchet_tree_b64u: Option<&str>,
+    group_info_b64u: Option<&str>,
+    epoch_authenticator_b64u: Option<&str>,
+    response: &Value,
+    request_id: &str,
+) -> Result<(), Value> {
+    conn.execute(
+        "INSERT INTO pending_commits(
+            pending_commit_id, operation_id, command, agent_did, device_id, group_did, crypto_group_id_b64u,
+            subject_did, subject_status, from_epoch, to_epoch, commit_b64u,
+            ratchet_tree_b64u, group_info_b64u, epoch_authenticator_b64u,
+            status, response_json, updated_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'pending', ?16, CURRENT_TIMESTAMP)",
+        params![
+            pending_commit_id,
+            operation_id,
+            command,
+            agent_did,
+            device_id,
+            group_did,
+            response["crypto_group_id_b64u"].as_str().unwrap_or_default(),
+            subject_did,
+            subject_status,
+            from_epoch as i64,
+            to_epoch as i64,
+            commit_b64u,
+            ratchet_tree_b64u,
+            group_info_b64u,
+            epoch_authenticator_b64u,
+            response.to_string(),
+        ],
+    )
+    .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    Ok(())
+}
+
+fn pending_commit_id(params: &Value) -> Result<&str, Value> {
+    params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "pending_commit_id is required", None))
+}
+
+fn pending_commit(
+    conn: &Connection,
+    pending_commit_id: &str,
+    request_id: &str,
+) -> Result<PendingCommitRecord, Value> {
+    conn.query_row(
+        "SELECT pending_commit_id, operation_id, command, agent_did, device_id, group_did,
+                subject_did, subject_status, from_epoch, to_epoch, status,
+                crypto_group_id_b64u
+         FROM pending_commits
+         WHERE pending_commit_id = ?1",
+        params![pending_commit_id],
+        |row| {
+            Ok(PendingCommitRecord {
+                pending_commit_id: row.get(0)?,
+                operation_id: row.get(1)?,
+                command: row.get(2)?,
+                agent_did: row.get(3)?,
+                device_id: row.get(4)?,
+                group_did: row.get(5)?,
+                subject_did: row.get(6)?,
+                subject_status: row.get(7)?,
+                from_epoch: row.get::<_, i64>(8)? as u64,
+                to_epoch: row.get::<_, i64>(9)? as u64,
+                status: row.get(10)?,
+                crypto_group_id_b64u: row.get(11)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| sqlite_error("state_read_failed", e, request_id))?
+    .ok_or_else(|| {
+        error(
+            "pending_commit_not_found",
+            "pending_commit_id was not found",
+            Some(request_id.to_owned()),
+        )
+    })
+}
+
+fn update_pending_commit_status(
+    conn: &Connection,
+    pending_commit_id: &str,
+    status: &str,
+    request_id: &str,
+) -> Result<(), Value> {
+    conn.execute(
+        "UPDATE pending_commits SET status = ?2, updated_at = CURRENT_TIMESTAMP WHERE pending_commit_id = ?1",
+        params![pending_commit_id, status],
     )
     .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
     Ok(())
@@ -1025,6 +1759,11 @@ fn binding(
         epoch: epoch as u64,
         role,
     })
+}
+
+fn member_leaf_index_by_did(group: &MlsGroup, member_did: &str) -> Option<LeafNodeIndex> {
+    let credential: Credential = BasicCredential::new(member_did.as_bytes().to_vec()).into();
+    group.member_leaf_index(&credential)
 }
 
 fn validate_group_binding_claims(
@@ -1621,6 +2360,92 @@ fn contract_group_add_member(params: &Value) -> Result<Value, Value> {
         "epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("1"),
         "commit_b64u": artifact["value_b64u"],
         "welcome_b64u": artifact["digest_b64u"],
+        "ratchet_tree_b64u": artifact["value_b64u"],
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_group_remove_member(params: &Value) -> Result<Value, Value> {
+    required(params, "group_did")?;
+    let subject = params
+        .get("subject_did")
+        .or_else(|| params.get("member_did"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("missing_field", "subject_did/member_did is required", None))?;
+    let artifact = artifact("group-remove-member", params)?;
+    Ok(json!({
+        "pending_commit_id": params.get("pending_commit_id").and_then(Value::as_str).unwrap_or("pc-contract-remove"),
+        "status": "pending",
+        "subject_did": subject,
+        "subject_status": "removed",
+        "crypto_group_id_b64u": params.get("crypto_group_id_b64u").cloned().unwrap_or_else(|| artifact["digest_b64u"].clone()),
+        "from_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "to_epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "local_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "commit_b64u": artifact["value_b64u"],
+        "ratchet_tree_b64u": artifact["digest_b64u"],
+        "epoch_authenticator": artifact["digest_b64u"],
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_group_leave(params: &Value) -> Result<Value, Value> {
+    required(params, "group_did")?;
+    let subject = params
+        .get("actor_did")
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("missing_field", "actor_did/agent_did is required", None))?;
+    let artifact = artifact("group-leave", params)?;
+    Ok(json!({
+        "pending_commit_id": params.get("pending_commit_id").and_then(Value::as_str).unwrap_or("pc-contract-leave"),
+        "status": "pending",
+        "subject_did": subject,
+        "subject_status": "left",
+        "crypto_group_id_b64u": params.get("crypto_group_id_b64u").cloned().unwrap_or_else(|| artifact["digest_b64u"].clone()),
+        "from_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "to_epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "local_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "commit_b64u": artifact["value_b64u"],
+        "ratchet_tree_b64u": Value::Null,
+        "epoch_authenticator": Value::Null,
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_group_commit_finalize(params: &Value) -> Result<Value, Value> {
+    let pending_commit_id = required(params, "pending_commit_id")?;
+    Ok(json!({
+        "pending_commit_id": pending_commit_id,
+        "status": "finalized",
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_group_commit_abort(params: &Value) -> Result<Value, Value> {
+    let pending_commit_id = required(params, "pending_commit_id")?;
+    Ok(json!({
+        "pending_commit_id": pending_commit_id,
+        "status": "aborted",
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_commit_process(params: &Value) -> Result<Value, Value> {
+    required(params, "commit_b64u")?;
+    let artifact = artifact("commit-process", params)?;
+    Ok(json!({
+        "status": params.get("status").and_then(Value::as_str).unwrap_or("active"),
+        "self_removed": params.get("self_removed").and_then(Value::as_bool).unwrap_or(false),
+        "epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "epoch_authenticator": artifact["digest_b64u"],
         "ratchet_tree_b64u": artifact["value_b64u"],
         "non_cryptographic": true,
         "artifact_mode": CONTRACT_ARTIFACT_MODE
