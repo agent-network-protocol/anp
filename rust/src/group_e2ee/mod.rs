@@ -18,7 +18,7 @@ pub const TRANSPORT_SECURITY_PROFILE: &str = "transport-protected";
 pub const CONTRACT_ARTIFACT_MODE: &str = "contract-test";
 pub const MTI_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
 pub const METHOD_LEAVE_REQUEST: &str = "group.e2ee.leave_request";
-pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.leave_request.process";
+pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.process_leave_request";
 
 #[derive(Debug, Error)]
 pub enum GroupE2eeError {

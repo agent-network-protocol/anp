@@ -61,7 +61,7 @@ func TestLeaveRequestProcessWireModelCarriesEpochAdvancingRemoveCommit(t *testin
 	if MethodLeaveRequest != "group.e2ee.leave_request" {
 		t.Fatalf("unexpected leave request method: %s", MethodLeaveRequest)
 	}
-	if MethodLeaveRequestProcess != "group.e2ee.leave_request.process" {
+	if MethodLeaveRequestProcess != "group.e2ee.process_leave_request" {
 		t.Fatalf("unexpected leave request process method: %s", MethodLeaveRequestProcess)
 	}
 	if TransportSecurityProfile != "transport-protected" {

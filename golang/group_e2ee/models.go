@@ -7,7 +7,7 @@ const (
 	ContractArtifactMode      = "contract-test"
 	MTISuite                  = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
 	MethodLeaveRequest        = "group.e2ee.leave_request"
-	MethodLeaveRequestProcess = "group.e2ee.leave_request.process"
+	MethodLeaveRequestProcess = "group.e2ee.process_leave_request"
 )
 
 type TargetRef struct {
