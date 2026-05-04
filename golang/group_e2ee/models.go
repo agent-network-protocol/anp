@@ -8,6 +8,7 @@ const (
 	MTISuite                  = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
 	MethodLeaveRequest        = "group.e2ee.leave_request"
 	MethodLeaveRequestProcess = "group.e2ee.process_leave_request"
+	MethodRecoverMember       = "group.e2ee.recover_member"
 )
 
 type TargetRef struct {
@@ -36,12 +37,47 @@ type EnvelopeMeta struct {
 type GroupKeyPackage struct {
 	KeyPackageID      string         `json:"key_package_id"`
 	OwnerDID          string         `json:"owner_did"`
+	DeviceID          string         `json:"device_id,omitempty"`
+	Purpose           string         `json:"purpose,omitempty"`
+	GroupDID          string         `json:"group_did,omitempty"`
 	Suite             string         `json:"suite"`
 	MLSKeyPackageB64U string         `json:"mls_key_package_b64u"`
 	DIDWBABinding     map[string]any `json:"did_wba_binding"`
 	ExpiresAt         string         `json:"expires_at,omitempty"`
 	NonCryptographic  bool           `json:"non_cryptographic,omitempty"`
 	ArtifactMode      string         `json:"artifact_mode,omitempty"`
+}
+
+type RecoverMemberTarget struct {
+	AgentDID string `json:"agent_did"`
+	DeviceID string `json:"device_id"`
+}
+
+type RecoverMemberRequestObject struct {
+	OperationID          string              `json:"operation_id"`
+	GroupDID             string              `json:"group_did"`
+	ActorDID             string              `json:"actor_did"`
+	Target               RecoverMemberTarget `json:"target"`
+	GroupStateRef        GroupStateRef       `json:"group_state_ref"`
+	RecoveryKeyPackageID string              `json:"recovery_key_package_id,omitempty"`
+	GroupKeyPackage      *GroupKeyPackage    `json:"group_key_package,omitempty"`
+	CommitB64U           string              `json:"commit_b64u"`
+	WelcomeB64U          string              `json:"welcome_b64u"`
+	RatchetTreeB64U      string              `json:"ratchet_tree_b64u,omitempty"`
+	Epoch                string              `json:"epoch"`
+	EpochAuthenticator   string              `json:"epoch_authenticator,omitempty"`
+	NonCryptographic     bool                `json:"non_cryptographic,omitempty"`
+	ArtifactMode         string              `json:"artifact_mode,omitempty"`
+}
+
+type RecoverMemberFinalizeRequestObject struct {
+	OperationID     string `json:"operation_id,omitempty"`
+	PendingCommitID string `json:"pending_commit_id"`
+}
+
+type RecoverMemberAbortRequestObject struct {
+	OperationID     string `json:"operation_id,omitempty"`
+	PendingCommitID string `json:"pending_commit_id"`
 }
 
 type GroupCipherObject struct {

@@ -19,6 +19,7 @@ pub const CONTRACT_ARTIFACT_MODE: &str = "contract-test";
 pub const MTI_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
 pub const METHOD_LEAVE_REQUEST: &str = "group.e2ee.leave_request";
 pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.process_leave_request";
+pub const METHOD_RECOVER_MEMBER: &str = "group.e2ee.recover_member";
 
 #[derive(Debug, Error)]
 pub enum GroupE2eeError {
@@ -46,6 +47,12 @@ pub struct GroupStateRef {
 pub struct GroupKeyPackage {
     pub key_package_id: String,
     pub owner_did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_did: Option<String>,
     pub suite: String,
     pub mls_key_package_b64u: String,
     pub did_wba_binding: Value,
@@ -55,6 +62,50 @@ pub struct GroupKeyPackage {
     pub non_cryptographic: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverMemberTarget {
+    pub agent_did: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverMemberRequestObject {
+    pub operation_id: String,
+    pub group_did: String,
+    pub actor_did: String,
+    pub target: RecoverMemberTarget,
+    pub group_state_ref: GroupStateRef,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_key_package_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_key_package: Option<GroupKeyPackage>,
+    pub commit_b64u: String,
+    pub welcome_b64u: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ratchet_tree_b64u: Option<String>,
+    pub epoch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch_authenticator: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub non_cryptographic: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverMemberFinalizeRequestObject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    pub pending_commit_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverMemberAbortRequestObject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    pub pending_commit_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +356,72 @@ mod tests {
         }))
         .expect_err("missing commit");
         assert!(matches!(err, GroupE2eeError::MissingField("commit_b64u")));
+    }
+
+    #[test]
+    fn recover_member_wire_model_carries_recovery_bound_package() {
+        let request = RecoverMemberRequestObject {
+            operation_id: "op-recover-bob".to_owned(),
+            group_did: "did:wba:example.com:groups:golden:e1".to_owned(),
+            actor_did: "did:wba:example.com:users:alice:e1".to_owned(),
+            target: RecoverMemberTarget {
+                agent_did: "did:wba:example.com:users:bob:e1".to_owned(),
+                device_id: "phone".to_owned(),
+            },
+            group_state_ref: GroupStateRef {
+                group_did: "did:wba:example.com:groups:golden:e1".to_owned(),
+                group_state_version: "7".to_owned(),
+                policy_hash: None,
+            },
+            recovery_key_package_id: Some("kp-recovery-bob".to_owned()),
+            group_key_package: Some(GroupKeyPackage {
+                key_package_id: "kp-recovery-bob".to_owned(),
+                owner_did: "did:wba:example.com:users:bob:e1".to_owned(),
+                device_id: Some("phone".to_owned()),
+                purpose: Some("recovery".to_owned()),
+                group_did: Some("did:wba:example.com:groups:golden:e1".to_owned()),
+                suite: MTI_SUITE.to_owned(),
+                mls_key_package_b64u: "bWxzLWtleS1wYWNrYWdl".to_owned(),
+                did_wba_binding: json!({
+                    "agent_did": "did:wba:example.com:users:bob:e1",
+                    "device_id": "phone"
+                }),
+                expires_at: None,
+                non_cryptographic: false,
+                artifact_mode: None,
+            }),
+            commit_b64u: "Y29tbWl0".to_owned(),
+            welcome_b64u: "d2VsY29tZQ".to_owned(),
+            ratchet_tree_b64u: Some("cmF0Y2hldA".to_owned()),
+            epoch: "8".to_owned(),
+            epoch_authenticator: Some("YXV0aA".to_owned()),
+            non_cryptographic: false,
+            artifact_mode: None,
+        };
+        let encoded = serde_json::to_string(&request).expect("recover member json");
+        assert!(encoded.contains(r#""purpose":"recovery""#));
+        assert!(encoded.contains(r#""welcome_b64u":"d2VsY29tZQ""#));
+        assert!(!encoded.contains("plaintext"));
+        assert_eq!(METHOD_RECOVER_MEMBER, "group.e2ee.recover_member");
+    }
+
+    #[test]
+    fn recover_member_finalize_abort_models_carry_pending_commit_id() {
+        let finalize = RecoverMemberFinalizeRequestObject {
+            operation_id: Some("op-finalize".to_owned()),
+            pending_commit_id: "pc-recover".to_owned(),
+        };
+        let abort = RecoverMemberAbortRequestObject {
+            operation_id: Some("op-abort".to_owned()),
+            pending_commit_id: "pc-recover".to_owned(),
+        };
+        for encoded in [
+            serde_json::to_string(&finalize).expect("finalize json"),
+            serde_json::to_string(&abort).expect("abort json"),
+        ] {
+            assert!(encoded.contains(r#""pending_commit_id":"pc-recover""#));
+            assert!(encoded.contains(r#""operation_id":"op-"#));
+        }
     }
 
     #[test]

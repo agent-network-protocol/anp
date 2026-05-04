@@ -5,6 +5,7 @@
 - Align `anp-mls` real OpenMLS path with P6 before any public discovery claim.
 - Add required `ratchet_tree_b64u` export/import for add/welcome processing.
 - Bind MLS encrypt/decrypt authenticated data to canonical P6 send AAD and keep a stable golden vector in the Rust SDK helper.
+- Add hidden PR-B3 recover-member contract shapes and `anp-mls` contract checks for prepare/finalize/abort so downstream CLI/service integration can share stable pending-commit fields.
 - Deepen local DID WBA binding checks against member DID, MLS BasicCredential identity, leaf signature key, verification method, validity window, and optional proof shape.
 - Treat `group_state_ref.group_state_version` as service state for AAD only; MLS epoch validation remains bound to explicit `epoch` so P4 state versions and MLS epochs are not conflated.
 
@@ -23,6 +24,7 @@
 
 - `cargo fmt --manifest-path rust/Cargo.toml --check`
 - `cargo test --manifest-path rust/Cargo.toml group_e2ee --all-targets` → passed: Rust P6 helper tests 3 passed; real `anp-mls` group E2EE tests 12 passed.
+- PR-B3 recovery sync adds focused evidence for `recover-member-prepare/finalize/abort` contract paths plus Rust/Go recover-member wire models; keep this evidence fresh in the implementing PR.
 
 ## Rollback
 
@@ -30,5 +32,5 @@
 
 ## Caveats
 
-- Still no MLS remove/leave, External Commit, multi-device membership sync, group attachment E2EE, cloud snapshot, or HTTP `anp-mls serve` requirement.
+- Still no External Commit, multi-device membership sync, group attachment E2EE, cloud snapshot, public recover-member discovery, or HTTP `anp-mls serve` requirement.
 - No k1 DID compatibility is included.

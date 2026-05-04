@@ -3,6 +3,7 @@
 ## Scope
 
 - Close stale wording in the Rust P6 group E2EE helper so it reflects the current split: P6 wire/canonicalization helpers in `rust/src/group_e2ee/`, real OpenMLS operations in the `anp-mls` binary.
+- Keep PR-B3 recover-member contract surfaces synchronized for `recover-member-prepare`, `recover-member-finalize`, and `recover-member-abort`; this remains hidden/test-only and is not public discovery.
 - Keep contract-test artifacts explicitly non-cryptographic; do not claim public discovery readiness.
 
 ## Commits / branch context
@@ -28,5 +29,6 @@
 ## Caveats
 
 - Group E2EE v1 remains a minimal same-domain/single-device loop.
+- Recover-member prepare/finalize/abort is available only as the hidden PR-B3 recovery lifecycle surface; do not route public add-member or discovery behavior through it.
 - Step B P6 conformance is tracked in `docs/pr-notes/group-e2ee-p6-conformance-before-discovery.md`; public discovery still requires a separate security-reviewed enablement PR.
 - Public discovery remains hidden; do not advertise `anp.group.e2ee.v1` / `group-e2ee` from this PR.

@@ -68,3 +68,77 @@ func TestLeaveRequestProcessWireModelCarriesEpochAdvancingRemoveCommit(t *testin
 		t.Fatalf("unexpected leave request security profile: %s", TransportSecurityProfile)
 	}
 }
+
+func TestRecoverMemberWireModelRequiresRecoveryBoundKeyPackage(t *testing.T) {
+	recovery := RecoverMemberRequestObject{
+		OperationID: "op-recover-bob",
+		GroupDID:    "did:wba:example.com:groups:demo:e1",
+		ActorDID:    "did:wba:example.com:users:alice:e1",
+		Target: RecoverMemberTarget{
+			AgentDID: "did:wba:example.com:users:bob:e1",
+			DeviceID: "phone",
+		},
+		GroupStateRef: GroupStateRef{
+			GroupDID:          "did:wba:example.com:groups:demo:e1",
+			GroupStateVersion: "7",
+		},
+		GroupKeyPackage: &GroupKeyPackage{
+			KeyPackageID:      "kp-recovery-bob",
+			OwnerDID:          "did:wba:example.com:users:bob:e1",
+			DeviceID:          "phone",
+			Purpose:           "recovery",
+			GroupDID:          "did:wba:example.com:groups:demo:e1",
+			Suite:             MTISuite,
+			MLSKeyPackageB64U: "bWxzLWtleS1wYWNrYWdl",
+			DIDWBABinding: map[string]any{
+				"agent_did": "did:wba:example.com:users:bob:e1",
+				"device_id": "phone",
+			},
+		},
+		CommitB64U:      "Y29tbWl0",
+		WelcomeB64U:     "d2VsY29tZQ",
+		RatchetTreeB64U: "cmF0Y2hldA",
+		Epoch:           "8",
+	}
+	encoded, err := json.Marshal(recovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	for _, token := range []string{"operation_id", "target", "purpose", "recovery", "group_key_package", "welcome_b64u"} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("recover member JSON missing %s: %s", token, text)
+		}
+	}
+	if MethodRecoverMember != "group.e2ee.recover_member" {
+		t.Fatalf("unexpected recover member method: %s", MethodRecoverMember)
+	}
+	for _, forbidden := range []string{"plaintext", "private"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("recover member JSON leaked private field %s: %s", forbidden, text)
+		}
+	}
+}
+
+func TestRecoverMemberFinalizeAbortWireModelsCarryPendingCommitID(t *testing.T) {
+	finalize := RecoverMemberFinalizeRequestObject{
+		OperationID:     "op-finalize",
+		PendingCommitID: "pc-recover",
+	}
+	abort := RecoverMemberAbortRequestObject{
+		OperationID:     "op-abort",
+		PendingCommitID: "pc-recover",
+	}
+	for name, value := range map[string]any{"finalize": finalize, "abort": abort} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("%s marshal: %v", name, err)
+		}
+		text := string(encoded)
+		for _, token := range []string{"operation_id", "pending_commit_id", "pc-recover"} {
+			if !strings.Contains(text, token) {
+				t.Fatalf("%s JSON missing %s: %s", name, token, text)
+			}
+		}
+	}
+}
