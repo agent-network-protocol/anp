@@ -803,6 +803,348 @@ fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
 }
 
 #[test]
+fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_initial_dir = tempdir().expect("bob initial state");
+    let bob_updated_dir = tempdir().expect("bob updated state");
+    let group_did = "did:wba:example.com:groups:update-member:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
+    assert_eq!(add["result"]["epoch"], "1");
+
+    let update_kp = run_anp_mls(
+        bob_updated_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-kp",
+            "operation_id": "op-update-kp",
+            "params": {
+                "owner_did": bob(),
+                "device_id": "phone",
+                "purpose": "update",
+                "group_did": group_did
+            }
+        }),
+    );
+    assert_eq!(
+        update_kp["result"]["group_key_package"]["purpose"],
+        "update"
+    );
+
+    let update = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "update-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-prepare",
+            "operation_id": "op-update-bob",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "target_device_id": "phone",
+                "update_key_package_id": update_kp["result"]["group_key_package"]["key_package_id"].clone(),
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": update_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(update["result"]["status"], "pending");
+    assert_eq!(update["result"]["command"], "group update-member-prepare");
+    assert_eq!(update["result"]["subject_status"], "updated");
+    assert_eq!(update["result"]["from_epoch"], "1");
+    assert_eq!(update["result"]["epoch"], "2");
+    assert_eq!(update["result"]["local_epoch"], "1");
+    assert!(update["result"]["welcome_b64u"].as_str().unwrap().len() > 64);
+
+    let status_before_finalize = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-status-before-finalize",
+            "operation_id": "op-update-status-before-finalize",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(status_before_finalize["result"]["epoch"], "1");
+
+    let finalized = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "update-member-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-finalize",
+            "operation_id": "op-update-finalize",
+            "params": {
+                "pending_commit_id": update["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "2");
+    assert_eq!(finalized["result"]["subject_status"], "updated");
+
+    let welcome = run_anp_mls(
+        bob_updated_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-welcome",
+            "operation_id": "op-update-welcome",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": update["result"]["welcome_b64u"].as_str().unwrap(),
+                "ratchet_tree_b64u": update["result"]["ratchet_tree_b64u"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(welcome["result"]["status"], "active");
+    assert_eq!(welcome["result"]["epoch"], "2");
+
+    let alice_cipher = encrypt_text(
+        alice_dir.path(),
+        alice(),
+        group_did,
+        "2",
+        "op-update-alice-encrypt",
+        "msg-update-alice",
+        "after update from alice",
+    );
+    let bob_decrypted = run_anp_mls(
+        bob_updated_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-bob-decrypt",
+            "operation_id": "op-update-bob-decrypt",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-update-alice",
+                "operation_id": "op-update-alice-encrypt",
+                "group_cipher_object": alice_cipher["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(
+        bob_decrypted["result"]["application_plaintext"]["text"],
+        "after update from alice"
+    );
+
+    let bob_cipher = encrypt_text(
+        bob_updated_dir.path(),
+        bob(),
+        group_did,
+        "2",
+        "op-update-bob-encrypt",
+        "msg-update-bob",
+        "after update from bob",
+    );
+    let alice_decrypted = run_anp_mls(
+        alice_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-alice-decrypt",
+            "operation_id": "op-update-alice-decrypt",
+            "params": {
+                "recipient_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "sender_did": bob(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-update-bob",
+                "operation_id": "op-update-bob-encrypt",
+                "group_cipher_object": bob_cipher["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(
+        alice_decrypted["result"]["application_plaintext"]["text"],
+        "after update from bob"
+    );
+}
+
+#[test]
+fn group_e2ee_update_member_prepare_rejects_wrong_package_purpose_and_device() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:update-reject:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+    let normal_kp = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-normal-kp",
+            "operation_id": "op-update-normal-kp",
+            "params": {"owner_did": bob(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+
+    let rejected = run_anp_mls_error(
+        alice_dir.path(),
+        "group",
+        "update-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-normal-update-rejected",
+            "operation_id": "op-normal-update-rejected",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": normal_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "invalid_update_key_package");
+
+    let mut wrong_device_package = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-wrong-device-kp",
+            "operation_id": "op-update-wrong-device-kp",
+            "params": {
+                "owner_did": bob(),
+                "device_id": "laptop",
+                "purpose": "update",
+                "group_did": group_did
+            }
+        }),
+    )["result"]["group_key_package"]
+        .clone();
+    wrong_device_package["device_id"] = json!("laptop");
+    let wrong_device = run_anp_mls_error(
+        alice_dir.path(),
+        "group",
+        "update-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-wrong-device-update-rejected",
+            "operation_id": "op-wrong-device-update-rejected",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "target_device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": wrong_device_package
+            }
+        }),
+    );
+    assert_eq!(
+        wrong_device["error"]["code"],
+        "update_key_package_device_mismatch"
+    );
+}
+
+#[test]
+fn group_e2ee_update_member_abort_clears_pending_without_advancing_epoch() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_initial_dir = tempdir().expect("bob initial state");
+    let bob_updated_dir = tempdir().expect("bob updated state");
+    let group_did = "did:wba:example.com:groups:update-abort:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
+    let update_kp = run_anp_mls(
+        bob_updated_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-abort-kp",
+            "operation_id": "op-update-abort-kp",
+            "params": {"owner_did": bob(), "device_id": "phone", "purpose": "update", "group_did": group_did}
+        }),
+    );
+    let update = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "update-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-abort-prepare",
+            "operation_id": "op-update-abort-prepare",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "target_device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": update_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    let aborted = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "update-member-abort",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-abort-clear",
+            "operation_id": "op-update-abort-clear",
+            "params": {"pending_commit_id": update["result"]["pending_commit_id"].as_str().unwrap()}
+        }),
+    );
+    assert_eq!(aborted["result"]["status"], "aborted");
+    assert_eq!(aborted["result"]["local_epoch"], "1");
+
+    let encrypted = encrypt_text(
+        alice_dir.path(),
+        alice(),
+        group_did,
+        "1",
+        "op-after-update-abort-encrypt",
+        "msg-after-update-abort",
+        "still epoch one",
+    );
+    assert_eq!(
+        encrypted["result"]["group_cipher_object"]["epoch"],
+        json!("1")
+    );
+}
+
+#[test]
 fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
     let alice_dir = tempdir().expect("alice state");
     let bob_dir = tempdir().expect("bob state");

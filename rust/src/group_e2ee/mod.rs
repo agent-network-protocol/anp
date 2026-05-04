@@ -20,6 +20,7 @@ pub const MTI_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
 pub const METHOD_LEAVE_REQUEST: &str = "group.e2ee.leave_request";
 pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.process_leave_request";
 pub const METHOD_RECOVER_MEMBER: &str = "group.e2ee.recover_member";
+pub const METHOD_UPDATE: &str = "group.e2ee.update";
 
 #[derive(Debug, Error)]
 pub enum GroupE2eeError {
@@ -92,6 +93,49 @@ pub struct RecoverMemberRequestObject {
     pub non_cryptographic: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateMemberTarget {
+    pub agent_did: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateMemberRequestObject {
+    pub operation_id: String,
+    pub group_did: String,
+    pub actor_did: String,
+    pub target: UpdateMemberTarget,
+    pub group_state_ref: GroupStateRef,
+    pub update_key_package_id: String,
+    pub group_key_package: GroupKeyPackage,
+    pub commit_b64u: String,
+    pub welcome_b64u: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ratchet_tree_b64u: Option<String>,
+    pub crypto_group_id_b64u: String,
+    pub epoch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch_authenticator: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub non_cryptographic: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateMemberFinalizeRequestObject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    pub pending_commit_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateMemberAbortRequestObject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    pub pending_commit_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -259,6 +303,67 @@ pub fn build_leave_request_control_aad(value: &Value) -> Result<Vec<u8>, GroupE2
     Ok(canonicalize_json(value)?)
 }
 
+pub fn build_update_member_control_aad(value: &Value) -> Result<Vec<u8>, GroupE2eeError> {
+    for field in [
+        "method",
+        "security_profile",
+        "operation_id",
+        "group_did",
+        "group_state_ref",
+        "actor_did",
+        "target",
+        "update_key_package_id",
+        "commit_b64u",
+        "welcome_b64u",
+        "crypto_group_id_b64u",
+        "epoch",
+    ] {
+        if value.get(field).is_none() {
+            return Err(GroupE2eeError::MissingField(field));
+        }
+    }
+    if value.get("method").and_then(Value::as_str) != Some(METHOD_UPDATE) {
+        return Err(GroupE2eeError::InvalidField("method"));
+    }
+    if value.get("security_profile").and_then(Value::as_str) != Some(SECURITY_PROFILE) {
+        return Err(GroupE2eeError::InvalidField("security_profile"));
+    }
+    let group_did = value
+        .get("group_did")
+        .and_then(Value::as_str)
+        .ok_or(GroupE2eeError::MissingField("group_did"))?;
+    if value
+        .pointer("/group_state_ref/group_did")
+        .and_then(Value::as_str)
+        != Some(group_did)
+    {
+        return Err(GroupE2eeError::InvalidField("group_state_ref.group_did"));
+    }
+    if value
+        .pointer("/target/agent_did")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err(GroupE2eeError::MissingField("target.agent_did"));
+    }
+    if value
+        .pointer("/target/device_id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err(GroupE2eeError::MissingField("target.device_id"));
+    }
+    if value
+        .get("commit_b64u")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Err(GroupE2eeError::MissingField("commit_b64u"));
+    }
+    Ok(canonicalize_json(value)?)
+}
+
 pub fn build_send_aad(value: &Value) -> Result<Vec<u8>, GroupE2eeError> {
     for field in [
         "content_type",
@@ -422,6 +527,99 @@ mod tests {
             assert!(encoded.contains(r#""pending_commit_id":"pc-recover""#));
             assert!(encoded.contains(r#""operation_id":"op-"#));
         }
+    }
+
+    #[test]
+    fn update_member_wire_model_carries_update_bound_package() {
+        let request = UpdateMemberRequestObject {
+            operation_id: "op-update-bob".to_owned(),
+            group_did: "did:wba:example.com:groups:golden:e1".to_owned(),
+            actor_did: "did:wba:example.com:users:alice:e1".to_owned(),
+            target: UpdateMemberTarget {
+                agent_did: "did:wba:example.com:users:bob:e1".to_owned(),
+                device_id: "phone".to_owned(),
+            },
+            group_state_ref: GroupStateRef {
+                group_did: "did:wba:example.com:groups:golden:e1".to_owned(),
+                group_state_version: "7".to_owned(),
+                policy_hash: None,
+            },
+            update_key_package_id: "kp-update-bob".to_owned(),
+            group_key_package: GroupKeyPackage {
+                key_package_id: "kp-update-bob".to_owned(),
+                owner_did: "did:wba:example.com:users:bob:e1".to_owned(),
+                device_id: Some("phone".to_owned()),
+                purpose: Some("update".to_owned()),
+                group_did: Some("did:wba:example.com:groups:golden:e1".to_owned()),
+                suite: MTI_SUITE.to_owned(),
+                mls_key_package_b64u: "bWxzLWtleS1wYWNrYWdl".to_owned(),
+                did_wba_binding: json!({
+                    "agent_did": "did:wba:example.com:users:bob:e1",
+                    "device_id": "phone"
+                }),
+                expires_at: None,
+                non_cryptographic: false,
+                artifact_mode: None,
+            },
+            commit_b64u: "Y29tbWl0".to_owned(),
+            welcome_b64u: "d2VsY29tZQ".to_owned(),
+            ratchet_tree_b64u: Some("cmF0Y2hldA".to_owned()),
+            crypto_group_id_b64u: "Y3J5cHRv".to_owned(),
+            epoch: "8".to_owned(),
+            epoch_authenticator: Some("YXV0aA".to_owned()),
+            non_cryptographic: false,
+            artifact_mode: None,
+        };
+        let encoded = serde_json::to_string(&request).expect("update member json");
+        assert!(encoded.contains(r#""purpose":"update""#));
+        assert!(encoded.contains(r#""update_key_package_id":"kp-update-bob""#));
+        assert!(encoded.contains(r#""welcome_b64u":"d2VsY29tZQ""#));
+        assert!(!encoded.contains("plaintext"));
+        assert_eq!(METHOD_UPDATE, "group.e2ee.update");
+    }
+
+    #[test]
+    fn update_member_aad_requires_hidden_update_fields() {
+        let aad = build_update_member_control_aad(&json!({
+            "method": METHOD_UPDATE,
+            "operation_id": "op-update-bob",
+            "security_profile": SECURITY_PROFILE,
+            "group_did": "did:wba:example.com:groups:golden:e1",
+            "actor_did": "did:wba:example.com:users:alice:e1",
+            "target": {
+                "agent_did": "did:wba:example.com:users:bob:e1",
+                "device_id": "phone"
+            },
+            "update_key_package_id": "kp-update-bob",
+            "group_state_ref": {
+                "group_state_version": "7",
+                "group_did": "did:wba:example.com:groups:golden:e1"
+            },
+            "crypto_group_id_b64u": "Y3J5cHRv",
+            "epoch": "8",
+            "commit_b64u": "Y29tbWl0",
+            "welcome_b64u": "d2VsY29tZQ"
+        }))
+        .expect("update member aad");
+        assert!(String::from_utf8(aad)
+            .expect("utf8 aad")
+            .contains("group.e2ee.update"));
+
+        let err = build_update_member_control_aad(&json!({
+            "method": METHOD_UPDATE,
+            "operation_id": "op-update-bob",
+            "security_profile": SECURITY_PROFILE,
+            "group_did": "did:wba:example.com:groups:golden:e1",
+            "actor_did": "did:wba:example.com:users:alice:e1",
+            "target": {"agent_did": "did:wba:example.com:users:bob:e1", "device_id": "phone"},
+            "update_key_package_id": "kp-update-bob",
+            "group_state_ref": {"group_state_version": "7", "group_did": "did:wba:example.com:groups:other:e1"},
+            "crypto_group_id_b64u": "Y3J5cHRv",
+            "epoch": "8",
+            "welcome_b64u": "d2VsY29tZQ"
+        }))
+        .expect_err("missing commit and wrong group");
+        assert!(matches!(err, GroupE2eeError::MissingField("commit_b64u")));
     }
 
     #[test]

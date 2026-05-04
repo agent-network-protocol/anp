@@ -9,6 +9,7 @@ const (
 	MethodLeaveRequest        = "group.e2ee.leave_request"
 	MethodLeaveRequestProcess = "group.e2ee.process_leave_request"
 	MethodRecoverMember       = "group.e2ee.recover_member"
+	MethodUpdate              = "group.e2ee.update"
 )
 
 type TargetRef struct {
@@ -68,6 +69,39 @@ type RecoverMemberRequestObject struct {
 	EpochAuthenticator   string              `json:"epoch_authenticator,omitempty"`
 	NonCryptographic     bool                `json:"non_cryptographic,omitempty"`
 	ArtifactMode         string              `json:"artifact_mode,omitempty"`
+}
+
+type UpdateMemberTarget struct {
+	AgentDID string `json:"agent_did"`
+	DeviceID string `json:"device_id"`
+}
+
+type UpdateMemberRequestObject struct {
+	OperationID        string             `json:"operation_id"`
+	GroupDID           string             `json:"group_did"`
+	ActorDID           string             `json:"actor_did"`
+	Target             UpdateMemberTarget `json:"target"`
+	GroupStateRef      GroupStateRef      `json:"group_state_ref"`
+	UpdateKeyPackageID string             `json:"update_key_package_id"`
+	GroupKeyPackage    GroupKeyPackage    `json:"group_key_package"`
+	CommitB64U         string             `json:"commit_b64u"`
+	WelcomeB64U        string             `json:"welcome_b64u"`
+	RatchetTreeB64U    string             `json:"ratchet_tree_b64u,omitempty"`
+	CryptoGroupIDB64U  string             `json:"crypto_group_id_b64u"`
+	Epoch              string             `json:"epoch"`
+	EpochAuthenticator string             `json:"epoch_authenticator,omitempty"`
+	NonCryptographic   bool               `json:"non_cryptographic,omitempty"`
+	ArtifactMode       string             `json:"artifact_mode,omitempty"`
+}
+
+type UpdateMemberFinalizeRequestObject struct {
+	OperationID     string `json:"operation_id,omitempty"`
+	PendingCommitID string `json:"pending_commit_id"`
+}
+
+type UpdateMemberAbortRequestObject struct {
+	OperationID     string `json:"operation_id,omitempty"`
+	PendingCommitID string `json:"pending_commit_id"`
 }
 
 type RecoverMemberFinalizeRequestObject struct {

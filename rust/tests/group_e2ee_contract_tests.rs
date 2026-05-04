@@ -99,6 +99,65 @@ fn anp_mls_contract_binary_covers_recover_member_terminal_steps() {
 }
 
 #[test]
+fn anp_mls_contract_binary_covers_update_member_terminal_steps() {
+    let data_dir = tempdir().expect("temp data dir");
+    let prepare = run_contract_anp_mls(
+        data_dir.path(),
+        "group",
+        "update-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-prepare",
+            "operation_id": "op-update-prepare",
+            "contract_test_enabled": true,
+            "params": {
+                "group_did": "did:wba:example.com:groups:demo:e1",
+                "member_did": "did:wba:example.com:users:bob:e1",
+                "pending_commit_id": "pc-update",
+                "group_key_package": {"purpose": "update"}
+            }
+        }),
+    );
+    assert_eq!(prepare["result"]["status"], "pending");
+    assert_eq!(prepare["result"]["pending_commit_id"], "pc-update");
+    assert_eq!(prepare["result"]["command"], "group update-member-prepare");
+    assert_eq!(prepare["result"]["method"], "group.e2ee.update");
+    assert_eq!(prepare["result"]["subject_status"], "updated");
+    assert_eq!(prepare["result"]["non_cryptographic"], true);
+    assert_eq!(prepare["result"]["artifact_mode"], CONTRACT_ARTIFACT_MODE);
+
+    let finalized = run_contract_anp_mls(
+        data_dir.path(),
+        "group",
+        "update-member-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-finalize",
+            "operation_id": "op-update-finalize",
+            "contract_test_enabled": true,
+            "params": {"pending_commit_id": "pc-update"}
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["pending_commit_id"], "pc-update");
+
+    let aborted = run_contract_anp_mls(
+        data_dir.path(),
+        "group",
+        "update-member-abort",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-update-abort",
+            "operation_id": "op-update-abort",
+            "contract_test_enabled": true,
+            "params": {"pending_commit_id": "pc-update"}
+        }),
+    );
+    assert_eq!(aborted["result"]["status"], "aborted");
+    assert_eq!(aborted["result"]["pending_commit_id"], "pc-update");
+}
+
+#[test]
 fn anp_mls_contract_binary_uses_stdin_json_and_marks_artifacts() {
     let data_dir = tempdir().expect("temp data dir");
     let mut child = Command::new(env!("CARGO_BIN_EXE_anp-mls"))
