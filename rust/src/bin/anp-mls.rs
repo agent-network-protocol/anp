@@ -1475,18 +1475,45 @@ fn real_group_status(
                     "pending_commits": pending_commits,
                     "status": "active",
                     "epoch": group.epoch().as_u64().to_string(),
+                    "local_epoch": group.epoch().as_u64().to_string(),
                     "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
                 }));
             }
         }
     }
+    let derived_status = derive_group_status_from_bindings(&bindings);
+    let derived_epoch = bindings
+        .first()
+        .and_then(|binding| binding.get("epoch"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     Ok(json!({
         "data_dir": data_dir.to_string_lossy(),
         "state_db": data_dir.join("state.db").to_string_lossy(),
         "bindings": bindings,
         "pending_commits": pending_commits,
-        "status": if bindings.is_empty() { "empty" } else { "active" },
+        "status": derived_status,
+        "epoch": derived_epoch.clone(),
+        "local_epoch": derived_epoch,
     }))
+}
+
+fn derive_group_status_from_bindings(bindings: &[Value]) -> String {
+    if bindings.is_empty() {
+        return "empty".to_owned();
+    }
+    if bindings
+        .iter()
+        .any(|binding| binding.get("status").and_then(Value::as_str) == Some("active"))
+    {
+        return "active".to_owned();
+    }
+    bindings
+        .first()
+        .and_then(|binding| binding.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("inactive")
+        .to_owned()
 }
 
 fn pending_commits_for_status(

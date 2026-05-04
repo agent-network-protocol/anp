@@ -630,6 +630,20 @@ fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
     assert_eq!(finalized["result"]["status"], "finalized");
     assert_eq!(finalized["result"]["subject_status"], "left");
 
+    let left_status = run_anp_mls(
+        bob_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bob-left-status",
+            "operation_id": "op-bob-left-status",
+            "params": {"agent_did": bob(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(left_status["result"]["status"], "left");
+    assert_eq!(left_status["result"]["local_epoch"], "1");
+
     let bob_send = run_anp_mls_error(
         bob_dir.path(),
         "message",
