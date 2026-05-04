@@ -590,6 +590,219 @@ fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
 }
 
 #[test]
+fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_initial_dir = tempdir().expect("bob initial state");
+    let bob_recovered_dir = tempdir().expect("bob recovered state");
+    let group_did = "did:wba:example.com:groups:recover-member:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
+    assert_eq!(add["result"]["epoch"], "1");
+
+    let recovery_kp = run_anp_mls(
+        bob_recovered_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recovery-kp",
+            "operation_id": "op-recovery-kp",
+            "params": {
+                "owner_did": bob(),
+                "device_id": "phone",
+                "purpose": "recovery",
+                "group_did": group_did
+            }
+        }),
+    );
+    assert_eq!(
+        recovery_kp["result"]["group_key_package"]["purpose"],
+        "recovery"
+    );
+
+    let recovery = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "recover-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recover-prepare",
+            "operation_id": "op-recover-bob",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "target_device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": recovery_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(recovery["result"]["status"], "pending");
+    assert_eq!(recovery["result"]["subject_status"], "recovered");
+    assert_eq!(recovery["result"]["from_epoch"], "1");
+    assert_eq!(recovery["result"]["epoch"], "2");
+    assert_eq!(recovery["result"]["local_epoch"], "1");
+    assert!(recovery["result"]["welcome_b64u"].as_str().unwrap().len() > 64);
+
+    let status_before_finalize = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recover-status-before-finalize",
+            "operation_id": "op-recover-status-before-finalize",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(status_before_finalize["result"]["epoch"], "1");
+
+    let replay = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "recover-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recover-prepare-replay",
+            "operation_id": "op-recover-bob",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "target_device_id": "phone",
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": recovery_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(replay["result"], recovery["result"]);
+
+    let finalized = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "recover-member-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recover-finalize",
+            "operation_id": "op-recover-finalize",
+            "params": {
+                "pending_commit_id": recovery["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "2");
+
+    let welcome = run_anp_mls(
+        bob_recovered_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recover-welcome",
+            "operation_id": "op-recover-welcome",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": recovery["result"]["welcome_b64u"].as_str().unwrap(),
+                "ratchet_tree_b64u": recovery["result"]["ratchet_tree_b64u"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(welcome["result"]["status"], "active");
+    assert_eq!(welcome["result"]["epoch"], "2");
+
+    let encrypted = encrypt_text(
+        alice_dir.path(),
+        alice(),
+        group_did,
+        "2",
+        "op-recovered-encrypt",
+        "msg-recovered",
+        "Bob recovered",
+    );
+    let decrypted = run_anp_mls(
+        bob_recovered_dir.path(),
+        "message",
+        "decrypt",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-recovered-decrypt",
+            "operation_id": "op-recovered-decrypt",
+            "params": {
+                "recipient_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "sender_did": alice(),
+                "content_type": "application/anp-group-cipher+json",
+                "security_profile": "group-e2ee",
+                "message_id": "msg-recovered",
+                "operation_id": "op-recovered-encrypt",
+                "group_cipher_object": encrypted["result"]["group_cipher_object"].clone()
+            }
+        }),
+    );
+    assert_eq!(
+        decrypted["result"]["application_plaintext"]["text"],
+        "Bob recovered"
+    );
+}
+
+#[test]
+fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:recover-normal-reject:e1";
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
+    let normal_kp = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-normal-kp",
+            "operation_id": "op-normal-kp",
+            "params": {"owner_did": bob(), "device_id": "phone"}
+        }),
+    );
+
+    let rejected = run_anp_mls_error(
+        alice_dir.path(),
+        "group",
+        "recover-member-prepare",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-normal-recover-rejected",
+            "operation_id": "op-normal-recover-rejected",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_state_ref": {
+                    "group_did": group_did,
+                    "epoch": "1",
+                    "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
+                },
+                "group_key_package": normal_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], "invalid_recovery_key_package");
+}
+
+#[test]
 fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
     let alice_dir = tempdir().expect("alice state");
     let bob_dir = tempdir().expect("bob state");

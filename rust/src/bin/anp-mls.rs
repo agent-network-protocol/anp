@@ -1,6 +1,6 @@
 //! [INPUT] One-shot `anp-mls` JSON requests on stdin plus CLI domain/action and optional `--data-dir`; `system version` is the no-state compatibility probe.
-//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state, pending membership commits, local active/inactive bindings, and contract-test mode emits explicit non-cryptographic fixtures.
-//! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir` while exposing opaque P6 remove/leave/commit artifacts.
+//! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state, pending membership/recovery commits, local active/inactive bindings, and contract-test mode emits explicit non-cryptographic fixtures.
+//! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir` while exposing opaque P6 remove/leave/recovery/commit artifacts.
 
 use anp::group_e2ee::{
     build_send_aad, deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, MTI_SUITE,
@@ -37,6 +37,9 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "key-package generate",
     "group create",
     "group add-member",
+    "group recover-member-prepare",
+    "group recover-member-finalize",
+    "group recover-member-abort",
     "group remove-member",
     "group leave",
     "group commit-finalize",
@@ -203,6 +206,9 @@ fn run_contract_mode(
         "key-package generate" => contract_key_package(params)?,
         "group create" => contract_group_create(params)?,
         "group add-member" => contract_group_add_member(params)?,
+        "group recover-member-prepare" => contract_group_recover_member_prepare(params)?,
+        "group recover-member-finalize" => contract_group_commit_finalize(params)?,
+        "group recover-member-abort" => contract_group_commit_abort(params)?,
         "group remove-member" => contract_group_remove_member(params)?,
         "group leave" => contract_group_leave(params)?,
         "group commit-finalize" => contract_group_commit_finalize(params)?,
@@ -294,6 +300,19 @@ fn run_real_mode(
             "group create" => real_group_create(&mut provider, &app_conn, params, request_id)?,
             "group add-member" => {
                 real_group_add_member(&mut provider, &app_conn, params, request_id)?
+            }
+            "group recover-member-prepare" => real_group_recover_member_prepare(
+                &mut provider,
+                &app_conn,
+                params,
+                operation_id,
+                request_id,
+            )?,
+            "group recover-member-finalize" => {
+                real_group_commit_finalize(&mut provider, &app_conn, params, request_id)?
+            }
+            "group recover-member-abort" => {
+                real_group_commit_abort(&mut provider, &app_conn, params, request_id)?
             }
             "group remove-member" => real_group_remove_member(
                 &mut provider,
@@ -598,10 +617,23 @@ fn real_key_package(
         .tls_serialize_detached()
         .map_err(|e| mls_error("key_package_encode_failed", e, request_id))?;
     let public_b64u = encode_b64u(&public_bytes);
+    let purpose = params
+        .get("purpose")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            params
+                .get("recovery")
+                .and_then(Value::as_bool)
+                .filter(|enabled| *enabled)
+                .map(|_| "recovery")
+        })
+        .unwrap_or("normal");
     let public_json = json!({
         "key_package_id": key_package_id,
         "owner_did": owner,
         "device_id": device_id,
+        "purpose": purpose,
+        "group_did": params.get("group_did").cloned(),
         "suite": MTI_SUITE,
         "mls_key_package_b64u": public_b64u,
         "did_wba_binding": did_wba_binding(owner, device_id, &signer),
@@ -758,6 +790,173 @@ fn real_group_add_member(
     }))
 }
 
+fn real_group_recover_member_prepare(
+    provider: &mut SqliteMlsProvider,
+    conn: &Connection,
+    params: &Value,
+    operation_id: &str,
+    request_id: &str,
+) -> Result<Value, Value> {
+    let group_did = required(params, "group_did")?;
+    let member_did = params
+        .get("member_did")
+        .or_else(|| params.get("target_did"))
+        .or_else(|| params.pointer("/target/agent_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "member_did/target.agent_did is required",
+                None,
+            )
+        })?;
+    let actor = params
+        .get("actor_did")
+        .or_else(|| params.get("owner_did"))
+        .or_else(|| params.get("agent_did"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error("missing_field", "actor_did or owner_did is required", None))?;
+    let device_id = device_id(params);
+    let target_device_id = params
+        .get("target_device_id")
+        .or_else(|| params.get("member_device_id"))
+        .or_else(|| params.pointer("/target/device_id"))
+        .or_else(|| params.pointer("/group_key_package/device_id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEVICE_ID_DEFAULT);
+    validate_recovery_key_package_context(params, group_did, member_did, target_device_id)?;
+    let binding = binding(conn, actor, device_id, group_did, request_id)?;
+    let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    if let Some(group_state_ref) = params.get("group_state_ref") {
+        validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+    }
+    validate_loaded_group_matches_binding(&binding, &group, request_id)?;
+    let signer = load_signer(provider, conn, actor, device_id, request_id)?;
+    let kp_b64u = params
+        .pointer("/group_key_package/mls_key_package_b64u")
+        .or_else(|| params.get("mls_key_package_b64u"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "group_key_package.mls_key_package_b64u is required",
+                None,
+            )
+        })?;
+    let key_package_bytes = decode_b64u(kp_b64u, request_id)?;
+    let mut key_package_reader = key_package_bytes.as_slice();
+    let key_package_in = KeyPackageIn::tls_deserialize(&mut key_package_reader)
+        .map_err(|e| mls_error("key_package_decode_failed", e, request_id))?;
+    if !key_package_reader.is_empty() {
+        return Err(error(
+            "key_package_decode_failed",
+            "trailing bytes after KeyPackage",
+            Some(request_id.to_owned()),
+        ));
+    }
+    let key_package = key_package_in
+        .validate(provider.crypto(), ProtocolVersion::Mls10)
+        .map_err(|e| mls_error("key_package_validate_failed", e, request_id))?;
+    validate_key_package_did_wba_binding(params, member_did, &key_package, request_id)?;
+    let original_tree = group.export_ratchet_tree();
+    let (commit, welcome, _group_info) = group
+        .add_members(provider, &signer, core::slice::from_ref(&key_package))
+        .map_err(|e| mls_error("group_recover_member_prepare_failed", e, request_id))?;
+    let pending = group.pending_commit().ok_or_else(|| {
+        error(
+            "pending_commit_missing",
+            "OpenMLS did not persist a pending recovery commit",
+            Some(request_id.to_owned()),
+        )
+    })?;
+    let to_epoch = pending.epoch().as_u64();
+    let epoch_authenticator_b64u = pending
+        .epoch_authenticator()
+        .map(|value| encode_b64u(value.as_slice()));
+    let ratchet_tree_b64u = pending
+        .export_ratchet_tree(provider.crypto(), original_tree)
+        .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?
+        .map(|tree| {
+            let tree_in: RatchetTreeIn = tree.into();
+            tree_in
+                .tls_serialize_detached()
+                .map(|bytes| encode_b64u(&bytes))
+                .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))
+        })
+        .transpose()?;
+    let commit_b64u = encode_b64u(
+        &commit
+            .tls_serialize_detached()
+            .map_err(|e| mls_error("commit_encode_failed", e, request_id))?,
+    );
+    let welcome_body = match welcome.body() {
+        MlsMessageBodyOut::Welcome(welcome) => welcome.clone(),
+        _ => {
+            return Err(error(
+                "welcome_encode_failed",
+                "OpenMLS recover-member prepare did not return a Welcome message",
+                Some(request_id.to_owned()),
+            ))
+        }
+    };
+    let welcome_b64u = encode_b64u(
+        &welcome_body
+            .tls_serialize_detached()
+            .map_err(|e| mls_error("welcome_encode_failed", e, request_id))?,
+    );
+    let pending_commit_id = params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "pc-{}",
+                short_digest(&json!({"operation_id": operation_id}))
+            )
+        });
+    let result = membership_prepare_response(MembershipPrepare {
+        pending_commit_id: &pending_commit_id,
+        operation_id,
+        command: "group recover-member-prepare",
+        actor_did: actor,
+        subject_did: member_did,
+        subject_status: "recovered",
+        group_did,
+        crypto_group_id_b64u: &encode_b64u(binding.openmls_group_id.as_slice()),
+        from_epoch: binding.epoch,
+        to_epoch,
+        commit_b64u: &commit_b64u,
+        welcome_b64u: Some(&welcome_b64u),
+        ratchet_tree_b64u: ratchet_tree_b64u.as_deref(),
+        group_info_b64u: None,
+        epoch_authenticator_b64u: epoch_authenticator_b64u.as_deref(),
+    });
+    insert_pending_commit(
+        conn,
+        &pending_commit_id,
+        operation_id,
+        "group recover-member-prepare",
+        actor,
+        device_id,
+        group_did,
+        member_did,
+        "recovered",
+        binding.epoch,
+        to_epoch,
+        &commit_b64u,
+        ratchet_tree_b64u.as_deref(),
+        None,
+        epoch_authenticator_b64u.as_deref(),
+        &result,
+        request_id,
+    )?;
+    Ok(result)
+}
+
 fn real_group_remove_member(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
@@ -850,6 +1049,7 @@ fn real_group_leave(
         from_epoch: binding.epoch,
         to_epoch: binding.epoch,
         commit_b64u: &commit_b64u,
+        welcome_b64u: None,
         ratchet_tree_b64u: None,
         group_info_b64u: None,
         epoch_authenticator_b64u: Some(&epoch_authenticator_b64u),
@@ -969,6 +1169,7 @@ fn prepare_membership_remove(
         from_epoch: binding.epoch,
         to_epoch,
         commit_b64u: &commit_b64u,
+        welcome_b64u: None,
         ratchet_tree_b64u: ratchet_tree_b64u.as_deref(),
         group_info_b64u: group_info_b64u.as_deref(),
         epoch_authenticator_b64u: epoch_authenticator_b64u.as_deref(),
@@ -1574,6 +1775,7 @@ struct MembershipPrepare<'a> {
     from_epoch: u64,
     to_epoch: u64,
     commit_b64u: &'a str,
+    welcome_b64u: Option<&'a str>,
     ratchet_tree_b64u: Option<&'a str>,
     group_info_b64u: Option<&'a str>,
     epoch_authenticator_b64u: Option<&'a str>,
@@ -1611,6 +1813,7 @@ fn membership_prepare_response(input: MembershipPrepare<'_>) -> Value {
         "to_epoch": input.to_epoch.to_string(),
         "local_epoch": input.from_epoch.to_string(),
         "commit_b64u": input.commit_b64u,
+        "welcome_b64u": input.welcome_b64u,
         "ratchet_tree_b64u": input.ratchet_tree_b64u,
         "group_info_b64u": input.group_info_b64u,
         "epoch_authenticator": input.epoch_authenticator_b64u,
@@ -1977,6 +2180,50 @@ fn validate_key_package_did_wba_binding(
     validate_binding_time_window(binding, request_id)?;
     if let Some(proof) = binding.get("proof") {
         validate_binding_proof_shape(proof, verification_method, request_id)?;
+    }
+    Ok(())
+}
+
+fn validate_recovery_key_package_context(
+    params: &Value,
+    group_did: &str,
+    member_did: &str,
+    target_device_id: &str,
+) -> Result<(), Value> {
+    let package = params.get("group_key_package").ok_or_else(|| {
+        error(
+            "missing_field",
+            "group_key_package is required for recover-member prepare",
+            None,
+        )
+    })?;
+    if package.get("purpose").and_then(Value::as_str) != Some("recovery") {
+        return Err(error(
+            "invalid_recovery_key_package",
+            "recover-member prepare requires group_key_package.purpose=recovery",
+            None,
+        ));
+    }
+    if package.get("group_did").and_then(Value::as_str) != Some(group_did) {
+        return Err(error(
+            "recovery_key_package_group_mismatch",
+            "group_key_package.group_did does not match group_did",
+            None,
+        ));
+    }
+    if package.get("owner_did").and_then(Value::as_str) != Some(member_did) {
+        return Err(error(
+            "recovery_key_package_did_mismatch",
+            "group_key_package.owner_did does not match member_did",
+            None,
+        ));
+    }
+    if package.get("device_id").and_then(Value::as_str) != Some(target_device_id) {
+        return Err(error(
+            "recovery_key_package_device_mismatch",
+            "group_key_package.device_id does not match target device",
+            None,
+        ));
     }
     Ok(())
 }
@@ -2389,6 +2636,9 @@ fn contract_key_package(params: &Value) -> Result<Value, Value> {
         "group_key_package": {
             "key_package_id": key_package_id,
             "owner_did": owner,
+            "device_id": params.get("device_id").and_then(Value::as_str).unwrap_or(DEVICE_ID_DEFAULT),
+            "purpose": params.get("purpose").and_then(Value::as_str).unwrap_or("normal"),
+            "group_did": params.get("group_did").cloned(),
             "suite": params.get("suite").and_then(Value::as_str).unwrap_or(MTI_SUITE),
             "mls_key_package_b64u": artifact["value_b64u"],
             "did_wba_binding": params.get("did_wba_binding").cloned().unwrap_or_else(|| json!({
@@ -2432,6 +2682,40 @@ fn contract_group_add_member(params: &Value) -> Result<Value, Value> {
         "commit_b64u": artifact["value_b64u"],
         "welcome_b64u": artifact["digest_b64u"],
         "ratchet_tree_b64u": artifact["value_b64u"],
+        "non_cryptographic": true,
+        "artifact_mode": CONTRACT_ARTIFACT_MODE
+    }))
+}
+
+fn contract_group_recover_member_prepare(params: &Value) -> Result<Value, Value> {
+    required(params, "group_did")?;
+    let subject = params
+        .get("member_did")
+        .or_else(|| params.get("target_did"))
+        .or_else(|| params.pointer("/target/agent_did"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "member_did/target.agent_did is required",
+                None,
+            )
+        })?;
+    let artifact = artifact("group-recover-member", params)?;
+    Ok(json!({
+        "pending_commit_id": params.get("pending_commit_id").and_then(Value::as_str).unwrap_or("pc-contract-recover"),
+        "status": "pending",
+        "subject_did": subject,
+        "subject_status": "recovered",
+        "crypto_group_id_b64u": params.get("crypto_group_id_b64u").cloned().unwrap_or_else(|| artifact["digest_b64u"].clone()),
+        "from_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "to_epoch": params.get("epoch").and_then(Value::as_str).unwrap_or("2"),
+        "local_epoch": params.get("from_epoch").and_then(Value::as_str).unwrap_or("1"),
+        "commit_b64u": artifact["value_b64u"],
+        "welcome_b64u": artifact["digest_b64u"],
+        "ratchet_tree_b64u": artifact["value_b64u"],
+        "epoch_authenticator": artifact["digest_b64u"],
         "non_cryptographic": true,
         "artifact_mode": CONTRACT_ARTIFACT_MODE
     }))
