@@ -1461,6 +1461,8 @@ fn real_group_status(
     for row in rows {
         bindings.push(row.map_err(|e| sqlite_error("state_read_failed", e, request_id))?);
     }
+    let pending_commits =
+        pending_commits_for_status(conn, agent, device_id, group_did, request_id)?;
     if let (Some(agent), Some(group_did)) = (agent, group_did) {
         if let Ok(binding) = binding(conn, agent, device_id, group_did, request_id) {
             if let Some(group) = MlsGroup::load(provider.storage(), &binding.openmls_group_id)
@@ -1470,6 +1472,7 @@ fn real_group_status(
                     "data_dir": data_dir.to_string_lossy(),
                     "state_db": data_dir.join("state.db").to_string_lossy(),
                     "bindings": bindings,
+                    "pending_commits": pending_commits,
                     "status": "active",
                     "epoch": group.epoch().as_u64().to_string(),
                     "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
@@ -1481,8 +1484,49 @@ fn real_group_status(
         "data_dir": data_dir.to_string_lossy(),
         "state_db": data_dir.join("state.db").to_string_lossy(),
         "bindings": bindings,
+        "pending_commits": pending_commits,
         "status": if bindings.is_empty() { "empty" } else { "active" },
     }))
+}
+
+fn pending_commits_for_status(
+    conn: &Connection,
+    agent: Option<&str>,
+    device_id: &str,
+    group_did: Option<&str>,
+    request_id: &str,
+) -> Result<Vec<Value>, Value> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT pending_commit_id, operation_id, command, agent_did, device_id, group_did, subject_did, subject_status, crypto_group_id_b64u, from_epoch, to_epoch, status
+             FROM pending_commits
+             WHERE (?1 IS NULL OR agent_did = ?1) AND (?2 IS NULL OR group_did = ?2) AND device_id = ?3 AND status = 'pending'
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| sqlite_error("state_read_failed", e, request_id))?;
+    let rows = stmt
+        .query_map(params![agent, group_did, device_id], |row| {
+            Ok(json!({
+                "pending_commit_id": row.get::<_, String>(0)?,
+                "operation_id": row.get::<_, String>(1)?,
+                "command": row.get::<_, String>(2)?,
+                "agent_did": row.get::<_, String>(3)?,
+                "device_id": row.get::<_, String>(4)?,
+                "group_did": row.get::<_, String>(5)?,
+                "subject_did": row.get::<_, String>(6)?,
+                "subject_status": row.get::<_, String>(7)?,
+                "crypto_group_id_b64u": row.get::<_, String>(8)?,
+                "from_epoch": row.get::<_, i64>(9)?.to_string(),
+                "to_epoch": row.get::<_, i64>(10)?.to_string(),
+                "status": row.get::<_, String>(11)?,
+            }))
+        })
+        .map_err(|e| sqlite_error("state_read_failed", e, request_id))?;
+    let mut pending = Vec::new();
+    for row in rows {
+        pending.push(row.map_err(|e| sqlite_error("state_read_failed", e, request_id))?);
+    }
+    Ok(pending)
 }
 
 struct Binding {
