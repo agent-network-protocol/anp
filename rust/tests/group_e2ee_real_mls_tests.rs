@@ -151,7 +151,10 @@ fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) 
                 "device_id": "phone",
                 "group_did": group_did,
                 "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
-                "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree")
+                "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
+                "group_state_ref": {"group_did": group_did},
+                "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone(),
+                "epoch": add["result"]["epoch"].clone()
             }
         }),
     );
@@ -300,7 +303,16 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
             "api_version": "anp-mls/v1",
             "request_id": "req-welcome",
             "operation_id": "op-welcome",
-            "params": {"agent_did": bob(), "device_id": "phone", "group_did": group_did, "welcome_b64u": welcome_b64u, "ratchet_tree_b64u": ratchet_tree_b64u}
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": welcome_b64u,
+                "ratchet_tree_b64u": ratchet_tree_b64u,
+                "group_state_ref": {"group_did": group_did},
+                "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone(),
+                "epoch": add["result"]["epoch"].clone()
+            }
         }),
     );
     assert_eq!(welcome["result"]["status"], "active");
@@ -716,7 +728,10 @@ fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
                 "device_id": "phone",
                 "group_did": group_did,
                 "welcome_b64u": recovery["result"]["welcome_b64u"].as_str().unwrap(),
-                "ratchet_tree_b64u": recovery["result"]["ratchet_tree_b64u"].as_str().unwrap()
+                "ratchet_tree_b64u": recovery["result"]["ratchet_tree_b64u"].as_str().unwrap(),
+                "group_state_ref": {"group_did": group_did},
+                "crypto_group_id_b64u": recovery["result"]["crypto_group_id_b64u"].clone(),
+                "epoch": recovery["result"]["epoch"].clone()
             }
         }),
     );
@@ -907,6 +922,8 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
                 "group_did": group_did,
                 "welcome_b64u": update["result"]["welcome_b64u"].as_str().unwrap(),
                 "ratchet_tree_b64u": update["result"]["ratchet_tree_b64u"].as_str().unwrap(),
+                "group_state_ref": {"group_did": group_did},
+                "crypto_group_id_b64u": update["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": update["result"]["epoch"].as_str().unwrap()
             }
         }),
@@ -1408,7 +1425,8 @@ fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
                 "device_id": "phone",
                 "group_did": group_did,
                 "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
-                "ratchet_tree_b64u": "AAAA"
+                "ratchet_tree_b64u": "AAAA",
+                "group_state_ref": {"group_did": group_did},
             }
         }),
     );
@@ -1418,6 +1436,102 @@ fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
         "invalid_base64url"
     ]
     .contains(&invalid["error"]["code"].as_str().unwrap()));
+}
+
+#[test]
+fn group_e2ee_anp_mls_requires_group_state_ref_for_welcome_process() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:welcome-state-ref-required:e1";
+    let add =
+        bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
+
+    let missing = run_anp_mls_error(
+        bob_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-missing-welcome-state-ref",
+            "operation_id": "op-missing-welcome-state-ref",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
+                "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
+                "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone(),
+                "epoch": add["result"]["epoch"].clone()
+            }
+        }),
+    );
+    assert_eq!(missing["error"]["code"], "missing_field");
+    assert!(missing["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains("group_state_ref"));
+}
+
+#[test]
+fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
+    let alice_dir = tempdir().expect("alice state");
+    let bob_dir = tempdir().expect("bob state");
+    let group_did = "did:wba:example.com:groups:welcome-binding:e1";
+    let add =
+        bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
+
+    let wrong_crypto = run_anp_mls_error(
+        bob_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-welcome-wrong-crypto",
+            "operation_id": "op-welcome-wrong-crypto",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
+                "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
+                "group_state_ref": {"group_did": group_did},
+                "crypto_group_id_b64u": "d3Jvbmctd2VsY29tZS1ncm91cA",
+                "epoch": add["result"]["epoch"].clone()
+            }
+        }),
+    );
+    assert_eq!(wrong_crypto["error"]["code"], "group_binding_mismatch");
+
+    let epoch_alice_dir = tempdir().expect("epoch alice state");
+    let epoch_bob_dir = tempdir().expect("epoch bob state");
+    let epoch_group_did = "did:wba:example.com:groups:welcome-binding-epoch:e1";
+    let epoch_add = bootstrap_alice_bob_group_without_welcome(
+        epoch_alice_dir.path(),
+        epoch_bob_dir.path(),
+        epoch_group_did,
+    );
+
+    let wrong_epoch = run_anp_mls_error(
+        epoch_bob_dir.path(),
+        "welcome",
+        "process",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-welcome-wrong-epoch",
+            "operation_id": "op-welcome-wrong-epoch",
+            "params": {
+                "agent_did": bob(),
+                "device_id": "phone",
+                "group_did": epoch_group_did,
+                "welcome_b64u": epoch_add["result"]["welcome_b64u"].as_str().expect("welcome"),
+                "ratchet_tree_b64u": epoch_add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
+                "group_state_ref": {"group_did": epoch_group_did},
+                "crypto_group_id_b64u": epoch_add["result"]["crypto_group_id_b64u"].clone(),
+                "epoch": "99"
+            }
+        }),
+    );
+    assert_eq!(wrong_epoch["error"]["code"], "group_epoch_mismatch");
 }
 
 #[test]

@@ -1417,6 +1417,13 @@ fn real_welcome_process(
             if let Some(group) = MlsGroup::load(provider.storage(), &existing.openmls_group_id)
                 .map_err(|e| mls_error("group_load_failed", e, request_id))?
             {
+                validate_welcome_outer_binding(
+                    params,
+                    group_did,
+                    group.group_id(),
+                    group.epoch().as_u64(),
+                    request_id,
+                )?;
                 return Ok(json!({
                     "crypto_group_id_b64u": encode_b64u(group.group_id().as_slice()),
                     "openmls_group_id_b64u": encode_b64u(group.group_id().as_slice()),
@@ -1447,6 +1454,13 @@ fn real_welcome_process(
         .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?;
     let welcome_group_id = staged.group_context().group_id().clone();
     let welcome_epoch = staged.group_context().epoch().as_u64();
+    validate_welcome_outer_binding(
+        params,
+        group_did,
+        &welcome_group_id,
+        welcome_epoch,
+        request_id,
+    )?;
     if let Some(existing) = active_binding(conn, agent, device_id, group_did, request_id)? {
         if existing.openmls_group_id == welcome_group_id {
             if existing.epoch >= welcome_epoch {
@@ -2301,6 +2315,124 @@ fn welcome_target_epoch(params: &Value) -> Option<u64> {
     ["to_epoch", "epoch", "local_epoch"]
         .into_iter()
         .find_map(|key| params.get(key).and_then(epoch_claim_as_u64))
+}
+
+fn validate_welcome_outer_binding(
+    params: &Value,
+    expected_group_did: &str,
+    expected_group_id: &GroupId,
+    expected_epoch: u64,
+    request_id: &str,
+) -> Result<(), Value> {
+    let group_state_ref = params
+        .get("group_state_ref")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "welcome process requires group_state_ref",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    let ref_group_did = group_state_ref
+        .get("group_did")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error(
+                "missing_field",
+                "welcome group_state_ref.group_did is required",
+                Some(request_id.to_owned()),
+            )
+        })?;
+    if ref_group_did != expected_group_did {
+        return Err(error(
+            "invalid_target_binding",
+            "welcome group_state_ref.group_did does not match group_did",
+            Some(request_id.to_owned()),
+        ));
+    }
+
+    let expected_crypto_group_id = encode_b64u(expected_group_id.as_slice());
+    let mut saw_crypto_group_claim = false;
+    for (path, actual) in [
+        (
+            "crypto_group_id_b64u",
+            params.get("crypto_group_id_b64u").and_then(Value::as_str),
+        ),
+        (
+            "openmls_group_id_b64u",
+            params.get("openmls_group_id_b64u").and_then(Value::as_str),
+        ),
+        (
+            "group_state_ref.crypto_group_id_b64u",
+            params
+                .pointer("/group_state_ref/crypto_group_id_b64u")
+                .and_then(Value::as_str),
+        ),
+        (
+            "group_state_ref.openmls_group_id_b64u",
+            params
+                .pointer("/group_state_ref/openmls_group_id_b64u")
+                .and_then(Value::as_str),
+        ),
+    ] {
+        if let Some(actual) = actual {
+            saw_crypto_group_claim = true;
+            if actual != expected_crypto_group_id {
+                return Err(error(
+                    "group_binding_mismatch",
+                    &format!("{path} does not match the staged MLS welcome group id"),
+                    Some(request_id.to_owned()),
+                ));
+            }
+        }
+    }
+    if !saw_crypto_group_claim {
+        return Err(error(
+            "missing_field",
+            "welcome process requires crypto_group_id_b64u or openmls_group_id_b64u binding",
+            Some(request_id.to_owned()),
+        ));
+    }
+
+    let mut saw_epoch_claim = false;
+    for (path, actual) in [
+        (
+            "to_epoch",
+            params.get("to_epoch").and_then(epoch_claim_as_u64),
+        ),
+        ("epoch", params.get("epoch").and_then(epoch_claim_as_u64)),
+        (
+            "local_epoch",
+            params.get("local_epoch").and_then(epoch_claim_as_u64),
+        ),
+        (
+            "group_state_ref.epoch",
+            params
+                .pointer("/group_state_ref/epoch")
+                .and_then(epoch_claim_as_u64),
+        ),
+    ] {
+        if let Some(actual) = actual {
+            saw_epoch_claim = true;
+            if actual != expected_epoch {
+                return Err(error(
+                    "group_epoch_mismatch",
+                    &format!("{path} does not match the staged MLS welcome epoch"),
+                    Some(request_id.to_owned()),
+                ));
+            }
+        }
+    }
+    if !saw_epoch_claim {
+        return Err(error(
+            "missing_field",
+            "welcome process requires to_epoch or epoch binding",
+            Some(request_id.to_owned()),
+        ));
+    }
+    Ok(())
 }
 
 fn delete_openmls_group_state(
