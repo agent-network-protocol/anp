@@ -805,14 +805,13 @@ fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
 #[test]
 fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
     let alice_dir = tempdir().expect("alice state");
-    let bob_initial_dir = tempdir().expect("bob initial state");
-    let bob_updated_dir = tempdir().expect("bob updated state");
+    let bob_dir = tempdir().expect("bob state");
     let group_did = "did:wba:example.com:groups:update-member:e1";
-    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
+    let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     assert_eq!(add["result"]["epoch"], "1");
 
     let update_kp = run_anp_mls(
-        bob_updated_dir.path(),
+        bob_dir.path(),
         "key-package",
         "generate",
         json!({
@@ -895,7 +894,7 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
     assert_eq!(finalized["result"]["subject_status"], "updated");
 
     let welcome = run_anp_mls(
-        bob_updated_dir.path(),
+        bob_dir.path(),
         "welcome",
         "process",
         json!({
@@ -907,7 +906,8 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
                 "device_id": "phone",
                 "group_did": group_did,
                 "welcome_b64u": update["result"]["welcome_b64u"].as_str().unwrap(),
-                "ratchet_tree_b64u": update["result"]["ratchet_tree_b64u"].as_str().unwrap()
+                "ratchet_tree_b64u": update["result"]["ratchet_tree_b64u"].as_str().unwrap(),
+                "epoch": update["result"]["epoch"].as_str().unwrap()
             }
         }),
     );
@@ -924,7 +924,7 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
         "after update from alice",
     );
     let bob_decrypted = run_anp_mls(
-        bob_updated_dir.path(),
+        bob_dir.path(),
         "message",
         "decrypt",
         json!({
@@ -950,7 +950,7 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
     );
 
     let bob_cipher = encrypt_text(
-        bob_updated_dir.path(),
+        bob_dir.path(),
         bob(),
         group_did,
         "2",

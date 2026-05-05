@@ -1407,15 +1407,66 @@ fn real_welcome_process(
     let group_did = required(params, "group_did")?;
     let welcome_b64u = required(params, "welcome_b64u")?;
     let ratchet_tree_b64u = required(params, "ratchet_tree_b64u")?;
+    let claimed_target_epoch = welcome_target_epoch(params);
+    let mut replace_existing_group = false;
+    if let (Some(target_epoch), Some(existing)) = (
+        claimed_target_epoch,
+        active_binding(conn, agent, device_id, group_did, request_id)?,
+    ) {
+        if existing.epoch >= target_epoch {
+            if let Some(group) = MlsGroup::load(provider.storage(), &existing.openmls_group_id)
+                .map_err(|e| mls_error("group_load_failed", e, request_id))?
+            {
+                return Ok(json!({
+                    "crypto_group_id_b64u": encode_b64u(group.group_id().as_slice()),
+                    "openmls_group_id_b64u": encode_b64u(group.group_id().as_slice()),
+                    "epoch": group.epoch().as_u64().to_string(),
+                    "status": "active",
+                    "already_processed": true,
+                    "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
+                }));
+            }
+        } else {
+            replace_existing_group = true;
+        }
+    }
     let welcome = Welcome::tls_deserialize_exact(decode_b64u(welcome_b64u, request_id)?)
         .map_err(|e| mls_error("welcome_decode_failed", e, request_id))?;
     let ratchet_tree =
         RatchetTreeIn::tls_deserialize_exact(decode_b64u(ratchet_tree_b64u, request_id)?)
             .map_err(|e| mls_error("ratchet_tree_decode_failed", e, request_id))?;
     let join_config = group_join_config();
-    let staged =
-        StagedWelcome::new_from_welcome(provider, &join_config, welcome, Some(ratchet_tree))
-            .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?;
+    let mut join_builder = StagedWelcome::build_from_welcome(provider, &join_config, welcome)
+        .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?
+        .with_ratchet_tree(ratchet_tree);
+    if replace_existing_group {
+        join_builder = join_builder.replace_old_group();
+    }
+    let staged = join_builder
+        .build()
+        .map_err(|e| mls_error("welcome_stage_failed", e, request_id))?;
+    let welcome_group_id = staged.group_context().group_id().clone();
+    let welcome_epoch = staged.group_context().epoch().as_u64();
+    if let Some(existing) = active_binding(conn, agent, device_id, group_did, request_id)? {
+        if existing.openmls_group_id == welcome_group_id {
+            if existing.epoch >= welcome_epoch {
+                if let Some(group) = MlsGroup::load(provider.storage(), &existing.openmls_group_id)
+                    .map_err(|e| mls_error("group_load_failed", e, request_id))?
+                {
+                    return Ok(json!({
+                        "crypto_group_id_b64u": encode_b64u(group.group_id().as_slice()),
+                        "openmls_group_id_b64u": encode_b64u(group.group_id().as_slice()),
+                        "epoch": group.epoch().as_u64().to_string(),
+                        "status": "active",
+                        "already_processed": true,
+                        "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
+                    }));
+                }
+            } else {
+                delete_openmls_group_state(conn, &existing.openmls_group_id, request_id)?;
+            }
+        }
+    }
     let group = staged
         .into_group(provider)
         .map_err(|e| mls_error("welcome_process_failed", e, request_id))?;
@@ -2212,6 +2263,22 @@ fn binding(
     group_did: &str,
     request_id: &str,
 ) -> Result<Binding, Value> {
+    active_binding(conn, agent_did, device_id, group_did, request_id)?.ok_or_else(|| {
+        error(
+            "group_not_found",
+            "no local MLS group binding found for agent/device/group",
+            Some(request_id.to_owned()),
+        )
+    })
+}
+
+fn active_binding(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    request_id: &str,
+) -> Result<Option<Binding>, Value> {
     let row: Option<(String, String, i64)> = conn
         .query_row(
             "SELECT openmls_group_id_b64u, role, epoch FROM group_bindings WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3 AND status = 'active'",
@@ -2221,17 +2288,36 @@ fn binding(
         .optional()
         .map_err(|e| sqlite_error("state_read_failed", e, request_id))?;
     let Some((group_id_b64u, role, epoch)) = row else {
-        return Err(error(
-            "group_not_found",
-            "no local MLS group binding found for agent/device/group",
-            Some(request_id.to_owned()),
-        ));
+        return Ok(None);
     };
-    Ok(Binding {
+    Ok(Some(Binding {
         openmls_group_id: GroupId::from_slice(&decode_b64u(&group_id_b64u, request_id)?),
         epoch: epoch as u64,
         role,
-    })
+    }))
+}
+
+fn welcome_target_epoch(params: &Value) -> Option<u64> {
+    ["to_epoch", "epoch", "local_epoch"]
+        .into_iter()
+        .find_map(|key| params.get(key).and_then(epoch_claim_as_u64))
+}
+
+fn delete_openmls_group_state(
+    conn: &Connection,
+    group_id: &GroupId,
+    request_id: &str,
+) -> Result<(), Value> {
+    for statement in [
+        "DELETE FROM openmls_group_data WHERE group_id = ?1",
+        "DELETE FROM openmls_own_leaf_nodes WHERE group_id = ?1",
+        "DELETE FROM openmls_proposals WHERE group_id = ?1",
+        "DELETE FROM openmls_epoch_keys_pairs WHERE group_id = ?1",
+    ] {
+        conn.execute(statement, params![group_id.as_slice()])
+            .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    }
+    Ok(())
 }
 
 fn member_leaf_index_by_did(group: &MlsGroup, member_did: &str) -> Option<LeafNodeIndex> {
