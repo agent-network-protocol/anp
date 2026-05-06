@@ -152,7 +152,7 @@ fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) 
                 "group_did": group_did,
                 "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
                 "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": add["result"]["epoch"].clone()
             }
@@ -183,6 +183,7 @@ fn encrypt_text(
                 "device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": epoch,
                 },
                 "content_type": "application/anp-group-cipher+json",
@@ -309,7 +310,7 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
                 "group_did": group_did,
                 "welcome_b64u": welcome_b64u,
                 "ratchet_tree_b64u": ratchet_tree_b64u,
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": add["result"]["epoch"].clone()
             }
@@ -403,6 +404,7 @@ fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch
                 "member_did": bob(),
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 }
@@ -446,6 +448,7 @@ fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch
                 "member_did": bob(),
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 }
@@ -536,7 +539,7 @@ fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch
             "params": {
                 "sender_did": bob(),
                 "device_id": "phone",
-                "group_state_ref": {"group_did": group_did, "epoch": "2"},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1", "epoch": "2"},
                 "content_type": "application/anp-group-cipher+json",
                 "security_profile": "group-e2ee",
                 "message_id": "msg-bob-after-remove",
@@ -568,7 +571,7 @@ fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
                 "device_id": "phone",
                 "group_did": group_did,
                 "member_did": bob(),
-                "group_state_ref": {"group_did": group_did, "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1", "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
             }
         }),
     );
@@ -647,6 +650,7 @@ fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
                 "target_device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -690,6 +694,7 @@ fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
                 "target_device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -729,7 +734,7 @@ fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
                 "group_did": group_did,
                 "welcome_b64u": recovery["result"]["welcome_b64u"].as_str().unwrap(),
                 "ratchet_tree_b64u": recovery["result"]["ratchet_tree_b64u"].as_str().unwrap(),
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": recovery["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": recovery["result"]["epoch"].clone()
             }
@@ -807,6 +812,7 @@ fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
                 "member_did": bob(),
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -863,6 +869,7 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
                 "update_key_package_id": update_kp["result"]["group_key_package"]["key_package_id"].clone(),
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -922,7 +929,7 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
                 "group_did": group_did,
                 "welcome_b64u": update["result"]["welcome_b64u"].as_str().unwrap(),
                 "ratchet_tree_b64u": update["result"]["ratchet_tree_b64u"].as_str().unwrap(),
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": update["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": update["result"]["epoch"].as_str().unwrap()
             }
@@ -1035,6 +1042,7 @@ fn group_e2ee_update_member_prepare_rejects_wrong_package_purpose_and_device() {
                 "member_did": bob(),
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -1078,6 +1086,7 @@ fn group_e2ee_update_member_prepare_rejects_wrong_package_purpose_and_device() {
                 "target_device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -1125,6 +1134,7 @@ fn group_e2ee_update_member_abort_clears_pending_without_advancing_epoch() {
                 "target_device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "1",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -1180,7 +1190,7 @@ fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
                 "actor_did": bob(),
                 "device_id": "phone",
                 "group_did": group_did,
-                "group_state_ref": {"group_did": group_did, "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1", "epoch": "1", "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()}
             }
         }),
     );
@@ -1227,7 +1237,7 @@ fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
             "params": {
                 "sender_did": bob(),
                 "device_id": "phone",
-                "group_state_ref": {"group_did": group_did, "epoch": "2"},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1", "epoch": "2"},
                 "content_type": "application/anp-group-cipher+json",
                 "security_profile": "group-e2ee",
                 "message_id": "msg-bob-after-leave",
@@ -1285,6 +1295,7 @@ fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
                 "device_id": "phone",
                 "group_state_ref": {
                     "group_did": group_did,
+                    "group_state_version": "1",
                     "epoch": "0",
                     "crypto_group_id_b64u": add["result"]["crypto_group_id_b64u"].clone()
                 },
@@ -1426,7 +1437,7 @@ fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
                 "group_did": group_did,
                 "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
                 "ratchet_tree_b64u": "AAAA",
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
             }
         }),
     );
@@ -1494,7 +1505,7 @@ fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
                 "group_did": group_did,
                 "welcome_b64u": add["result"]["welcome_b64u"].as_str().expect("welcome"),
                 "ratchet_tree_b64u": add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
-                "group_state_ref": {"group_did": group_did},
+                "group_state_ref": {"group_did": group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": "d3Jvbmctd2VsY29tZS1ncm91cA",
                 "epoch": add["result"]["epoch"].clone()
             }
@@ -1525,7 +1536,7 @@ fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
                 "group_did": epoch_group_did,
                 "welcome_b64u": epoch_add["result"]["welcome_b64u"].as_str().expect("welcome"),
                 "ratchet_tree_b64u": epoch_add["result"]["ratchet_tree_b64u"].as_str().expect("ratchet tree"),
-                "group_state_ref": {"group_did": epoch_group_did},
+                "group_state_ref": {"group_did": epoch_group_did, "group_state_version": "1"},
                 "crypto_group_id_b64u": epoch_add["result"]["crypto_group_id_b64u"].clone(),
                 "epoch": "99"
             }

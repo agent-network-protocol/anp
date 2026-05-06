@@ -54,10 +54,10 @@ Contract-test artifacts remain explicit test fixtures only. They must stay marke
 
 ## P6 binding and safety rules
 
-- `group.e2ee.send` AAD is bound to canonical P6 metadata: content type, sender DID, group DID, crypto group ID, epoch/state ref, security profile, message ID, and operation ID.
+- `group.e2ee.send` AAD is bound to canonical P6 metadata: content type, sender DID, group DID, crypto group ID, `group_state_ref.group_state_version`, epoch/state ref, security profile, message ID, and operation ID.
 - Decrypt reconstructs expected AAD and rejects tampering before returning plaintext.
-- Welcome processing validates the outer `group_state_ref`, `group_did`, crypto group ID / OpenMLS group ID, and epoch before persisting state.
-- KeyPackage DID WBA binding must validate owner/agent DID, device ID, assertion method / verification method, MLS BasicCredential identity, leaf signature key, validity window, and proof vectors before public discovery claims.
+- Welcome processing validates the outer `group_state_ref`, `group_did`, `group_state_version`, crypto group ID / OpenMLS group ID, and epoch before persisting state.
+- KeyPackage trust boundary: real product flows must feed `anp-mls` only KeyPackages obtained through `message-service` `group.e2ee.publish_key_package` / `get_key_package`, because the service is the authoritative DID WBA proof verifier and lease/consume gate. `anp-mls` still validates owner/agent DID, device ID, MLS BasicCredential identity, leaf signature key, validity window, and group/device context as a local defense-in-depth check, but it does not resolve DID documents or independently verify remote object proofs for arbitrary direct inputs.
 - Hidden update-member uses OpenMLS `swap_members` with a `purpose=update` KeyPackage and finalizes only after service acceptance.
 - Recover-member is only for active P4 members; removed/left rejoin uses add/welcome with a fresh normal KeyPackage.
 

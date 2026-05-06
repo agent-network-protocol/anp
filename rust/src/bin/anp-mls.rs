@@ -2352,6 +2352,18 @@ fn validate_welcome_outer_binding(
             Some(request_id.to_owned()),
         ));
     }
+    if group_state_ref
+        .get("group_state_version")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(error(
+            "missing_field",
+            "welcome group_state_ref.group_state_version is required",
+            Some(request_id.to_owned()),
+        ));
+    }
 
     let expected_crypto_group_id = encode_b64u(expected_group_id.as_slice());
     let mut saw_crypto_group_claim = false;
@@ -2801,6 +2813,18 @@ fn build_message_aad(
                 Some(request_id.to_owned()),
             )
         })?;
+    if group_state_ref
+        .get("group_state_version")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(error(
+            "missing_field",
+            "group_state_ref.group_state_version is required for P6 MLS AAD",
+            Some(request_id.to_owned()),
+        ));
+    }
     let sender_did = params
         .get("sender_did")
         .or_else(|| params.get("agent_did"))
