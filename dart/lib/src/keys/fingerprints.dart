@@ -1,8 +1,11 @@
 import '../codec/base58.dart';
+import '../codec/base64.dart';
+import '../codec/canonical_json.dart';
 import 'key_material.dart';
+import 'jwk.dart';
 
 String computeJwkFingerprint(PublicKeyMaterial publicKey) =>
-    encodeBase58(sha256Bytes(publicKey.bytes));
+    encodeBase64Url(sha256Bytes(canonicalJsonBytes(publicKeyToJwk(publicKey))));
 
 String computeMultikeyFingerprint(PublicKeyMaterial publicKey) {
   final prefix = switch (publicKey.type) {

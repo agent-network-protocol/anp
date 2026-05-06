@@ -4,6 +4,7 @@ import '../codec/base64.dart';
 import '../codec/canonical_json.dart';
 import '../errors.dart';
 import '../keys/keys.dart';
+import '../proof/proof.dart';
 import 'types.dart';
 import 'verification_methods.dart';
 
@@ -17,10 +18,13 @@ DidDocumentBundle createDidWbaDocument(
   final auth = generateKeyPairPem(
     options.didProfile == DidProfile.k1 ? KeyType.secp256k1 : KeyType.ed25519,
   );
-  final signing = generateKeyPairPem(KeyType.ed25519);
-  final agreement = generateKeyPairPem(KeyType.x25519);
-  final path = options.pathSegments.map(Uri.encodeComponent).join(':');
   final port = options.port == null ? '' : '%3A${options.port}';
+  final pathSegments = <String>[...options.pathSegments];
+  if (pathSegments.isNotEmpty) {
+    final fingerprint = computeJwkFingerprint(auth.publicKey);
+    pathSegments.add('${options.didProfile.name}_$fingerprint');
+  }
+  final path = pathSegments.map(Uri.encodeComponent).join(':');
   final did = 'did:wba:$hostname$port${path.isEmpty ? '' : ':$path'}';
   final authMethod = _verificationMethod(
     did,
@@ -28,35 +32,76 @@ DidDocumentBundle createDidWbaDocument(
     auth.publicKey,
     'authentication',
   );
-  final signingMethod = _verificationMethod(
-    did,
-    vmKeyE2eeSigning,
-    signing.publicKey,
-    'assertionMethod',
-  );
-  final agreementMethod = _verificationMethod(
-    did,
-    vmKeyE2eeAgreement,
-    agreement.publicKey,
-    'keyAgreement',
-  );
+  final signing = options.enableE2ee
+      ? generateKeyPairPem(KeyType.secp256r1)
+      : null;
+  final agreement = options.enableE2ee
+      ? generateKeyPairPem(KeyType.x25519)
+      : null;
   final services = <JsonMap>[
     if (options.messageServiceEndpoint != null)
       buildAnpMessageService('$did#messages', options.messageServiceEndpoint!),
     ...options.services,
   ];
+  final contexts = <String>[
+    'https://www.w3.org/ns/did/v1',
+    if (options.didProfile == DidProfile.e1) ...[
+      'https://w3id.org/security/data-integrity/v2',
+      'https://w3id.org/security/multikey/v1',
+    ],
+    if (options.didProfile == DidProfile.k1) ...[
+      'https://w3id.org/security/suites/jws-2020/v1',
+      'https://w3id.org/security/suites/secp256k1-2019/v1',
+      'https://w3id.org/security/data-integrity/v2',
+    ],
+    if (options.enableE2ee) 'https://w3id.org/security/suites/x25519-2019/v1',
+  ];
+  final verificationMethods = <Object?>[
+    authMethod,
+    if (signing != null)
+      <String, Object?>{
+        'id': '$did#$vmKeyE2eeSigning',
+        'type': 'EcdsaSecp256r1VerificationKey2019',
+        'controller': did,
+        'publicKeyJwk': publicKeyToJwk(signing.publicKey),
+      },
+    if (agreement != null)
+      <String, Object?>{
+        'id': '$did#$vmKeyE2eeAgreement',
+        'type': 'X25519KeyAgreementKey2019',
+        'controller': did,
+        'publicKeyMultibase': x25519PublicKeyToMultibase(
+          agreement.publicKey.bytes,
+        ),
+      },
+  ];
   final document = <String, Object?>{
-    '@context': ['https://www.w3.org/ns/did/v1'],
+    '@context': contexts,
     'id': did,
-    'verificationMethod': [authMethod, signingMethod, agreementMethod],
+    'verificationMethod': verificationMethods,
     'authentication': ['$did#$vmKeyAuth'],
-    'assertionMethod': ['$did#$vmKeyE2eeSigning'],
-    'keyAgreement': ['$did#$vmKeyE2eeAgreement'],
+    'assertionMethod': ['$did#$vmKeyAuth'],
+    if (agreement != null) 'keyAgreement': ['$did#$vmKeyE2eeAgreement'],
     if (services.isNotEmpty) 'service': services,
   };
+  final proofType = proofTypeDataIntegrity;
+  final cryptosuite = options.didProfile == DidProfile.e1
+      ? cryptosuiteEddsaJcs2022
+      : cryptosuiteDidWbaSecp256k12025;
+  final signedDocument = _generateW3cProofSync(
+    document,
+    auth.privateKey,
+    options.verificationMethod ?? '$did#$vmKeyAuth',
+    proofType: proofType,
+    cryptosuite: cryptosuite,
+    created: options.created,
+    proofPurpose: options.proofPurpose,
+    domain: options.domain,
+    challenge: options.challenge,
+  );
   return DidDocumentBundle(
     did: did,
-    didDocument: document,
+    didDocument: signedDocument,
     keys: {
       vmKeyAuth: DidKeyPair(
         privateKey: auth.privateKey,
@@ -64,18 +109,20 @@ DidDocumentBundle createDidWbaDocument(
         privateKeyPem: auth.pem.privateKeyPem,
         publicKeyPem: auth.pem.publicKeyPem,
       ),
-      vmKeyE2eeSigning: DidKeyPair(
-        privateKey: signing.privateKey,
-        publicKey: signing.publicKey,
-        privateKeyPem: signing.pem.privateKeyPem,
-        publicKeyPem: signing.pem.publicKeyPem,
-      ),
-      vmKeyE2eeAgreement: DidKeyPair(
-        privateKey: agreement.privateKey,
-        publicKey: agreement.publicKey,
-        privateKeyPem: agreement.pem.privateKeyPem,
-        publicKeyPem: agreement.pem.publicKeyPem,
-      ),
+      if (signing != null)
+        vmKeyE2eeSigning: DidKeyPair(
+          privateKey: signing.privateKey,
+          publicKey: signing.publicKey,
+          privateKeyPem: signing.pem.privateKeyPem,
+          publicKeyPem: signing.pem.publicKeyPem,
+        ),
+      if (agreement != null)
+        vmKeyE2eeAgreement: DidKeyPair(
+          privateKey: agreement.privateKey,
+          publicKey: agreement.publicKey,
+          privateKeyPem: agreement.pem.privateKeyPem,
+          publicKeyPem: agreement.pem.publicKeyPem,
+        ),
     },
   );
 }
@@ -91,6 +138,36 @@ JsonMap buildAnpMessageService(
   if (options.routingKeys.isNotEmpty) 'routingKeys': options.routingKeys,
   if (options.accept.isNotEmpty) 'accept': options.accept,
 };
+
+JsonMap _generateW3cProofSync(
+  JsonMap document,
+  PrivateKeyMaterial privateKey,
+  String verificationMethod, {
+  required String proofType,
+  required String cryptosuite,
+  required String proofPurpose,
+  DateTime? created,
+  String? domain,
+  String? challenge,
+}) {
+  final proof = <String, Object?>{
+    'type': proofType,
+    'created': _isoSeconds(created ?? DateTime.now().toUtc()),
+    'verificationMethod': verificationMethod,
+    'proofPurpose': proofPurpose,
+    'cryptosuite': cryptosuite,
+    if (domain != null) 'domain': domain,
+    if (challenge != null) 'challenge': challenge,
+  };
+  final unsigned = Map<String, Object?>.from(document)..remove('proof');
+  final signature = privateKey.sign(
+    computeW3cProofSigningInput(unsigned, proof),
+  );
+  return {
+    ...unsigned,
+    'proof': {...proof, 'proofValue': encodeBase64Url(signature)},
+  };
+}
 
 JsonMap buildAgentMessageService(
   String did,
@@ -342,16 +419,29 @@ JsonMap _verificationMethod(
   String keyId,
   PublicKeyMaterial publicKey,
   String relationship,
-) => {
-  'id': '$did#$keyId',
-  'type': switch (publicKey.type) {
-    KeyType.ed25519 => 'Multikey',
-    KeyType.x25519 => 'Multikey',
-    KeyType.secp256k1 => 'EcdsaSecp256k1VerificationKey2019',
-    KeyType.secp256r1 => 'JsonWebKey2020',
-  },
-  'controller': did,
-  'publicKeyJwk': publicKeyToJwk(publicKey),
-  'publicKeyMultibase': computeMultikeyFingerprint(publicKey),
-  'relationship': relationship,
-};
+) {
+  final method = <String, Object?>{
+    'id': '$did#$keyId',
+    'type': switch (publicKey.type) {
+      KeyType.ed25519 => 'Multikey',
+      KeyType.x25519 => 'X25519KeyAgreementKey2019',
+      KeyType.secp256k1 => 'EcdsaSecp256k1VerificationKey2019',
+      KeyType.secp256r1 => 'EcdsaSecp256r1VerificationKey2019',
+    },
+    'controller': did,
+  };
+  switch (publicKey.type) {
+    case KeyType.ed25519:
+      method['publicKeyMultibase'] = ed25519PublicKeyToMultibase(
+        publicKey.bytes,
+      );
+    case KeyType.x25519:
+      method['publicKeyMultibase'] = x25519PublicKeyToMultibase(
+        publicKey.bytes,
+      );
+    case KeyType.secp256k1:
+    case KeyType.secp256r1:
+      method['publicKeyJwk'] = publicKeyToJwk(publicKey);
+  }
+  return method;
+}

@@ -7,7 +7,12 @@ void main() {
       'example.com',
       options: const DidDocumentOptions(pathSegments: ['user', 'alice']),
     );
-    expect(bundle.did, 'did:wba:example.com:user:alice');
+    expect(bundle.did, startsWith('did:wba:example.com:user:alice:e1_'));
+    expect(bundle.didDocument['id'], bundle.did);
+    expect(bundle.didDocument['proof'], isA<Map<Object?, Object?>>());
+    expect(bundle.didDocument['assertionMethod'], <String>[
+      '${bundle.did}#key-1',
+    ]);
     expect(validateDidDocumentBinding(bundle.didDocument), isTrue);
     expect(bundle.keys, contains(vmKeyAuth));
   });

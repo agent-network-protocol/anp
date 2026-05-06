@@ -20,6 +20,12 @@ class DidDocumentOptions {
     this.didProfile = DidProfile.e1,
     this.services = const <JsonMap>[],
     this.messageServiceEndpoint,
+    this.proofPurpose = 'assertionMethod',
+    this.verificationMethod,
+    this.domain,
+    this.challenge,
+    this.created,
+    this.enableE2ee = true,
   });
 
   final List<String> pathSegments;
@@ -27,6 +33,12 @@ class DidDocumentOptions {
   final DidProfile didProfile;
   final List<JsonMap> services;
   final String? messageServiceEndpoint;
+  final String proofPurpose;
+  final String? verificationMethod;
+  final String? domain;
+  final String? challenge;
+  final DateTime? created;
+  final bool enableE2ee;
 }
 
 class DidKeyPair {
