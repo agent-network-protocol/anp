@@ -1,6 +1,5 @@
 name: anp
-version: 0.1.0
-publish_to: none
+version: 0.8.7
 description: Dart SDK for Agent Network Protocol helpers, authentication, proofs, and WNS.
 repository: https://github.com/agent-network-protocol/anp
 

@@ -28,7 +28,7 @@ dart run example/wns.dart
 
 ## Notes
 
-This package is a recovery baseline after consensus planning. Dart↔Go key, auth, proof, and WNS fixture interop helpers are implemented for representative release-gate cases. Direct E2EE/X3DH remains deferred. See `docs/dependency_matrix.md` and `docs/go_to_dart_api_mapping.md`.
+This package is a recovery baseline after consensus planning. Dart↔Go key, auth, proof, and WNS fixture interop helpers are implemented for representative release-gate cases. Direct E2EE/X3DH remains deferred. See `doc/dependency_matrix.md` and `doc/go_to_dart_api_mapping.md`.
 
 
 ## Interop helpers
