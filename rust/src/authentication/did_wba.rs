@@ -4,6 +4,7 @@ use chrono::Utc;
 use percent_encoding::percent_decode_str;
 use rand::rngs::OsRng;
 use regex::Regex;
+#[cfg(feature = "network")]
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -771,49 +772,58 @@ pub async fn resolve_did_wba_document_with_options(
         )
     };
 
-    let client = Client::builder()
-        .danger_accept_invalid_certs(!options.verify_ssl)
-        .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
-        .build()
-        .map_err(|_| AuthenticationError::NetworkFailure)?;
-
-    let response = client
-        .get(url)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|_| AuthenticationError::NetworkFailure)?
-        .error_for_status()
-        .map_err(|_| AuthenticationError::NetworkFailure)?;
-    let document: Value = response
-        .json()
-        .await
-        .map_err(|_| AuthenticationError::JsonFailure)?;
-
-    if document.get("id").and_then(Value::as_str) != Some(did) {
-        return Err(AuthenticationError::InvalidDidDocument);
+    #[cfg(not(feature = "network"))]
+    {
+        let _ = url;
+        return Err(AuthenticationError::NetworkFailure);
     }
-    if !validate_did_document_binding(&document, verify_proof) {
-        return Err(AuthenticationError::InvalidDidBinding);
-    }
-    if verify_proof {
-        let proof = document
-            .get("proof")
-            .ok_or(AuthenticationError::InvalidDidDocument)?;
-        let verification_method = proof
-            .get("verificationMethod")
-            .and_then(Value::as_str)
-            .ok_or(AuthenticationError::InvalidDidDocument)?;
-        let method = find_verification_method(&document, verification_method)
-            .ok_or(AuthenticationError::VerificationMethodNotFound)?;
-        let public_key = extract_public_key(&method)
-            .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
-        if !verify_w3c_proof(&document, &public_key, ProofVerificationOptions::default()) {
-            return Err(AuthenticationError::VerificationFailed);
+
+    #[cfg(feature = "network")]
+    {
+        let client = Client::builder()
+            .danger_accept_invalid_certs(!options.verify_ssl)
+            .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
+            .build()
+            .map_err(|_| AuthenticationError::NetworkFailure)?;
+
+        let response = client
+            .get(url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|_| AuthenticationError::NetworkFailure)?
+            .error_for_status()
+            .map_err(|_| AuthenticationError::NetworkFailure)?;
+        let document: Value = response
+            .json()
+            .await
+            .map_err(|_| AuthenticationError::JsonFailure)?;
+
+        if document.get("id").and_then(Value::as_str) != Some(did) {
+            return Err(AuthenticationError::InvalidDidDocument);
         }
-    }
+        if !validate_did_document_binding(&document, verify_proof) {
+            return Err(AuthenticationError::InvalidDidBinding);
+        }
+        if verify_proof {
+            let proof = document
+                .get("proof")
+                .ok_or(AuthenticationError::InvalidDidDocument)?;
+            let verification_method = proof
+                .get("verificationMethod")
+                .and_then(Value::as_str)
+                .ok_or(AuthenticationError::InvalidDidDocument)?;
+            let method = find_verification_method(&document, verification_method)
+                .ok_or(AuthenticationError::VerificationMethodNotFound)?;
+            let public_key = extract_public_key(&method)
+                .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
+            if !verify_w3c_proof(&document, &public_key, ProofVerificationOptions::default()) {
+                return Err(AuthenticationError::VerificationFailed);
+            }
+        }
 
-    Ok(document)
+        Ok(document)
+    }
 }
 
 pub fn resolve_did_wba_document_sync(

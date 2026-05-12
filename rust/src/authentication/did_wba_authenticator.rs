@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use serde_json::Value;
+#[cfg(feature = "network")]
+use url::Url;
 
 use crate::keys::PrivateKeyMaterial;
 
@@ -217,10 +219,42 @@ impl DIDWbaAuthHeader {
 }
 
 fn extract_domain(server_url: &str) -> String {
-    url::Url::parse(server_url)
-        .ok()
-        .and_then(|value| value.host_str().map(|host| host.to_string()))
-        .unwrap_or_else(|| server_url.to_string())
+    #[cfg(feature = "network")]
+    {
+        return Url::parse(server_url)
+            .ok()
+            .and_then(|value| value.host_str().map(|host| host.to_string()))
+            .unwrap_or_else(|| server_url.to_string());
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        server_url
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .and_then(|authority| {
+                authority
+                    .rsplit_once('@')
+                    .map(|(_, host)| host)
+                    .or(Some(authority))
+            })
+            .map(|authority| {
+                if let Some(stripped) = authority.strip_prefix('[') {
+                    stripped
+                        .split_once(']')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                } else {
+                    authority
+                        .split_once(':')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                }
+            })
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| server_url.to_string())
+    }
 }
 
 fn get_header_case_insensitive<'a>(

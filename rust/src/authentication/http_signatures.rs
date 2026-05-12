@@ -5,6 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+#[cfg(feature = "network")]
 use url::Url;
 
 use crate::keys::base64url_encode;
@@ -289,18 +290,37 @@ fn component_value(
     match component {
         "@method" => Ok(method.to_uppercase()),
         "@target-uri" => Ok(url.to_string()),
-        "@authority" => {
-            let parsed = Url::parse(url).map_err(|_| HttpSignatureError::InvalidSignatureInput)?;
-            let host = parsed.host_str().unwrap_or_default();
-            if let Some(port) = parsed.port() {
-                Ok(format!("{}:{}", host, port))
-            } else {
-                Ok(host.to_string())
-            }
-        }
+        "@authority" => extract_url_authority(url).ok_or(HttpSignatureError::InvalidSignatureInput),
         other => get_header_case_insensitive(headers, other)
             .cloned()
             .ok_or(HttpSignatureError::InvalidSignatureInput),
+    }
+}
+
+fn extract_url_authority(url: &str) -> Option<String> {
+    #[cfg(feature = "network")]
+    {
+        let parsed = Url::parse(url).ok()?;
+        let host = parsed.host_str()?;
+        return if let Some(port) = parsed.port() {
+            Some(format!("{host}:{port}"))
+        } else {
+            Some(host.to_string())
+        };
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        let (_, rest) = url.split_once("://")?;
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if authority.is_empty() || authority.contains('@') {
+            return None;
+        }
+        Some(authority.to_string())
     }
 }
 

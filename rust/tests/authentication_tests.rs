@@ -13,7 +13,9 @@ use anp::authentication::{
     FederatedVerificationOptions,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use common::{tempdir, JsonTestServer};
+use common::tempdir;
+#[cfg(feature = "network")]
+use common::JsonTestServer;
 use ed25519_dalek::SigningKey;
 use serde_json::json;
 
@@ -465,6 +467,48 @@ fn test_did_wba_auth_header_should_not_retry_invalid_did() {
 
 #[tokio::test]
 async fn test_did_wba_verifier_accepts_http_signatures() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let request_url = "https://api.example.com/orders";
+    let headers = generate_http_signature_headers(
+        &bundle.did_document,
+        request_url,
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            request_url,
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("verification should succeed");
+    assert_eq!(result.auth_scheme, "http_signatures");
+    assert!(result.access_token.is_some());
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_wba_verifier_accepts_http_signatures_with_network_resolution() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
     let server = JsonTestServer::start([("/.well-known/did.json", bundle.did_document.clone())]);

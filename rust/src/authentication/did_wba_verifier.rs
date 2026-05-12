@@ -5,6 +5,8 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "network")]
+use url::Url;
 
 use super::did_wba::{
     extract_auth_header_parts, is_authentication_authorized, resolve_did_wba_document_with_options,
@@ -667,8 +669,39 @@ fn get_header_case_insensitive<'a>(
 }
 
 fn extract_domain(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|value| value.host_str().map(|item| item.to_string()))
-        .unwrap_or_else(|| url.to_string())
+    #[cfg(feature = "network")]
+    {
+        return Url::parse(url)
+            .ok()
+            .and_then(|value| value.host_str().map(|item| item.to_string()))
+            .unwrap_or_else(|| url.to_string());
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        url.split_once("://")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .and_then(|authority| {
+                authority
+                    .rsplit_once('@')
+                    .map(|(_, host)| host)
+                    .or(Some(authority))
+            })
+            .map(|authority| {
+                if let Some(stripped) = authority.strip_prefix('[') {
+                    stripped
+                        .split_once(']')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                } else {
+                    authority
+                        .split_once(':')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                }
+            })
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| url.to_string())
+    }
 }
