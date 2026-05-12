@@ -72,6 +72,31 @@ pub fn prekey_bundle_publish_body(
     body
 }
 
+pub fn prekey_bundle_publish_request(
+    local_did: &str,
+    local_service_did: &str,
+    bundle: &PrekeyBundle,
+    one_time_prekeys: &[OneTimePrekey],
+) -> Value {
+    json!({
+        "method": "direct.e2ee.publish_prekey_bundle",
+        "params": {
+            "meta": {
+                "anp_version": "1.0",
+                "profile": "anp.direct.e2ee.v1",
+                "security_profile": "transport-protected",
+                "sender_did": local_did,
+                "target": {
+                    "kind": "service",
+                    "did": local_service_did,
+                },
+                "operation_id": format!("op-publish-{}", bundle.bundle_id),
+            },
+            "body": prekey_bundle_publish_body(bundle, one_time_prekeys),
+        },
+    })
+}
+
 pub fn verify_prekey_bundle(
     bundle: &PrekeyBundle,
     did_document: &Value,
@@ -131,8 +156,8 @@ pub fn extract_x25519_public_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_prekey_bundle, prekey_bundle_publish_body, signed_prekey_from_private_key,
-        verify_prekey_bundle,
+        build_prekey_bundle, prekey_bundle_publish_body, prekey_bundle_publish_request,
+        signed_prekey_from_private_key, verify_prekey_bundle,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::direct_e2ee::models::OneTimePrekey;
@@ -263,5 +288,72 @@ mod tests {
 
         assert!(body.get("prekey_bundle").is_some());
         assert_eq!(body.get("one_time_prekeys"), None);
+    }
+
+    #[test]
+    fn publish_request_matches_message_service_rpc_contract() {
+        let bundle = PrekeyBundle {
+            bundle_id: "bundle-bob-001".to_owned(),
+            owner_did: "did:wba:b.example:agents:bob:e1_bob".to_owned(),
+            suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
+            static_key_agreement_id: "did:wba:b.example:agents:bob:e1_bob#key-3".to_owned(),
+            signed_prekey: SignedPrekey {
+                key_id: "spk-bob-001".to_owned(),
+                public_key_b64u: "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM".to_owned(),
+                expires_at: "2026-04-07T00:00:00Z".to_owned(),
+            },
+            proof: json!({
+                "type": "DataIntegrityProof",
+                "verificationMethod": "did:wba:b.example:agents:bob:e1_bob#key-1",
+            }),
+        };
+        let opks = vec![
+            OneTimePrekey {
+                key_id: "opk-001".to_owned(),
+                public_key_b64u: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned(),
+            },
+            OneTimePrekey {
+                key_id: "opk-002".to_owned(),
+                public_key_b64u: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI".to_owned(),
+            },
+        ];
+
+        let request = prekey_bundle_publish_request(
+            "did:wba:b.example:agents:bob:e1_bob",
+            "did:wba:b.example:services:message:e1_service",
+            &bundle,
+            &opks,
+        );
+
+        assert_eq!(
+            request.get("method"),
+            Some(&json!("direct.e2ee.publish_prekey_bundle"))
+        );
+        assert_eq!(
+            request.pointer("/params/meta"),
+            Some(&json!({
+                "anp_version": "1.0",
+                "profile": "anp.direct.e2ee.v1",
+                "security_profile": "transport-protected",
+                "sender_did": "did:wba:b.example:agents:bob:e1_bob",
+                "target": {
+                    "kind": "service",
+                    "did": "did:wba:b.example:services:message:e1_service",
+                },
+                "operation_id": "op-publish-bundle-bob-001",
+            }))
+        );
+        assert_eq!(
+            request.pointer("/params/body/prekey_bundle/bundle_id"),
+            Some(&json!("bundle-bob-001"))
+        );
+        assert_eq!(
+            request.pointer("/params/body/one_time_prekeys/1/key_id"),
+            Some(&json!("opk-002"))
+        );
+        assert_eq!(
+            request.pointer("/params/body/prekey_bundle/one_time_prekeys"),
+            None
+        );
     }
 }
