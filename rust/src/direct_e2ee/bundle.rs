@@ -236,7 +236,9 @@ mod tests {
         validate_prekey_bundle_get_operation_id, verify_prekey_bundle,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
-    use crate::direct_e2ee::models::OneTimePrekey;
+    use crate::direct_e2ee::models::{
+        OneTimePrekey, PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE,
+    };
     use crate::direct_e2ee::DirectE2eeError;
     use crate::PrivateKeyMaterial;
     use serde_json::{json, Value};

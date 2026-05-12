@@ -774,7 +774,7 @@ pub async fn resolve_did_wba_document_with_options(
 
     #[cfg(not(feature = "network"))]
     {
-        let _ = url;
+        let _ = (url, verify_proof);
         return Err(AuthenticationError::NetworkFailure);
     }
 

@@ -3,12 +3,16 @@ use percent_encoding::percent_decode_str;
 use reqwest::Client;
 use serde_json::Value;
 
+#[cfg(feature = "network")]
 use crate::proof::{verify_w3c_proof, ProofVerificationOptions};
 
+#[cfg(feature = "network")]
+use super::did_wba::{find_verification_method, validate_did_document_binding};
 use super::did_wba::{
-    find_verification_method, resolve_did_wba_document_sync, resolve_did_wba_document_with_options,
-    validate_did_document_binding, AuthenticationError, DidResolutionOptions,
+    resolve_did_wba_document_sync, resolve_did_wba_document_with_options, AuthenticationError,
+    DidResolutionOptions,
 };
+#[cfg(feature = "network")]
 use super::verification_methods::extract_public_key;
 
 pub async fn resolve_did_document(

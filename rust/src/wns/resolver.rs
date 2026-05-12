@@ -3,9 +3,9 @@ use reqwest::Client;
 #[cfg(feature = "network")]
 use serde_json::Value;
 
-use super::errors::{
-    HandleGoneError, HandleMovedError, HandleNotFoundError, HandleResolutionError,
-};
+use super::errors::HandleResolutionError;
+#[cfg(feature = "network")]
+use super::errors::{HandleGoneError, HandleMovedError, HandleNotFoundError};
 use super::models::HandleResolutionDocument;
 use super::validator::{build_resolution_url, parse_wba_uri, validate_handle};
 
