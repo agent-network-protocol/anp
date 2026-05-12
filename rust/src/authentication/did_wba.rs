@@ -1157,6 +1157,7 @@ fn generate_auth_payload(
     let timestamp = timestamp_override
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    let version = normalize_auth_version(version);
     let domain_field = domain_field_for_version(version);
 
     let payload = json!({
@@ -1204,7 +1205,8 @@ fn verify_auth_payload(
         return Err(AuthenticationError::VerificationFailed);
     }
 
-    let domain_field = domain_field_for_version(&parsed.version);
+    let version = normalize_auth_version(&parsed.version);
+    let domain_field = domain_field_for_version(version);
     let payload = json!({
         "nonce": parsed.nonce,
         "timestamp": parsed.timestamp,
@@ -1337,10 +1339,21 @@ fn x25519_public_key_to_multibase(bytes: &[u8; 32]) -> String {
 }
 
 fn domain_field_for_version(version: &str) -> &'static str {
+    if version.trim().is_empty() {
+        return "aud";
+    }
     version
         .parse::<f64>()
         .map(|value| if value >= 1.1 { "aud" } else { "service" })
         .unwrap_or("service")
+}
+
+fn normalize_auth_version(version: &str) -> &str {
+    if version.trim().is_empty() {
+        "1.1"
+    } else {
+        version
+    }
 }
 
 fn is_ip_address(hostname: &str) -> bool {

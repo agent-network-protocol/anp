@@ -157,6 +157,28 @@ fn test_legacy_auth_header_generation_and_verification() {
 }
 
 #[test]
+fn test_legacy_auth_header_empty_version_defaults_to_1_1() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+
+    let header = generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "")
+        .expect("auth header generation should succeed");
+
+    assert!(header.starts_with("DIDWba v=\"1.1\""));
+    verify_auth_header_signature(&header, &bundle.did_document, "api.example.com")
+        .expect("verification should treat an empty requested version as 1.1");
+}
+
+#[test]
 fn test_http_signature_verification_rejects_tampered_body() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
