@@ -98,8 +98,8 @@ pub fn direct_cipher_body_from_value(value: &Value) -> Result<DirectCipherBody, 
                 ratchet_header.get("dh_pub_b64u"),
                 "ratchet_header.dh_pub_b64u",
             )?,
-            pn: required_string(ratchet_header.get("pn"), "ratchet_header.pn")?,
-            n: required_string(ratchet_header.get("n"), "ratchet_header.n")?,
+            pn: required_counter_string(ratchet_header.get("pn"), "ratchet_header.pn")?,
+            n: required_counter_string(ratchet_header.get("n"), "ratchet_header.n")?,
         },
         ciphertext_b64u: required_string(object.get("ciphertext_b64u"), "ciphertext_b64u")?,
     })
@@ -152,7 +152,7 @@ pub fn direct_notification_from_message_view(message: &Value) -> Result<Value, D
         },
         "body": body,
     });
-    if let Some(server_seq) = int64_value(object.get("server_seq")) {
+    if let Some(server_seq) = int64_value(object.get("server_seq")).filter(|value| *value != 0) {
         notification["server_seq"] = json!(server_seq);
     }
     Ok(notification)
@@ -335,6 +335,18 @@ fn required_string(value: Option<&Value>, field: &'static str) -> Result<String,
     }
 }
 
+fn required_counter_string(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<String, DirectE2eeError> {
+    let text = counter_string_value(value);
+    if text.as_deref().is_some_and(|value| !value.is_empty()) {
+        Ok(text.expect("checked Some above"))
+    } else {
+        Err(DirectE2eeError::MissingField(field))
+    }
+}
+
 fn optional_string(value: Option<&Value>) -> Option<String> {
     let text = string_value(value)?;
     if text.is_empty() {
@@ -346,6 +358,14 @@ fn optional_string(value: Option<&Value>) -> Option<String> {
 
 fn string_value(value: Option<&Value>) -> Option<String> {
     value.and_then(Value::as_str).map(str::to_owned)
+}
+
+fn counter_string_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => Some(text.to_owned()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn object_body_value(value: Option<&Value>) -> Result<Value, DirectE2eeError> {
@@ -563,6 +583,52 @@ mod tests {
     }
 
     #[test]
+    fn direct_cipher_body_parser_accepts_numeric_counters_only() {
+        let body = direct_cipher_body_from_value(&json!({
+            "session_id": "sid-001",
+            "suite": MTI_DIRECT_E2EE_SUITE,
+            "ratchet_header": {
+                "dh_pub_b64u": "RATCHETPUB",
+                "pn": 0,
+                "n": 1,
+            },
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect("numeric ratchet counters should be accepted for service history JSON values");
+
+        assert_eq!(body.ratchet_header.pn, "0");
+        assert_eq!(body.ratchet_header.n, "1");
+
+        let non_string_session = direct_cipher_body_from_value(&json!({
+            "session_id": 123,
+            "ratchet_header": {
+                "dh_pub_b64u": "RATCHETPUB",
+                "pn": "0",
+                "n": "1",
+            },
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect_err("non-counter receive fields stay strict strings");
+        assert!(non_string_session
+            .to_string()
+            .contains("missing field: session_id"));
+
+        let non_string_dh = direct_cipher_body_from_value(&json!({
+            "session_id": "sid-001",
+            "ratchet_header": {
+                "dh_pub_b64u": 123,
+                "pn": "0",
+                "n": "1",
+            },
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect_err("ratchet public key stays a strict string");
+        assert!(non_string_dh
+            .to_string()
+            .contains("missing field: ratchet_header.dh_pub_b64u"));
+    }
+
+    #[test]
     fn direct_cipher_body_from_value_rejects_missing_header_fields() {
         let error = direct_cipher_body_from_value(&json!({
             "session_id": "sid-001",
@@ -693,7 +759,7 @@ mod tests {
             notification.pointer("/body/ratchet_header/n"),
             Some(&json!(1))
         );
-        assert_eq!(notification.get("server_seq"), Some(&json!(0)));
+        assert_eq!(notification.get("server_seq"), None);
 
         let non_string_sender = direct_notification_from_message_view(&json!({
             "id": "msg-3",
@@ -806,6 +872,21 @@ mod tests {
         );
         assert_eq!(notifications[0].get("server_seq"), Some(&json!(10)));
         assert_eq!(notifications[3].get("server_seq"), None);
+    }
+
+    #[test]
+    fn direct_notification_from_message_view_omits_zero_server_seq_like_go_secure_history() {
+        let notification = direct_notification_from_message_view(&json!({
+            "id": "msg-zero",
+            "sender_did": "did:alice",
+            "receiver_did": "did:bob",
+            "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+            "server_seq": 0,
+            "content": cipher_history_content("sid-zero", "0"),
+        }))
+        .expect("message view notification");
+
+        assert_eq!(notification.get("server_seq"), None);
     }
 
     #[test]
