@@ -1,9 +1,15 @@
 use super::aad::{CONTENT_TYPE_DIRECT_CIPHER, CONTENT_TYPE_DIRECT_INIT};
 use super::errors::DirectE2eeError;
 use super::models::{
-    ApplicationPlaintext, DirectCipherBody, DirectInitBody, PendingOutboundRecord,
+    ApplicationPlaintext, DirectCipherBody, DirectInitBody, PendingOutboundRecord, RatchetHeader,
 };
 use serde_json::{json, Value};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectEnvelopeBody {
+    Init(DirectInitBody),
+    Cipher(DirectCipherBody),
+}
 
 pub fn direct_init_body_to_value(body: &DirectInitBody) -> Value {
     let mut value = json!({
@@ -25,6 +31,34 @@ pub fn direct_init_body_to_value(body: &DirectInitBody) -> Value {
     value
 }
 
+pub fn direct_init_body_from_value(value: &Value) -> Result<DirectInitBody, DirectE2eeError> {
+    let object = value
+        .as_object()
+        .ok_or(DirectE2eeError::MissingField("body"))?;
+    Ok(DirectInitBody {
+        session_id: required_string(object.get("session_id"), "session_id")?,
+        suite: required_string(object.get("suite"), "suite")?,
+        sender_static_key_agreement_id: required_string(
+            object.get("sender_static_key_agreement_id"),
+            "sender_static_key_agreement_id",
+        )?,
+        recipient_bundle_id: required_string(
+            object.get("recipient_bundle_id"),
+            "recipient_bundle_id",
+        )?,
+        recipient_signed_prekey_id: required_string(
+            object.get("recipient_signed_prekey_id"),
+            "recipient_signed_prekey_id",
+        )?,
+        recipient_one_time_prekey_id: optional_string(object.get("recipient_one_time_prekey_id")),
+        sender_ephemeral_pub_b64u: required_string(
+            object.get("sender_ephemeral_pub_b64u"),
+            "sender_ephemeral_pub_b64u",
+        )?,
+        ciphertext_b64u: required_string(object.get("ciphertext_b64u"), "ciphertext_b64u")?,
+    })
+}
+
 pub fn direct_cipher_body_to_value(body: &DirectCipherBody) -> Value {
     let mut value = json!({
         "session_id": body.session_id,
@@ -39,6 +73,46 @@ pub fn direct_cipher_body_to_value(body: &DirectCipherBody) -> Value {
         value["suite"] = json!(suite);
     }
     value
+}
+
+pub fn direct_cipher_body_from_value(value: &Value) -> Result<DirectCipherBody, DirectE2eeError> {
+    let object = value
+        .as_object()
+        .ok_or(DirectE2eeError::MissingField("body"))?;
+    let ratchet_header = object
+        .get("ratchet_header")
+        .and_then(Value::as_object)
+        .ok_or(DirectE2eeError::MissingField("ratchet_header"))?;
+    Ok(DirectCipherBody {
+        session_id: required_string(object.get("session_id"), "session_id")?,
+        suite: optional_string(object.get("suite")),
+        ratchet_header: RatchetHeader {
+            dh_pub_b64u: required_string(
+                ratchet_header.get("dh_pub_b64u"),
+                "ratchet_header.dh_pub_b64u",
+            )?,
+            pn: required_string(ratchet_header.get("pn"), "ratchet_header.pn")?,
+            n: required_string(ratchet_header.get("n"), "ratchet_header.n")?,
+        },
+        ciphertext_b64u: required_string(object.get("ciphertext_b64u"), "ciphertext_b64u")?,
+    })
+}
+
+pub fn direct_body_from_content_type(
+    content_type: &str,
+    body: &Value,
+) -> Result<DirectEnvelopeBody, DirectE2eeError> {
+    match content_type {
+        CONTENT_TYPE_DIRECT_INIT => {
+            Ok(DirectEnvelopeBody::Init(direct_init_body_from_value(body)?))
+        }
+        CONTENT_TYPE_DIRECT_CIPHER => Ok(DirectEnvelopeBody::Cipher(
+            direct_cipher_body_from_value(body)?,
+        )),
+        _ => Err(DirectE2eeError::invalid_field(format!(
+            "unsupported content type: {content_type}"
+        ))),
+    }
 }
 
 pub fn plaintext_to_value(plaintext: &ApplicationPlaintext) -> Value {
@@ -198,12 +272,37 @@ fn is_empty_json_object(value: &Value) -> bool {
     value.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
+fn required_string(value: Option<&Value>, field: &'static str) -> Result<String, DirectE2eeError> {
+    let text = optional_string(value);
+    if text.as_deref().is_some_and(|value| !value.is_empty()) {
+        Ok(text.expect("checked Some above"))
+    } else {
+        Err(DirectE2eeError::MissingField(field))
+    }
+}
+
+fn optional_string(value: Option<&Value>) -> Option<String> {
+    let text = match value? {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(boolean) => boolean.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    };
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        direct_cipher_body_to_value, direct_cipher_send_request, direct_init_body_to_value,
+        direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,
+        direct_cipher_send_request, direct_init_body_from_value, direct_init_body_to_value,
         direct_init_send_request, direct_send_request_from_pending, plaintext_to_value,
-        validate_direct_send_ids,
+        validate_direct_send_ids, DirectEnvelopeBody,
     };
     use crate::direct_e2ee::aad::{CONTENT_TYPE_DIRECT_CIPHER, CONTENT_TYPE_DIRECT_INIT};
     use crate::direct_e2ee::models::{
@@ -260,6 +359,48 @@ mod tests {
     }
 
     #[test]
+    fn direct_init_body_from_value_matches_go_map_parser() {
+        let body = direct_init_body_from_value(&json!({
+            "session_id": "sid-001",
+            "suite": MTI_DIRECT_E2EE_SUITE,
+            "sender_static_key_agreement_id": "did:wba:a.example:agents:alice:e1#key-3",
+            "recipient_bundle_id": "bundle-bob-001",
+            "recipient_signed_prekey_id": "spk-bob-001",
+            "recipient_one_time_prekey_id": "opk-bob-001",
+            "sender_ephemeral_pub_b64u": "EPHEMERAL",
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect("init body");
+
+        assert_eq!(body.session_id, "sid-001");
+        assert_eq!(
+            body.recipient_one_time_prekey_id.as_deref(),
+            Some("opk-bob-001")
+        );
+        assert_eq!(
+            direct_init_body_to_value(&body).pointer("/recipient_bundle_id"),
+            Some(&json!("bundle-bob-001"))
+        );
+    }
+
+    #[test]
+    fn direct_init_body_from_value_rejects_missing_required_fields() {
+        let error = direct_init_body_from_value(&json!({
+            "session_id": "sid-001",
+            "suite": MTI_DIRECT_E2EE_SUITE,
+            "sender_static_key_agreement_id": "ka-alice",
+            "recipient_signed_prekey_id": "spk-bob-001",
+            "sender_ephemeral_pub_b64u": "EPHEMERAL",
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect_err("recipient bundle id should be required");
+
+        assert!(error
+            .to_string()
+            .contains("missing field: recipient_bundle_id"));
+    }
+
+    #[test]
     fn direct_cipher_body_value_matches_go_map_shape() {
         let body = DirectCipherBody {
             session_id: "sid-001".to_owned(),
@@ -285,6 +426,85 @@ mod tests {
                 "ciphertext_b64u": "CIPHERTEXT",
             })
         );
+    }
+
+    #[test]
+    fn direct_cipher_body_from_value_matches_go_map_parser() {
+        let body = direct_cipher_body_from_value(&json!({
+            "session_id": "sid-001",
+            "suite": MTI_DIRECT_E2EE_SUITE,
+            "ratchet_header": {
+                "dh_pub_b64u": "RATCHETPUB",
+                "pn": 0,
+                "n": 1,
+            },
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect("cipher body");
+
+        assert_eq!(body.session_id, "sid-001");
+        assert_eq!(body.ratchet_header.pn, "0");
+        assert_eq!(body.ratchet_header.n, "1");
+        assert_eq!(
+            direct_cipher_body_to_value(&body).pointer("/ratchet_header/n"),
+            Some(&json!("1"))
+        );
+    }
+
+    #[test]
+    fn direct_cipher_body_from_value_rejects_missing_header_fields() {
+        let error = direct_cipher_body_from_value(&json!({
+            "session_id": "sid-001",
+            "ratchet_header": {
+                "dh_pub_b64u": "RATCHETPUB",
+                "pn": "0",
+            },
+            "ciphertext_b64u": "CIPHERTEXT",
+        }))
+        .expect_err("ratchet header n should be required");
+
+        assert!(error
+            .to_string()
+            .contains("missing field: ratchet_header.n"));
+    }
+
+    #[test]
+    fn direct_body_from_content_type_selects_receive_body_parser() {
+        let init = direct_body_from_content_type(
+            CONTENT_TYPE_DIRECT_INIT,
+            &json!({
+                "session_id": "sid-001",
+                "suite": MTI_DIRECT_E2EE_SUITE,
+                "sender_static_key_agreement_id": "ka-alice",
+                "recipient_bundle_id": "bundle-bob-001",
+                "recipient_signed_prekey_id": "spk-bob-001",
+                "sender_ephemeral_pub_b64u": "EPHEMERAL",
+                "ciphertext_b64u": "CIPHERTEXT",
+            }),
+        )
+        .expect("init body");
+        let cipher = direct_body_from_content_type(
+            CONTENT_TYPE_DIRECT_CIPHER,
+            &json!({
+                "session_id": "sid-001",
+                "ratchet_header": {"dh_pub_b64u": "RATCHETPUB", "pn": "0", "n": "1"},
+                "ciphertext_b64u": "CIPHERTEXT",
+            }),
+        )
+        .expect("cipher body");
+
+        assert!(matches!(init, DirectEnvelopeBody::Init(_)));
+        assert!(matches!(cipher, DirectEnvelopeBody::Cipher(_)));
+    }
+
+    #[test]
+    fn direct_body_from_content_type_rejects_unsupported_receive_content_type() {
+        let error = direct_body_from_content_type("application/json", &json!({}))
+            .expect_err("unsupported receive content type should fail");
+
+        assert!(error
+            .to_string()
+            .contains("unsupported content type: application/json"));
     }
 
     #[test]

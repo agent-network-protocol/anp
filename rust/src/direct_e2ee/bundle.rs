@@ -105,6 +105,18 @@ pub fn prekey_bundle_get_body(target_did: &str, require_opk: bool) -> Value {
     })
 }
 
+pub fn validate_prekey_bundle_get_operation_id(operation_id: &str) -> Result<(), DirectE2eeError> {
+    if operation_id.is_empty() {
+        return Err(DirectE2eeError::MissingField("operation_id"));
+    }
+    if !operation_id.starts_with("op-get-prekey-") {
+        return Err(DirectE2eeError::invalid_field(
+            "get_prekey_bundle operation_id must start with op-get-prekey-",
+        ));
+    }
+    Ok(())
+}
+
 pub fn prekey_bundle_get_request(
     local_did: &str,
     target_service_did: &str,
@@ -129,6 +141,23 @@ pub fn prekey_bundle_get_request(
             "body": prekey_bundle_get_body(target_did, require_opk),
         },
     })
+}
+
+pub fn checked_prekey_bundle_get_request(
+    local_did: &str,
+    target_service_did: &str,
+    target_did: &str,
+    require_opk: bool,
+    operation_id: &str,
+) -> Result<Value, DirectE2eeError> {
+    validate_prekey_bundle_get_operation_id(operation_id)?;
+    Ok(prekey_bundle_get_request(
+        local_did,
+        target_service_did,
+        target_did,
+        require_opk,
+        operation_id,
+    ))
 }
 
 pub fn should_retry_without_opk(error: &(dyn Error + 'static)) -> bool {
@@ -201,9 +230,10 @@ pub fn extract_x25519_public_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_prekey_bundle, prekey_bundle_get_body, prekey_bundle_get_request,
-        prekey_bundle_publish_body, prekey_bundle_publish_request, should_retry_without_opk,
-        should_retry_without_opk_message, signed_prekey_from_private_key, verify_prekey_bundle,
+        build_prekey_bundle, checked_prekey_bundle_get_request, prekey_bundle_get_body,
+        prekey_bundle_get_request, prekey_bundle_publish_body, prekey_bundle_publish_request,
+        should_retry_without_opk, should_retry_without_opk_message, signed_prekey_from_private_key,
+        validate_prekey_bundle_get_operation_id, verify_prekey_bundle,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::direct_e2ee::models::OneTimePrekey;
@@ -450,6 +480,40 @@ mod tests {
         );
         assert_eq!(request.pointer("/params/meta/message_id"), None);
         assert_eq!(request.pointer("/params/meta/content_type"), None);
+    }
+
+    #[test]
+    fn checked_get_request_requires_go_operation_id_prefix() {
+        let request = checked_prekey_bundle_get_request(
+            "did:wba:a.example:agents:alice:e1_alice",
+            "did:wba:b.example:services:message:e1_service",
+            "did:wba:b.example:agents:bob:e1_bob",
+            true,
+            "op-get-prekey-001",
+        )
+        .expect("prefixed get_prekey_bundle request");
+
+        assert_eq!(
+            request.pointer("/params/meta/operation_id"),
+            Some(&json!("op-get-prekey-001"))
+        );
+        assert_eq!(
+            request.pointer("/params/body/require_opk"),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn get_operation_id_validation_rejects_missing_or_wrong_prefix() {
+        assert!(validate_prekey_bundle_get_operation_id("")
+            .expect_err("missing operation id should fail")
+            .to_string()
+            .contains("missing field: operation_id"));
+
+        assert!(validate_prekey_bundle_get_operation_id("msg-init")
+            .expect_err("wrong get_prekey_bundle prefix should fail")
+            .to_string()
+            .contains("get_prekey_bundle operation_id must start with op-get-prekey-"));
     }
 
     #[test]
