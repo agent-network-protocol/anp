@@ -107,6 +107,18 @@ impl ApplicationPlaintext {
             payload_b64u: None,
         }
     }
+
+    pub fn new_binary(content_type: &str, payload_b64u: impl Into<String>) -> Self {
+        Self {
+            application_content_type: content_type.to_owned(),
+            conversation_id: None,
+            reply_to_message_id: None,
+            annotations: None,
+            text: None,
+            payload: None,
+            payload_b64u: Some(payload_b64u.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

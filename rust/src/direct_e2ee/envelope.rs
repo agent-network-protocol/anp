@@ -911,6 +911,31 @@ mod tests {
     }
 
     #[test]
+    fn binary_plaintext_helper_matches_go_payload_b64u_shape() {
+        let plaintext =
+            ApplicationPlaintext::new_binary("application/octet-stream", "AAECAwQFBgcICQoLDA0ODw");
+
+        assert_eq!(
+            plaintext.application_content_type,
+            "application/octet-stream"
+        );
+        assert_eq!(plaintext.text, None);
+        assert_eq!(plaintext.payload, None);
+        assert_eq!(
+            plaintext_to_value(&plaintext),
+            json!({
+                "application_content_type": "application/octet-stream",
+                "payload_b64u": "AAECAwQFBgcICQoLDA0ODw",
+            })
+        );
+
+        let encoded = serde_json::to_string(&plaintext).expect("plaintext serializes");
+        assert!(!encoded.contains("\"text\""));
+        assert!(!encoded.contains("\"payload\":"));
+        assert!(!encoded.contains(":null"));
+    }
+
+    #[test]
     fn direct_send_request_matches_go_client_rpc_shape() {
         let body = DirectInitBody {
             session_id: "sid-001".to_owned(),
