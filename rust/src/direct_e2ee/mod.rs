@@ -2,6 +2,7 @@ pub mod aad;
 pub mod bundle;
 pub mod envelope;
 pub mod errors;
+pub mod helpers;
 pub mod models;
 pub mod ratchet;
 pub mod session;
@@ -23,6 +24,7 @@ pub use envelope::{
     plaintext_to_value, validate_direct_send_ids, DirectEnvelopeBody,
 };
 pub use errors::DirectE2eeError;
+pub use helpers::message_service_did_from_document;
 pub use models::{
     ApplicationPlaintext, DirectCipherBody, DirectEnvelopeMetadata, DirectInitBody,
     DirectSessionState, OneTimePrekey, PendingOutboundRecord, PrekeyBundle, RatchetHeader,

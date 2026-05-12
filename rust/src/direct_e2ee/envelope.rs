@@ -152,7 +152,7 @@ pub fn direct_notification_from_message_view(message: &Value) -> Result<Value, D
         },
         "body": body,
     });
-    if let Some(server_seq) = int64_value(object.get("server_seq")).filter(|value| *value != 0) {
+    if let Some(server_seq) = int64_value(object.get("server_seq")) {
         notification["server_seq"] = json!(server_seq);
     }
     Ok(notification)
@@ -316,7 +316,7 @@ fn is_empty_json_object(value: &Value) -> bool {
 }
 
 fn required_string(value: Option<&Value>, field: &'static str) -> Result<String, DirectE2eeError> {
-    let text = optional_string(value);
+    let text = string_value(value);
     if text.as_deref().is_some_and(|value| !value.is_empty()) {
         Ok(text.expect("checked Some above"))
     } else {
@@ -325,18 +325,16 @@ fn required_string(value: Option<&Value>, field: &'static str) -> Result<String,
 }
 
 fn optional_string(value: Option<&Value>) -> Option<String> {
-    let text = match value? {
-        Value::String(text) => text.clone(),
-        Value::Number(number) => number.to_string(),
-        Value::Bool(boolean) => boolean.to_string(),
-        Value::Null => String::new(),
-        other => other.to_string(),
-    };
+    let text = string_value(value)?;
     if text.is_empty() {
         None
     } else {
         Some(text)
     }
+}
+
+fn string_value(value: Option<&Value>) -> Option<String> {
+    value.and_then(Value::as_str).map(str::to_owned)
 }
 
 fn object_body_value(value: Option<&Value>) -> Result<Value, DirectE2eeError> {
@@ -657,7 +655,23 @@ mod tests {
             notification.pointer("/body/ratchet_header/n"),
             Some(&json!(1))
         );
-        assert_eq!(notification.get("server_seq"), None);
+        assert_eq!(notification.get("server_seq"), Some(&json!(0)));
+
+        let non_string_sender = direct_notification_from_message_view(&json!({
+            "id": "msg-3",
+            "sender_did": 123,
+            "receiver_did": "did:bob",
+            "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+            "content": {
+                "session_id": "sid-001",
+                "ratchet_header": {"dh_pub_b64u": "RATCHETPUB", "pn": "0", "n": "1"},
+                "ciphertext_b64u": "CIPHERTEXT",
+            },
+        }))
+        .expect_err("non-string sender should fail like Go string assertion");
+        assert!(non_string_sender
+            .to_string()
+            .contains("missing field: sender_did"));
     }
 
     #[test]
