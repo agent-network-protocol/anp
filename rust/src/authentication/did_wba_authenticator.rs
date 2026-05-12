@@ -287,7 +287,7 @@ fn normalize_covered_components(
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .map(|(key, value)| (key.to_ascii_lowercase(), value))
+        .filter_map(|(key, value)| (!value.is_empty()).then(|| (key.to_ascii_lowercase(), value)))
         .collect::<BTreeMap<_, _>>();
 
     let mut result = Vec::new();
