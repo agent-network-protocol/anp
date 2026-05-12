@@ -1,3 +1,6 @@
+mod common;
+
+use common::tempdir;
 use fs2::FileExt;
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -5,7 +8,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use tempfile::tempdir;
 
 fn run_anp_mls(data_dir: &Path, domain: &str, action: &str, request: Value) -> Value {
     let mut child = Command::new(env!("CARGO_BIN_EXE_anp-mls"))
@@ -234,8 +236,8 @@ fn group_e2ee_anp_mls_system_version_probe_is_stable_json() {
 
 #[test]
 fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:mls-demo:e1";
 
     let bob_kp = run_anp_mls(
@@ -383,8 +385,8 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
 
 #[test]
 fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:remove-member:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     assert_eq!(add["result"]["epoch"], "1");
@@ -553,8 +555,8 @@ fn group_e2ee_remove_member_prepares_pending_commit_then_finalize_advances_epoch
 
 #[test]
 fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:remove-abort:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
@@ -606,9 +608,9 @@ fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
 
 #[test]
 fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_initial_dir = tempdir().expect("bob initial state");
-    let bob_recovered_dir = tempdir().expect("bob recovered state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_initial_dir = tempdir("anp-group-mls").expect("bob initial state");
+    let bob_recovered_dir = tempdir("anp-group-mls").expect("bob recovered state");
     let group_did = "did:wba:example.com:groups:recover-member:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
     assert_eq!(add["result"]["epoch"], "1");
@@ -781,8 +783,8 @@ fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
 
 #[test]
 fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:recover-normal-reject:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     let normal_kp = run_anp_mls(
@@ -825,8 +827,8 @@ fn group_e2ee_recover_member_prepare_rejects_normal_key_package() {
 
 #[test]
 fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:update-member:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     assert_eq!(add["result"]["epoch"], "1");
@@ -1011,8 +1013,8 @@ fn group_e2ee_update_member_prepare_finalize_rotates_target_leaf() {
 
 #[test]
 fn group_e2ee_update_member_prepare_rejects_wrong_package_purpose_and_device() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:update-reject:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     let normal_kp = run_anp_mls(
@@ -1102,9 +1104,9 @@ fn group_e2ee_update_member_prepare_rejects_wrong_package_purpose_and_device() {
 
 #[test]
 fn group_e2ee_update_member_abort_clears_pending_without_advancing_epoch() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_initial_dir = tempdir().expect("bob initial state");
-    let bob_updated_dir = tempdir().expect("bob updated state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_initial_dir = tempdir("anp-group-mls").expect("bob initial state");
+    let bob_updated_dir = tempdir("anp-group-mls").expect("bob updated state");
     let group_did = "did:wba:example.com:groups:update-abort:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_initial_dir.path(), group_did);
     let update_kp = run_anp_mls(
@@ -1173,8 +1175,8 @@ fn group_e2ee_update_member_abort_clears_pending_without_advancing_epoch() {
 
 #[test]
 fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:leave:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
@@ -1251,8 +1253,8 @@ fn group_e2ee_leave_prepares_and_finalize_marks_local_state_left() {
 
 #[test]
 fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:binding-mismatch:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
@@ -1341,8 +1343,8 @@ fn group_e2ee_anp_mls_rejects_mismatched_group_state_ref_before_encrypt() {
 
 #[test]
 fn group_e2ee_anp_mls_rejects_mismatched_cipher_group_binding_before_decrypt() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:cipher-binding:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
@@ -1399,8 +1401,8 @@ fn group_e2ee_anp_mls_rejects_mismatched_cipher_group_binding_before_decrypt() {
 
 #[test]
 fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:ratchet-required:e1";
     let add =
         bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
@@ -1451,8 +1453,8 @@ fn group_e2ee_anp_mls_requires_ratchet_tree_for_welcome_process() {
 
 #[test]
 fn group_e2ee_anp_mls_requires_group_state_ref_for_welcome_process() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:welcome-state-ref-required:e1";
     let add =
         bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
@@ -1485,8 +1487,8 @@ fn group_e2ee_anp_mls_requires_group_state_ref_for_welcome_process() {
 
 #[test]
 fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:welcome-binding:e1";
     let add =
         bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
@@ -1513,8 +1515,8 @@ fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
     );
     assert_eq!(wrong_crypto["error"]["code"], "group_binding_mismatch");
 
-    let epoch_alice_dir = tempdir().expect("epoch alice state");
-    let epoch_bob_dir = tempdir().expect("epoch bob state");
+    let epoch_alice_dir = tempdir("anp-group-mls").expect("epoch alice state");
+    let epoch_bob_dir = tempdir("anp-group-mls").expect("epoch bob state");
     let epoch_group_did = "did:wba:example.com:groups:welcome-binding-epoch:e1";
     let epoch_add = bootstrap_alice_bob_group_without_welcome(
         epoch_alice_dir.path(),
@@ -1547,8 +1549,8 @@ fn group_e2ee_anp_mls_rejects_welcome_outer_group_binding_tamper() {
 
 #[test]
 fn group_e2ee_anp_mls_rejects_tampered_send_aad_before_plaintext_release() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:aad-binding:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
 
@@ -1606,8 +1608,8 @@ fn group_e2ee_anp_mls_rejects_tampered_send_aad_before_plaintext_release() {
 
 #[test]
 fn group_e2ee_anp_mls_rejects_key_package_did_wba_binding_mismatch() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:binding-validation:e1";
     let mut bob_kp = run_anp_mls(
         bob_dir.path(),
@@ -1655,8 +1657,8 @@ fn group_e2ee_anp_mls_rejects_key_package_did_wba_binding_mismatch() {
 
 #[test]
 fn group_e2ee_anp_mls_operation_log_redacts_decrypted_plaintext() {
-    let alice_dir = tempdir().expect("alice state");
-    let bob_dir = tempdir().expect("bob state");
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
     let group_did = "did:wba:example.com:groups:operation-log:e1";
     let add = bootstrap_alice_bob_group(alice_dir.path(), bob_dir.path(), group_did);
     let secret = "operation log must not persist this plaintext";
@@ -1735,7 +1737,7 @@ fn group_e2ee_anp_mls_operation_log_redacts_decrypted_plaintext() {
 
 #[test]
 fn group_e2ee_anp_mls_operation_id_is_idempotent_and_conflicting_input_fails() {
-    let data_dir = tempdir().expect("state");
+    let data_dir = tempdir("anp-group-mls").expect("state");
     let request = json!({
         "api_version": "anp-mls/v1",
         "request_id": "req-first",
@@ -1763,7 +1765,7 @@ fn group_e2ee_anp_mls_operation_id_is_idempotent_and_conflicting_input_fails() {
 
 #[test]
 fn group_e2ee_anp_mls_file_lock_rejects_concurrent_mutation() {
-    let data_dir = tempdir().expect("state");
+    let data_dir = tempdir("anp-group-mls").expect("state");
     let lock_path = data_dir.path().join("state.lock");
     let mut lock_file = OpenOptions::new()
         .create(true)
@@ -1791,7 +1793,7 @@ fn group_e2ee_anp_mls_file_lock_rejects_concurrent_mutation() {
 
 #[test]
 fn group_e2ee_anp_mls_real_mode_does_not_emit_contract_test_markers() {
-    let data_dir = tempdir().expect("state");
+    let data_dir = tempdir("anp-group-mls").expect("state");
     let response = run_anp_mls(
         data_dir.path(),
         "key-package",
@@ -1810,7 +1812,7 @@ fn group_e2ee_anp_mls_real_mode_does_not_emit_contract_test_markers() {
 
 #[test]
 fn group_e2ee_anp_mls_accepts_exec_provider_top_level_envelope_defaults() {
-    let data_dir = tempdir().expect("state");
+    let data_dir = tempdir("anp-group-mls").expect("state");
     let response = run_anp_mls(
         data_dir.path(),
         "key-package",

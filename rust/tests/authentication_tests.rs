@@ -1,3 +1,5 @@
+mod common;
+
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -11,11 +13,9 @@ use anp::authentication::{
     FederatedVerificationOptions,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use common::{tempdir, JsonTestServer};
 use ed25519_dalek::SigningKey;
 use serde_json::json;
-use tempfile::tempdir;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
 fn test_create_did_document_profiles() {
@@ -336,7 +336,7 @@ async fn test_verify_federated_http_request_with_did_web_service_did() {
 fn test_did_wba_auth_header_reads_files_and_generates_headers() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -354,7 +354,7 @@ fn test_did_wba_auth_header_reads_files_and_generates_headers() {
 fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -395,7 +395,7 @@ fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
 fn test_did_wba_auth_header_drops_empty_accepted_headers() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -448,7 +448,7 @@ fn test_did_wba_auth_header_drops_empty_accepted_headers() {
 fn test_did_wba_auth_header_should_not_retry_invalid_did() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -467,12 +467,7 @@ fn test_did_wba_auth_header_should_not_retry_invalid_did() {
 async fn test_did_wba_verifier_accepts_http_signatures() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/.well-known/did.json"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bundle.did_document.clone()))
-        .mount(&server)
-        .await;
+    let server = JsonTestServer::start([("/.well-known/did.json", bundle.did_document.clone())]);
 
     let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
         .expect("private key should load");

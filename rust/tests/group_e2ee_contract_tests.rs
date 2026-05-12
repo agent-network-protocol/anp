@@ -1,7 +1,9 @@
+mod common;
+
 use anp::group_e2ee::{deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE};
+use common::tempdir;
 use serde_json::{json, Value};
 use std::process::{Command, Stdio};
-use tempfile::tempdir;
 
 fn run_contract_anp_mls(
     data_dir: &std::path::Path,
@@ -44,7 +46,7 @@ fn deterministic_contract_artifact_is_marked_non_crypto() {
 
 #[test]
 fn anp_mls_contract_binary_covers_recover_member_terminal_steps() {
-    let data_dir = tempdir().expect("temp data dir");
+    let data_dir = tempdir("anp-group-contract").expect("temp data dir");
     let prepare = run_contract_anp_mls(
         data_dir.path(),
         "group",
@@ -100,7 +102,7 @@ fn anp_mls_contract_binary_covers_recover_member_terminal_steps() {
 
 #[test]
 fn anp_mls_contract_binary_covers_update_member_terminal_steps() {
-    let data_dir = tempdir().expect("temp data dir");
+    let data_dir = tempdir("anp-group-contract").expect("temp data dir");
     let prepare = run_contract_anp_mls(
         data_dir.path(),
         "group",
@@ -159,7 +161,7 @@ fn anp_mls_contract_binary_covers_update_member_terminal_steps() {
 
 #[test]
 fn anp_mls_contract_binary_uses_stdin_json_and_marks_artifacts() {
-    let data_dir = tempdir().expect("temp data dir");
+    let data_dir = tempdir("anp-group-contract").expect("temp data dir");
     let mut child = Command::new(env!("CARGO_BIN_EXE_anp-mls"))
         .args([
             "key-package",
