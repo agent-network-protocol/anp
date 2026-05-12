@@ -158,6 +158,17 @@ pub fn direct_notification_from_message_view(message: &Value) -> Result<Value, D
     Ok(notification)
 }
 
+pub fn direct_notifications_from_history_page(
+    messages: &[Value],
+) -> Result<Vec<Value>, DirectE2eeError> {
+    let mut notifications = messages
+        .iter()
+        .map(direct_notification_from_message_view)
+        .collect::<Result<Vec<_>, _>>()?;
+    notifications.sort_by(|left, right| compare_history_notifications(left, right));
+    Ok(notifications)
+}
+
 pub fn plaintext_to_value(plaintext: &ApplicationPlaintext) -> Value {
     let mut value = json!({
         "application_content_type": plaintext.application_content_type,
@@ -368,14 +379,41 @@ fn int64_value(value: Option<&Value>) -> Option<i64> {
     }
 }
 
+fn history_server_seq(notification: &Value) -> i64 {
+    int64_value(notification.get("server_seq")).unwrap_or_default()
+}
+
+fn compare_history_notifications(left: &Value, right: &Value) -> std::cmp::Ordering {
+    let left_seq = history_server_seq(left);
+    let right_seq = history_server_seq(right);
+    if left_seq == right_seq {
+        return history_message_id(left).cmp(history_message_id(right));
+    }
+    if left_seq == 0 {
+        return std::cmp::Ordering::Greater;
+    }
+    if right_seq == 0 {
+        return std::cmp::Ordering::Less;
+    }
+    left_seq.cmp(&right_seq)
+}
+
+fn history_message_id(notification: &Value) -> &str {
+    notification
+        .pointer("/meta/message_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,
         direct_cipher_send_request, direct_init_body_from_value, direct_init_body_to_value,
         direct_init_send_request, direct_notification_from_message_view,
-        direct_send_request_from_pending, is_direct_e2ee_wire_content_type, plaintext_to_value,
-        validate_direct_send_ids, DirectEnvelopeBody,
+        direct_notifications_from_history_page, direct_send_request_from_pending,
+        is_direct_e2ee_wire_content_type, plaintext_to_value, validate_direct_send_ids,
+        DirectEnvelopeBody,
     };
     use crate::direct_e2ee::aad::{CONTENT_TYPE_DIRECT_CIPHER, CONTENT_TYPE_DIRECT_INIT};
     use crate::direct_e2ee::models::{
@@ -715,6 +753,62 @@ mod tests {
     }
 
     #[test]
+    fn direct_notifications_from_history_page_matches_go_pending_history_order() {
+        let messages = vec![
+            json!({
+                "id": "msg-20-b",
+                "sender_did": "did:alice",
+                "receiver_did": "did:bob",
+                "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+                "server_seq": 20,
+                "content": cipher_history_content("sid-20-b", "2"),
+            }),
+            json!({
+                "id": "msg-missing-seq",
+                "sender_did": "did:alice",
+                "receiver_did": "did:bob",
+                "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+                "content": cipher_history_content("sid-missing", "1"),
+            }),
+            json!({
+                "id": "msg-20-a",
+                "sender_did": "did:alice",
+                "receiver_did": "did:bob",
+                "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+                "server_seq": 20,
+                "content": cipher_history_content("sid-20-a", "3"),
+            }),
+            json!({
+                "id": "msg-10",
+                "sender_did": "did:alice",
+                "receiver_did": "did:bob",
+                "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+                "server_seq": 10,
+                "content": cipher_history_content("sid-10", "4"),
+            }),
+        ];
+
+        let notifications =
+            direct_notifications_from_history_page(&messages).expect("history notifications");
+        let ids = notifications
+            .iter()
+            .map(|notification| {
+                notification
+                    .pointer("/meta/message_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("message id")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec!["msg-10", "msg-20-a", "msg-20-b", "msg-missing-seq"]
+        );
+        assert_eq!(notifications[0].get("server_seq"), Some(&json!(10)));
+        assert_eq!(notifications[3].get("server_seq"), None);
+    }
+
+    #[test]
     fn plaintext_value_omits_empty_optional_fields_like_go_map_shape() {
         let plaintext = ApplicationPlaintext {
             application_content_type: "application/json".to_owned(),
@@ -850,5 +944,13 @@ mod tests {
             Some(&json!(CONTENT_TYPE_DIRECT_CIPHER))
         );
         assert_eq!(request.pointer("/params/body/suite"), None);
+    }
+
+    fn cipher_history_content(session_id: &str, n: &str) -> serde_json::Value {
+        json!({
+            "session_id": session_id,
+            "ratchet_header": {"dh_pub_b64u": "RATCHETPUB", "pn": "0", "n": n},
+            "ciphertext_b64u": "CIPHERTEXT",
+        })
     }
 }

@@ -19,9 +19,10 @@ pub use bundle::{
 pub use envelope::{
     direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,
     direct_cipher_send_request, direct_init_body_from_value, direct_init_body_to_value,
-    direct_init_send_request, direct_notification_from_message_view, direct_send_params,
-    direct_send_request, direct_send_request_from_pending, is_direct_e2ee_wire_content_type,
-    plaintext_to_value, validate_direct_send_ids, DirectEnvelopeBody,
+    direct_init_send_request, direct_notification_from_message_view,
+    direct_notifications_from_history_page, direct_send_params, direct_send_request,
+    direct_send_request_from_pending, is_direct_e2ee_wire_content_type, plaintext_to_value,
+    validate_direct_send_ids, DirectEnvelopeBody,
 };
 pub use errors::DirectE2eeError;
 pub use helpers::message_service_did_from_document;
