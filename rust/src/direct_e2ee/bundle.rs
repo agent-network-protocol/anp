@@ -97,6 +97,39 @@ pub fn prekey_bundle_publish_request(
     })
 }
 
+pub fn prekey_bundle_get_body(target_did: &str, require_opk: bool) -> Value {
+    json!({
+        "target_did": target_did,
+        "require_opk": require_opk,
+    })
+}
+
+pub fn prekey_bundle_get_request(
+    local_did: &str,
+    target_service_did: &str,
+    target_did: &str,
+    require_opk: bool,
+    operation_id: &str,
+) -> Value {
+    json!({
+        "method": "direct.e2ee.get_prekey_bundle",
+        "params": {
+            "meta": {
+                "anp_version": "1.0",
+                "profile": "anp.direct.e2ee.v1",
+                "security_profile": "transport-protected",
+                "sender_did": local_did,
+                "target": {
+                    "kind": "service",
+                    "did": target_service_did,
+                },
+                "operation_id": operation_id,
+            },
+            "body": prekey_bundle_get_body(target_did, require_opk),
+        },
+    })
+}
+
 pub fn verify_prekey_bundle(
     bundle: &PrekeyBundle,
     did_document: &Value,
@@ -156,8 +189,9 @@ pub fn extract_x25519_public_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_prekey_bundle, prekey_bundle_publish_body, prekey_bundle_publish_request,
-        signed_prekey_from_private_key, verify_prekey_bundle,
+        build_prekey_bundle, prekey_bundle_get_body, prekey_bundle_get_request,
+        prekey_bundle_publish_body, prekey_bundle_publish_request, signed_prekey_from_private_key,
+        verify_prekey_bundle,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::direct_e2ee::models::OneTimePrekey;
@@ -355,5 +389,53 @@ mod tests {
             request.pointer("/params/body/prekey_bundle/one_time_prekeys"),
             None
         );
+    }
+
+    #[test]
+    fn get_request_matches_message_service_rpc_contract() {
+        let body = prekey_bundle_get_body("did:wba:b.example:agents:bob:e1_bob", true);
+        assert_eq!(
+            body,
+            json!({
+                "target_did": "did:wba:b.example:agents:bob:e1_bob",
+                "require_opk": true,
+            })
+        );
+
+        let request = prekey_bundle_get_request(
+            "did:wba:a.example:agents:alice:e1_alice",
+            "did:wba:b.example:services:message:e1_service",
+            "did:wba:b.example:agents:bob:e1_bob",
+            false,
+            "op-get-prekey-001",
+        );
+
+        assert_eq!(
+            request.get("method"),
+            Some(&json!("direct.e2ee.get_prekey_bundle"))
+        );
+        assert_eq!(
+            request.pointer("/params/meta"),
+            Some(&json!({
+                "anp_version": "1.0",
+                "profile": "anp.direct.e2ee.v1",
+                "security_profile": "transport-protected",
+                "sender_did": "did:wba:a.example:agents:alice:e1_alice",
+                "target": {
+                    "kind": "service",
+                    "did": "did:wba:b.example:services:message:e1_service",
+                },
+                "operation_id": "op-get-prekey-001",
+            }))
+        );
+        assert_eq!(
+            request.pointer("/params/body"),
+            Some(&json!({
+                "target_did": "did:wba:b.example:agents:bob:e1_bob",
+                "require_opk": false,
+            }))
+        );
+        assert_eq!(request.pointer("/params/meta/message_id"), None);
+        assert_eq!(request.pointer("/params/meta/content_type"), None);
     }
 }

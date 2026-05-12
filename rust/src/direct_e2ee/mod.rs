@@ -9,8 +9,9 @@ pub mod x3dh;
 
 pub use aad::{build_init_aad, build_message_aad};
 pub use bundle::{
-    build_prekey_bundle, extract_x25519_public_key, prekey_bundle_publish_body,
-    prekey_bundle_publish_request, signed_prekey_from_private_key, verify_prekey_bundle,
+    build_prekey_bundle, extract_x25519_public_key, prekey_bundle_get_body,
+    prekey_bundle_get_request, prekey_bundle_publish_body, prekey_bundle_publish_request,
+    signed_prekey_from_private_key, verify_prekey_bundle,
 };
 pub use errors::DirectE2eeError;
 pub use models::{
