@@ -1,5 +1,6 @@
 pub mod aad;
 pub mod bundle;
+pub mod envelope;
 pub mod errors;
 pub mod models;
 pub mod ratchet;
@@ -13,6 +14,11 @@ pub use bundle::{
     prekey_bundle_get_request, prekey_bundle_publish_body, prekey_bundle_publish_request,
     should_retry_without_opk, should_retry_without_opk_message, signed_prekey_from_private_key,
     verify_prekey_bundle,
+};
+pub use envelope::{
+    direct_cipher_body_to_value, direct_cipher_send_request, direct_init_body_to_value,
+    direct_init_send_request, direct_send_params, direct_send_request,
+    direct_send_request_from_pending, plaintext_to_value, validate_direct_send_ids,
 };
 pub use errors::DirectE2eeError;
 pub use models::{

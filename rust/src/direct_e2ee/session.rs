@@ -1,6 +1,7 @@
 use super::aad::{
     build_init_aad, build_message_aad, CONTENT_TYPE_DIRECT_CIPHER, CONTENT_TYPE_DIRECT_INIT,
 };
+use super::envelope::{direct_cipher_body_to_value, direct_init_body_to_value};
 use super::errors::DirectE2eeError;
 use super::models::{
     ApplicationPlaintext, DirectCipherBody, DirectEnvelopeMetadata, DirectInitBody,
@@ -121,9 +122,7 @@ impl DirectE2eeSession {
             operation_id: operation_id.to_owned(),
             message_id: metadata.message_id.clone(),
             wire_content_type: CONTENT_TYPE_DIRECT_INIT.to_owned(),
-            body_json: serde_json::to_value(&body).map_err(|error| {
-                DirectE2eeError::invalid_field(format!("invalid init body: {error}"))
-            })?,
+            body_json: direct_init_body_to_value(&body),
         };
         Ok((session, pending, body))
     }
@@ -255,9 +254,7 @@ impl DirectE2eeSession {
             operation_id: operation_id.to_owned(),
             message_id: metadata.message_id.clone(),
             wire_content_type: CONTENT_TYPE_DIRECT_CIPHER.to_owned(),
-            body_json: serde_json::to_value(&body).map_err(|error| {
-                DirectE2eeError::invalid_field(format!("invalid cipher body: {error}"))
-            })?,
+            body_json: direct_cipher_body_to_value(&body),
         };
         Ok((pending, body))
     }
