@@ -1,5 +1,5 @@
 use super::errors::DirectE2eeError;
-use super::models::{PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE};
+use super::models::{OneTimePrekey, PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE};
 use crate::authentication::{
     create_verification_method, find_verification_method, validate_did_document_binding,
 };
@@ -57,6 +57,19 @@ pub fn build_prekey_bundle(
         signed_prekey,
         proof,
     })
+}
+
+pub fn prekey_bundle_publish_body(
+    bundle: &PrekeyBundle,
+    one_time_prekeys: &[OneTimePrekey],
+) -> Value {
+    let mut body = json!({
+        "prekey_bundle": bundle,
+    });
+    if !one_time_prekeys.is_empty() {
+        body["one_time_prekeys"] = json!(one_time_prekeys);
+    }
+    body
 }
 
 pub fn verify_prekey_bundle(
@@ -117,9 +130,14 @@ pub fn extract_x25519_public_key(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_prekey_bundle, signed_prekey_from_private_key, verify_prekey_bundle};
+    use super::{
+        build_prekey_bundle, prekey_bundle_publish_body, signed_prekey_from_private_key,
+        verify_prekey_bundle,
+    };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
+    use crate::direct_e2ee::models::OneTimePrekey;
     use crate::PrivateKeyMaterial;
+    use serde_json::{json, Value};
     use x25519_dalek::StaticSecret as X25519StaticSecret;
 
     #[test]
@@ -151,5 +169,99 @@ mod tests {
         .expect("bundle");
 
         verify_prekey_bundle(&built, &bundle.did_document).expect("bundle should verify");
+    }
+
+    #[test]
+    fn publish_body_keeps_one_time_prekeys_top_level() {
+        let bundle = create_did_wba_document(
+            "bundle.example",
+            DidDocumentOptions {
+                path_segments: vec!["agents".to_owned(), "alice".to_owned()],
+                did_profile: DidProfile::E1,
+                ..Default::default()
+            },
+        )
+        .expect("did document");
+        let did = bundle.did().expect("did");
+        let signing_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+            .expect("private key");
+        let spk_private = X25519StaticSecret::from([7u8; 32]);
+        let signed_prekey =
+            signed_prekey_from_private_key("spk-001", &spk_private, "2026-04-07T00:00:00Z");
+        let built = build_prekey_bundle(
+            "bundle-001",
+            did,
+            &format!("{did}#key-3"),
+            signed_prekey,
+            &signing_key,
+            &format!("{did}#key-1"),
+            Some("2026-03-31T09:58:58Z"),
+        )
+        .expect("bundle");
+
+        let body = prekey_bundle_publish_body(
+            &built,
+            &[
+                OneTimePrekey {
+                    key_id: "opk-001".to_owned(),
+                    public_key_b64u: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned(),
+                },
+                OneTimePrekey {
+                    key_id: "opk-002".to_owned(),
+                    public_key_b64u: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI".to_owned(),
+                },
+            ],
+        );
+
+        assert!(body.get("prekey_bundle").is_some());
+        assert_eq!(
+            body.pointer("/one_time_prekeys/0/key_id"),
+            Some(&json!("opk-001"))
+        );
+        assert_eq!(body.pointer("/prekey_bundle/one_time_prekey"), None);
+        assert_eq!(body.pointer("/prekey_bundle/one_time_prekeys"), None);
+        assert_eq!(
+            body.pointer("/prekey_bundle/signed_prekey/key_id"),
+            Some(&json!("spk-001"))
+        );
+
+        let bundle_value = body
+            .get("prekey_bundle")
+            .expect("prekey bundle should be present");
+        let bundle_object = bundle_value
+            .as_object()
+            .expect("prekey bundle should serialize as object");
+        for field in [
+            "bundle_id",
+            "owner_did",
+            "suite",
+            "static_key_agreement_id",
+            "signed_prekey",
+            "proof",
+        ] {
+            assert!(bundle_object.contains_key(field), "missing {field}");
+        }
+    }
+
+    #[test]
+    fn publish_body_omits_empty_one_time_prekeys() {
+        let bundle = PrekeyBundle {
+            bundle_id: "bundle-001".to_owned(),
+            owner_did: "did:wba:bundle.example:agents:alice:e1_alice".to_owned(),
+            suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
+            static_key_agreement_id: "did:wba:bundle.example:agents:alice:e1_alice#key-3"
+                .to_owned(),
+            signed_prekey: SignedPrekey {
+                key_id: "spk-001".to_owned(),
+                public_key_b64u: "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM".to_owned(),
+                expires_at: "2026-04-07T00:00:00Z".to_owned(),
+            },
+            proof: Value::Object(Default::default()),
+        };
+
+        let body = prekey_bundle_publish_body(&bundle, &[]);
+
+        assert!(body.get("prekey_bundle").is_some());
+        assert_eq!(body.get("one_time_prekeys"), None);
     }
 }
