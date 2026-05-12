@@ -11,6 +11,13 @@ pub enum DirectEnvelopeBody {
     Cipher(DirectCipherBody),
 }
 
+pub fn is_direct_e2ee_wire_content_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        CONTENT_TYPE_DIRECT_INIT | CONTENT_TYPE_DIRECT_CIPHER
+    )
+}
+
 pub fn direct_init_body_to_value(body: &DirectInitBody) -> Value {
     let mut value = json!({
         "session_id": body.session_id,
@@ -113,6 +120,42 @@ pub fn direct_body_from_content_type(
             "unsupported content type: {content_type}"
         ))),
     }
+}
+
+pub fn direct_notification_from_message_view(message: &Value) -> Result<Value, DirectE2eeError> {
+    let object = message
+        .as_object()
+        .ok_or(DirectE2eeError::MissingField("message"))?;
+    let sender_did = required_string(object.get("sender_did"), "sender_did")?;
+    let receiver_did = required_string(object.get("receiver_did"), "receiver_did")?;
+    let message_id = required_string(object.get("id"), "id")?;
+    let content_type = required_string(object.get("content_type"), "content_type")?;
+    if !is_direct_e2ee_wire_content_type(&content_type) {
+        return Err(DirectE2eeError::invalid_field(format!(
+            "unsupported content type: {content_type}"
+        )));
+    }
+    let body = object_body_value(object.get("content"))?;
+    direct_body_from_content_type(&content_type, &body)?;
+
+    let mut notification = json!({
+        "meta": {
+            "sender_did": sender_did,
+            "target": {
+                "kind": "agent",
+                "did": receiver_did,
+            },
+            "message_id": message_id,
+            "profile": "anp.direct.e2ee.v1",
+            "security_profile": "direct-e2ee",
+            "content_type": content_type,
+        },
+        "body": body,
+    });
+    if let Some(server_seq) = int64_value(object.get("server_seq")).filter(|value| *value != 0) {
+        notification["server_seq"] = json!(server_seq);
+    }
+    Ok(notification)
 }
 
 pub fn plaintext_to_value(plaintext: &ApplicationPlaintext) -> Value {
@@ -296,12 +339,44 @@ fn optional_string(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn object_body_value(value: Option<&Value>) -> Result<Value, DirectE2eeError> {
+    match value {
+        Some(Value::Object(_)) => Ok(value.expect("checked Some above").clone()),
+        Some(Value::String(text)) if !text.trim().is_empty() => {
+            let decoded: Value = serde_json::from_str(text).map_err(|_| {
+                DirectE2eeError::invalid_field("content is not a direct-e2ee object")
+            })?;
+            if decoded.is_object() {
+                Ok(decoded)
+            } else {
+                Err(DirectE2eeError::invalid_field(
+                    "content is not a direct-e2ee object",
+                ))
+            }
+        }
+        _ => Err(DirectE2eeError::invalid_field(
+            "content is not a direct-e2ee object",
+        )),
+    }
+}
+
+fn int64_value(value: Option<&Value>) -> Option<i64> {
+    match value? {
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| number.as_f64().map(|value| value as i64)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,
         direct_cipher_send_request, direct_init_body_from_value, direct_init_body_to_value,
-        direct_init_send_request, direct_send_request_from_pending, plaintext_to_value,
+        direct_init_send_request, direct_notification_from_message_view,
+        direct_send_request_from_pending, is_direct_e2ee_wire_content_type, plaintext_to_value,
         validate_direct_send_ids, DirectEnvelopeBody,
     };
     use crate::direct_e2ee::aad::{CONTENT_TYPE_DIRECT_CIPHER, CONTENT_TYPE_DIRECT_INIT};
@@ -503,6 +578,124 @@ mod tests {
             .expect_err("unsupported receive content type should fail");
 
         assert!(error
+            .to_string()
+            .contains("unsupported content type: application/json"));
+    }
+
+    #[test]
+    fn direct_wire_content_type_matches_go_secure_history_filter() {
+        assert!(is_direct_e2ee_wire_content_type(CONTENT_TYPE_DIRECT_INIT));
+        assert!(is_direct_e2ee_wire_content_type(CONTENT_TYPE_DIRECT_CIPHER));
+        assert!(!is_direct_e2ee_wire_content_type("application/json"));
+    }
+
+    #[test]
+    fn direct_notification_from_message_view_matches_go_history_shape() {
+        let notification = direct_notification_from_message_view(&json!({
+            "id": "msg-init",
+            "sender_did": "did:wba:a.example:agents:alice:e1_alice",
+            "receiver_did": "did:wba:b.example:agents:bob:e1_bob",
+            "content_type": CONTENT_TYPE_DIRECT_INIT,
+            "server_seq": 7,
+            "content": {
+                "session_id": "sid-001",
+                "suite": MTI_DIRECT_E2EE_SUITE,
+                "sender_static_key_agreement_id": "ka-alice",
+                "recipient_bundle_id": "bundle-bob-001",
+                "recipient_signed_prekey_id": "spk-bob-001",
+                "sender_ephemeral_pub_b64u": "EPHEMERAL",
+                "ciphertext_b64u": "CIPHERTEXT",
+            },
+        }))
+        .expect("message view notification");
+
+        assert_eq!(
+            notification,
+            json!({
+                "meta": {
+                    "sender_did": "did:wba:a.example:agents:alice:e1_alice",
+                    "target": {
+                        "kind": "agent",
+                        "did": "did:wba:b.example:agents:bob:e1_bob",
+                    },
+                    "message_id": "msg-init",
+                    "profile": "anp.direct.e2ee.v1",
+                    "security_profile": "direct-e2ee",
+                    "content_type": CONTENT_TYPE_DIRECT_INIT,
+                },
+                "body": {
+                    "session_id": "sid-001",
+                    "suite": MTI_DIRECT_E2EE_SUITE,
+                    "sender_static_key_agreement_id": "ka-alice",
+                    "recipient_bundle_id": "bundle-bob-001",
+                    "recipient_signed_prekey_id": "spk-bob-001",
+                    "sender_ephemeral_pub_b64u": "EPHEMERAL",
+                    "ciphertext_b64u": "CIPHERTEXT",
+                },
+                "server_seq": 7,
+            })
+        );
+    }
+
+    #[test]
+    fn direct_notification_from_message_view_accepts_string_content_like_go_map_from_any() {
+        let notification = direct_notification_from_message_view(&json!({
+            "id": "msg-2",
+            "sender_did": "did:wba:a.example:agents:alice:e1_alice",
+            "receiver_did": "did:wba:b.example:agents:bob:e1_bob",
+            "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+            "server_seq": 0,
+            "content": r#"{"session_id":"sid-001","ratchet_header":{"dh_pub_b64u":"RATCHETPUB","pn":0,"n":1},"ciphertext_b64u":"CIPHERTEXT"}"#,
+        }))
+        .expect("message view notification");
+
+        assert_eq!(
+            notification.pointer("/meta/content_type"),
+            Some(&json!(CONTENT_TYPE_DIRECT_CIPHER))
+        );
+        assert_eq!(
+            notification.pointer("/body/ratchet_header/n"),
+            Some(&json!(1))
+        );
+        assert_eq!(notification.get("server_seq"), None);
+    }
+
+    #[test]
+    fn direct_notification_from_message_view_rejects_invalid_history_shapes() {
+        let missing_id = direct_notification_from_message_view(&json!({
+            "sender_did": "did:alice",
+            "receiver_did": "did:bob",
+            "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+            "content": {
+                "session_id": "sid-001",
+                "ratchet_header": {"dh_pub_b64u": "RATCHETPUB", "pn": "0", "n": "1"},
+                "ciphertext_b64u": "CIPHERTEXT",
+            },
+        }))
+        .expect_err("missing id should fail");
+        assert!(missing_id.to_string().contains("missing field: id"));
+
+        let non_object_content = direct_notification_from_message_view(&json!({
+            "id": "msg-2",
+            "sender_did": "did:alice",
+            "receiver_did": "did:bob",
+            "content_type": CONTENT_TYPE_DIRECT_CIPHER,
+            "content": "not-json",
+        }))
+        .expect_err("non-object content should fail");
+        assert!(non_object_content
+            .to_string()
+            .contains("content is not a direct-e2ee object"));
+
+        let unsupported_content_type = direct_notification_from_message_view(&json!({
+            "id": "msg-2",
+            "sender_did": "did:alice",
+            "receiver_did": "did:bob",
+            "content_type": "application/json",
+            "content": {},
+        }))
+        .expect_err("unsupported content type should fail");
+        assert!(unsupported_content_type
             .to_string()
             .contains("unsupported content type: application/json"));
     }
