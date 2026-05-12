@@ -1,3 +1,5 @@
+#![cfg(feature = "mls")]
+
 mod common;
 
 use common::tempdir;

@@ -541,11 +541,7 @@ impl DidWbaVerifier {
             })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(EncodingKey::from_secret(secret.as_bytes())),
-            _ => EncodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
-                message: "Invalid JWT private key".to_string(),
-                status_code: 500,
-                headers: BTreeMap::new(),
-            }),
+            _ => rsa_encoding_key(secret),
         }
     }
 
@@ -562,11 +558,7 @@ impl DidWbaVerifier {
             })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(DecodingKey::from_secret(secret.as_bytes())),
-            _ => DecodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
-                message: "Invalid JWT public key".to_string(),
-                status_code: 500,
-                headers: BTreeMap::new(),
-            }),
+            _ => rsa_decoding_key(secret),
         }
     }
 
@@ -610,6 +602,42 @@ impl DidWbaVerifier {
             headers,
         }
     }
+}
+
+#[cfg(feature = "jwt-pem")]
+fn rsa_encoding_key(secret: &str) -> Result<EncodingKey, DidWbaVerifierError> {
+    EncodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
+        message: "Invalid JWT private key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(not(feature = "jwt-pem"))]
+fn rsa_encoding_key(_secret: &str) -> Result<EncodingKey, DidWbaVerifierError> {
+    Err(DidWbaVerifierError {
+        message: "Invalid JWT private key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(feature = "jwt-pem")]
+fn rsa_decoding_key(secret: &str) -> Result<DecodingKey, DidWbaVerifierError> {
+    DecodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
+        message: "Invalid JWT public key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(not(feature = "jwt-pem"))]
+fn rsa_decoding_key(_secret: &str) -> Result<DecodingKey, DidWbaVerifierError> {
+    Err(DidWbaVerifierError {
+        message: "Invalid JWT public key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
 }
 
 fn parse_algorithm(value: &str) -> Result<Algorithm, DidWbaVerifierError> {

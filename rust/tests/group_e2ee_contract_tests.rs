@@ -1,3 +1,5 @@
+#![cfg(feature = "mls")]
+
 mod common;
 
 use anp::group_e2ee::{deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE};
