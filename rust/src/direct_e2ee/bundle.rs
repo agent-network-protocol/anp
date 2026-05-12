@@ -7,6 +7,7 @@ use crate::keys::base64url_encode;
 use crate::proof::{generate_object_proof, verify_object_proof};
 use crate::PrivateKeyMaterial;
 use serde_json::{json, Value};
+use std::error::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
 pub fn signed_prekey_from_private_key(
@@ -130,6 +131,17 @@ pub fn prekey_bundle_get_request(
     })
 }
 
+pub fn should_retry_without_opk(error: &(dyn Error + 'static)) -> bool {
+    should_retry_without_opk_message(&error.to_string())
+}
+
+pub fn should_retry_without_opk_message(message: &str) -> bool {
+    message.contains("anp.direct.e2ee.opk_unavailable")
+        || message.contains("direct.e2ee_opk_unsupported")
+        || message.contains("4003")
+        || message.contains("3402")
+}
+
 pub fn verify_prekey_bundle(
     bundle: &PrekeyBundle,
     did_document: &Value,
@@ -190,11 +202,12 @@ pub fn extract_x25519_public_key(
 mod tests {
     use super::{
         build_prekey_bundle, prekey_bundle_get_body, prekey_bundle_get_request,
-        prekey_bundle_publish_body, prekey_bundle_publish_request, signed_prekey_from_private_key,
-        verify_prekey_bundle,
+        prekey_bundle_publish_body, prekey_bundle_publish_request, should_retry_without_opk,
+        should_retry_without_opk_message, signed_prekey_from_private_key, verify_prekey_bundle,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::direct_e2ee::models::OneTimePrekey;
+    use crate::direct_e2ee::DirectE2eeError;
     use crate::PrivateKeyMaterial;
     use serde_json::{json, Value};
     use x25519_dalek::StaticSecret as X25519StaticSecret;
@@ -437,5 +450,41 @@ mod tests {
         );
         assert_eq!(request.pointer("/params/meta/message_id"), None);
         assert_eq!(request.pointer("/params/meta/content_type"), None);
+    }
+
+    #[test]
+    fn opk_retry_classifier_matches_go_fallback_tokens() {
+        for message in [
+            "rpc failed: anp.direct.e2ee.opk_unavailable",
+            "remote rejected request: direct.e2ee_opk_unsupported",
+            "message service error 4003",
+            "legacy service code 3402",
+        ] {
+            assert!(
+                should_retry_without_opk_message(message),
+                "{message} should retry without OPK"
+            );
+        }
+
+        let direct_error = DirectE2eeError::invalid_field("direct.e2ee_opk_unsupported");
+        assert!(should_retry_without_opk(&direct_error));
+    }
+
+    #[test]
+    fn opk_retry_classifier_ignores_unrelated_errors() {
+        for message in [
+            "",
+            "missing field: prekey_bundle",
+            "rpc failed: unauthorized",
+            "unsupported suite: ANP-DIRECT-E2EE-UNKNOWN",
+        ] {
+            assert!(
+                !should_retry_without_opk_message(message),
+                "{message} should not retry without OPK"
+            );
+        }
+
+        let direct_error = DirectE2eeError::MissingField("prekey_bundle");
+        assert!(!should_retry_without_opk(&direct_error));
     }
 }
