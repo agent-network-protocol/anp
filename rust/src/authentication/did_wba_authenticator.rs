@@ -103,7 +103,7 @@ impl DIDWbaAuthHeader {
         let domain = extract_domain(server_url);
         if let Some(value) = get_header_case_insensitive(headers, "Authentication-Info") {
             let parsed = parse_authentication_info(value);
-            if let Some(token) = parsed.get("access_token") {
+            if let Some(token) = parsed.get("access_token").filter(|token| !token.is_empty()) {
                 self.tokens.insert(domain, token.clone());
                 return Some(token.clone());
             }

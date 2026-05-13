@@ -379,6 +379,71 @@ fn test_did_wba_auth_header_reads_files_and_generates_headers() {
 }
 
 #[test]
+fn test_did_wba_auth_header_ignores_empty_auth_info_access_token() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "Authentication-Info".to_string(),
+        r#"access_token="", token_type="Bearer""#.to_string(),
+    );
+    response_headers.insert(
+        "Authorization".to_string(),
+        "Bearer legacy-token".to_string(),
+    );
+
+    let token = helper
+        .update_token("https://api.example.com/orders", &response_headers)
+        .expect("legacy Authorization token should be captured");
+    assert_eq!(token, "legacy-token");
+
+    let headers = helper
+        .get_auth_header("https://api.example.com/orders", false, "GET", None, None)
+        .expect("cached token should be reused");
+    assert_eq!(
+        headers.get("Authorization").map(String::as_str),
+        Some("Bearer legacy-token")
+    );
+}
+
+#[test]
+fn test_did_wba_auth_header_ignores_empty_auth_info_without_fallback() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "Authentication-Info".to_string(),
+        r#"access_token="", token_type="Bearer""#.to_string(),
+    );
+
+    assert_eq!(
+        helper.update_token("https://api.example.com/orders", &response_headers),
+        None
+    );
+
+    let headers = helper
+        .get_auth_header("https://api.example.com/orders", false, "GET", None, None)
+        .expect("missing cached token should fall back to signature auth");
+    assert!(!headers.contains_key("Authorization"));
+    assert!(headers.contains_key("Signature-Input"));
+    assert!(headers.contains_key("Signature"));
+}
+
+#[test]
 fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
