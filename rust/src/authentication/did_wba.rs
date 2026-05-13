@@ -372,6 +372,7 @@ pub struct DidResolutionOptions {
     pub timeout_seconds: f64,
     pub verify_ssl: bool,
     pub base_url_override: Option<String>,
+    pub headers: BTreeMap<String, String>,
 }
 
 impl Default for DidResolutionOptions {
@@ -380,6 +381,7 @@ impl Default for DidResolutionOptions {
             timeout_seconds: 10.0,
             verify_ssl: true,
             base_url_override: None,
+            headers: BTreeMap::new(),
         }
     }
 }
@@ -786,9 +788,11 @@ pub async fn resolve_did_wba_document_with_options(
             .build()
             .map_err(|_| AuthenticationError::NetworkFailure)?;
 
-        let response = client
-            .get(url)
-            .header("Accept", "application/json")
+        let mut request = client.get(url).header("Accept", "application/json");
+        for (key, value) in &options.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| AuthenticationError::NetworkFailure)?

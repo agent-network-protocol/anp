@@ -12,10 +12,14 @@ use anp::authentication::{
     DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
     FederatedVerificationOptions,
 };
+#[cfg(feature = "network")]
+use anp::authentication::{
+    resolve_did_document_with_options, resolve_did_wba_document_with_options, DidResolutionOptions,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use common::tempdir;
 #[cfg(feature = "network")]
-use common::JsonTestServer;
+use common::{JsonTestServer, RecordingJsonTestServer};
 use ed25519_dalek::SigningKey;
 use serde_json::json;
 
@@ -557,6 +561,7 @@ async fn test_did_wba_verifier_accepts_http_signatures_with_network_resolution()
             base_url_override: Some(server.uri()),
             verify_ssl: false,
             timeout_seconds: 5.0,
+            ..anp::authentication::DidResolutionOptions::default()
         },
         ..DidWbaVerifierConfig::default()
     });
@@ -567,4 +572,83 @@ async fn test_did_wba_verifier_accepts_http_signatures_with_network_resolution()
         .expect("verification should succeed");
     assert_eq!(result.auth_scheme, "http_signatures");
     assert!(result.access_token.is_some());
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_wba_resolution_sends_custom_headers_like_go() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let server =
+        RecordingJsonTestServer::start([("/.well-known/did.json", bundle.did_document.clone())]);
+    let mut headers = BTreeMap::new();
+    headers.insert("X-ANP-Resolver".to_string(), "lane-d".to_string());
+
+    let document = resolve_did_wba_document_with_options(
+        "did:wba:example.com",
+        false,
+        &DidResolutionOptions {
+            base_url_override: Some(server.uri()),
+            verify_ssl: false,
+            timeout_seconds: 5.0,
+            headers,
+        },
+    )
+    .await
+    .expect("DID WBA resolution should succeed");
+
+    assert_eq!(document["id"], json!("did:wba:example.com"));
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/.well-known/did.json");
+    assert_eq!(
+        header_value(&requests[0].headers, "X-ANP-Resolver").as_deref(),
+        Some("lane-d")
+    );
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_web_resolution_sends_custom_headers_like_go() {
+    let server = RecordingJsonTestServer::start([(
+        "/agents/alice/did.json",
+        json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": "did:web:example.com:agents:alice",
+            "verificationMethod": [],
+            "authentication": [],
+        }),
+    )]);
+    let mut headers = BTreeMap::new();
+    headers.insert("X-ANP-Resolver".to_string(), "did-web".to_string());
+
+    let document = resolve_did_document_with_options(
+        "did:web:example.com:agents:alice",
+        false,
+        &DidResolutionOptions {
+            base_url_override: Some(server.uri()),
+            verify_ssl: false,
+            timeout_seconds: 5.0,
+            headers,
+        },
+    )
+    .await
+    .expect("DID web resolution should succeed");
+
+    assert_eq!(document["id"], json!("did:web:example.com:agents:alice"));
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/agents/alice/did.json");
+    assert_eq!(
+        header_value(&requests[0].headers, "X-ANP-Resolver").as_deref(),
+        Some("did-web")
+    );
+}
+
+#[cfg(feature = "network")]
+fn header_value(headers: &BTreeMap<String, String>, name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
 }

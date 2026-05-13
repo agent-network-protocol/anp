@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -153,6 +154,86 @@ impl JsonTestServer {
 
     pub fn uri(&self) -> String {
         self.uri.clone()
+    }
+}
+
+pub struct RecordingJsonTestServer {
+    uri: String,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecordedRequest {
+    pub path: String,
+    pub headers: BTreeMap<String, String>,
+}
+
+impl RecordingJsonTestServer {
+    pub fn start(routes: impl IntoIterator<Item = (&'static str, Value)>) -> Self {
+        let server = Server::http("127.0.0.1:0").expect("test HTTP server should bind");
+        let uri = format!("http://{}", server.server_addr());
+        let routes: HashMap<String, String> = routes
+            .into_iter()
+            .map(|(path, body)| {
+                (
+                    path.to_string(),
+                    serde_json::to_string(&body).expect("test JSON body should serialize"),
+                )
+            })
+            .collect();
+        let requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
+        let captured = Arc::clone(&requests);
+
+        thread::spawn(move || loop {
+            match server.recv_timeout(Duration::from_millis(100)) {
+                Ok(Some(request)) => {
+                    let path = request.url().to_string();
+                    let headers = request
+                        .headers()
+                        .iter()
+                        .map(|header| {
+                            (
+                                header.field.as_str().to_string(),
+                                header.value.as_str().to_string(),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    captured
+                        .lock()
+                        .expect("request capture should not be poisoned")
+                        .push(RecordedRequest {
+                            path: path.clone(),
+                            headers,
+                        });
+                    let body = routes.get(&path).cloned();
+                    let response = match body {
+                        Some(body) if request.method().as_str() == "GET" => {
+                            Response::from_string(body).with_header(
+                                Header::from_bytes("Content-Type", "application/json")
+                                    .expect("valid header"),
+                            )
+                        }
+                        _ => Response::from_string("not found").with_status_code(404),
+                    };
+                    let _ = request.respond(response);
+                }
+                Ok(None) => continue,
+                Err(_) => break,
+            }
+        });
+
+        Self { uri, requests }
+    }
+
+    pub fn uri(&self) -> String {
+        self.uri.clone()
+    }
+
+    pub fn requests(&self) -> Vec<RecordedRequest> {
+        self.requests
+            .lock()
+            .expect("request capture should not be poisoned")
+            .clone()
     }
 }
 

@@ -75,9 +75,11 @@ pub async fn resolve_did_document_with_options(
             .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
             .build()
             .map_err(|_| AuthenticationError::NetworkFailure)?;
-        let document: Value = client
-            .get(url)
-            .header("Accept", "application/json")
+        let mut request = client.get(url).header("Accept", "application/json");
+        for (key, value) in &options.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        let document: Value = request
             .send()
             .await
             .map_err(|_| AuthenticationError::NetworkFailure)?
