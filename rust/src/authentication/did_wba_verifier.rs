@@ -263,6 +263,7 @@ impl DidWbaVerifier {
             .unwrap_or_default()
             .to_string();
 
+        self.validate_document_id_matches(did_document, &did, domain)?;
         self.validate_did_binding(did_document)?;
         if !is_authentication_authorized(did_document, &metadata.keyid) {
             return Err(DidWbaVerifierError {
@@ -352,6 +353,7 @@ impl DidWbaVerifier {
                 "invalid_timestamp",
             ));
         }
+        self.validate_document_id_matches(did_document, &parsed.did, domain)?;
         if !self.is_valid_nonce(&parsed.did, &parsed.nonce) {
             return Err(self.challenge_error(
                 "Legacy DIDWba nonce has already been used or expired",
@@ -444,6 +446,24 @@ impl DidWbaVerifier {
             response_headers,
             access_token,
             token_type: Some("bearer".to_string()),
+        }
+    }
+
+    fn validate_document_id_matches(
+        &self,
+        did_document: &serde_json::Value,
+        did: &str,
+        domain: &str,
+    ) -> Result<(), DidWbaVerifierError> {
+        if did_document.get("id").and_then(serde_json::Value::as_str) == Some(did) {
+            Ok(())
+        } else {
+            Err(self.challenge_error(
+                "DID document ID does not match authenticated DID",
+                401,
+                domain,
+                "invalid_did",
+            ))
         }
     }
 

@@ -641,6 +641,118 @@ async fn test_did_wba_verifier_accepts_http_signatures() {
 }
 
 #[tokio::test]
+async fn test_did_wba_verifier_rejects_http_signature_document_id_mismatch() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let request_url = "https://api.example.com/orders";
+    let headers = generate_http_signature_headers(
+        &bundle.did_document,
+        request_url,
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+    let mut mismatched_document = bundle.did_document.clone();
+    mismatched_document["id"] = json!("did:wba:attacker.example.com");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let error = verifier
+        .verify_request_with_did_document(
+            "GET",
+            request_url,
+            &headers,
+            None,
+            Some("api.example.com"),
+            &mismatched_document,
+        )
+        .await
+        .expect_err("document id must match the DID authenticated by keyid");
+
+    assert_eq!(error.status_code, 401);
+    assert_eq!(
+        error.message,
+        "DID document ID does not match authenticated DID"
+    );
+    assert_eq!(
+        error.headers.get("WWW-Authenticate").map(String::as_str),
+        Some(
+            "DIDWba realm=\"api.example.com\", error=\"invalid_did\", error_description=\"DID document ID does not match authenticated DID\""
+        )
+    );
+}
+
+#[tokio::test]
+async fn test_did_wba_verifier_rejects_legacy_document_id_mismatch_before_nonce_use() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let auth_header =
+        generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "1.1")
+            .expect("legacy DID-WBA auth header generation should succeed");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_string(), auth_header);
+    let mut mismatched_document = bundle.did_document.clone();
+    mismatched_document["id"] = json!("did:wba:attacker.example.com");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let error = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &mismatched_document,
+        )
+        .await
+        .expect_err("document id must match the DID authenticated by Authorization");
+
+    assert_eq!(error.status_code, 401);
+    assert_eq!(
+        error.message,
+        "DID document ID does not match authenticated DID"
+    );
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("mismatch rejection should not consume the legacy nonce");
+    assert_eq!(result.auth_scheme, "legacy_didwba");
+}
+
+#[tokio::test]
 async fn test_did_wba_verifier_keeps_legacy_auth_when_only_signature_header_is_extra() {
     let bundle = create_did_wba_document(
         "example.com",
