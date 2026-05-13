@@ -157,10 +157,7 @@ pub fn extract_signature_metadata(
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
-    let keyid = params
-        .get("keyid")
-        .cloned()
-        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let keyid = required_signature_param(&params, "keyid")?;
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
@@ -195,10 +192,7 @@ pub fn verify_http_message_signature(
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
-    let keyid = params
-        .get("keyid")
-        .cloned()
-        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let keyid = required_signature_param(&params, "keyid")?;
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
@@ -359,6 +353,9 @@ fn parse_signature_input(
     let close_index = remainder
         .find(')')
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    if close_index <= open_index {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     let components_raw = &remainder[open_index + 1..close_index];
     let params_raw = remainder[close_index + 1..].trim_start_matches(';');
     let components = components_raw
@@ -379,6 +376,17 @@ fn parse_signature_input(
         params.insert(name.to_string(), value.trim_matches('"').to_string());
     }
     Ok((label.to_string(), components, params))
+}
+
+fn required_signature_param(
+    params: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<String, HttpSignatureError> {
+    params
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .ok_or(HttpSignatureError::InvalidSignatureInput)
 }
 
 fn parse_signature_header(signature_header: &str) -> Result<(String, Vec<u8>), HttpSignatureError> {

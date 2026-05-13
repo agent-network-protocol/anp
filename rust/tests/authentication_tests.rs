@@ -10,7 +10,7 @@ use anp::authentication::{
     validate_did_document_binding, verify_auth_header_signature, verify_federated_http_request,
     verify_http_message_signature, AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader,
     DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
-    FederatedVerificationOptions,
+    FederatedVerificationOptions, HttpSignatureError,
 };
 #[cfg(feature = "network")]
 use anp::authentication::{
@@ -214,6 +214,34 @@ fn test_http_signature_verification_rejects_tampered_body() {
         Some(br#"{"item":"music"}"#),
     )
     .is_err());
+}
+
+#[test]
+fn test_http_signature_metadata_rejects_malformed_component_bounds_without_panic() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=)"@method" "content-digest"(;created=1712000000;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error =
+        extract_signature_metadata(&headers).expect_err("malformed input should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
+fn test_http_signature_metadata_rejects_empty_keyid_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;keyid="""#.to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error = extract_signature_metadata(&headers).expect_err("empty keyid should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
 }
 
 #[test]
