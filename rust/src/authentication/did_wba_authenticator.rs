@@ -348,5 +348,5 @@ fn normalize_covered_components(
         }
         result.push(component.clone());
     }
-    Some(result)
+    (!result.is_empty()).then_some(result)
 }

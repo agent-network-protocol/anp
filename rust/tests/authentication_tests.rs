@@ -473,6 +473,49 @@ fn test_did_wba_auth_header_drops_empty_accepted_headers() {
 }
 
 #[test]
+fn test_did_wba_auth_header_falls_back_when_challenge_components_are_unusable() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "WWW-Authenticate".to_string(),
+        "DIDWba realm=\"api.example.com\", nonce=\"server-nonce-123\"".to_string(),
+    );
+    response_headers.insert(
+        "Accept-Signature".to_string(),
+        "sig1=(\"content-type\" \"x-missing\");created;expires;nonce;keyid".to_string(),
+    );
+
+    let headers = helper
+        .get_challenge_auth_header(
+            "https://api.example.com/orders",
+            &response_headers,
+            "GET",
+            None,
+            None,
+        )
+        .expect("challenge auth headers should be generated");
+    let metadata = extract_signature_metadata(&headers).expect("metadata should parse");
+
+    assert_eq!(
+        metadata.components,
+        vec![
+            "@method".to_string(),
+            "@target-uri".to_string(),
+            "@authority".to_string()
+        ]
+    );
+    assert_eq!(metadata.nonce.as_deref(), Some("server-nonce-123"));
+}
+
+#[test]
 fn test_did_wba_auth_header_should_not_retry_invalid_did() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
