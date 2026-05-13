@@ -640,6 +640,51 @@ async fn test_did_wba_verifier_accepts_http_signatures() {
     assert!(result.access_token.is_some());
 }
 
+#[tokio::test]
+async fn test_did_wba_verifier_keeps_legacy_auth_when_only_signature_header_is_extra() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let auth_header =
+        generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "1.1")
+            .expect("legacy DID-WBA auth header generation should succeed");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_string(), auth_header);
+    headers.insert(
+        "Signature".to_string(),
+        "sig1=:not-an-http-signature-discriminator:".to_string(),
+    );
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("legacy verification should ignore a stray Signature header");
+
+    assert_eq!(result.auth_scheme, "legacy_didwba");
+    assert!(result.access_token.is_some());
+}
+
 #[cfg(feature = "network")]
 #[tokio::test]
 async fn test_did_wba_verifier_accepts_http_signatures_with_network_resolution() {

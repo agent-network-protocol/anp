@@ -109,9 +109,7 @@ impl DidWbaVerifier {
             }
         }
 
-        if get_header_case_insensitive(headers, "Signature-Input").is_some()
-            || get_header_case_insensitive(headers, "Signature").is_some()
-        {
+        if get_header_case_insensitive(headers, "Signature-Input").is_some() {
             if !self.config.allow_http_signatures {
                 return Err(self.challenge_error(
                     "HTTP Message Signatures authentication is disabled",
@@ -166,9 +164,7 @@ impl DidWbaVerifier {
             }
         }
 
-        if get_header_case_insensitive(headers, "Signature-Input").is_some()
-            || get_header_case_insensitive(headers, "Signature").is_some()
-        {
+        if get_header_case_insensitive(headers, "Signature-Input").is_some() {
             if !self.config.allow_http_signatures {
                 return Err(self.challenge_error(
                     "HTTP Message Signatures authentication is disabled",
