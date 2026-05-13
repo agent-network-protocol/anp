@@ -162,9 +162,7 @@ pub fn extract_signature_metadata(
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params
-        .get("expires")
-        .and_then(|value| value.parse::<i64>().ok());
+    let expires = parse_optional_i64_param(&params, "expires")?;
     let nonce = params.get("nonce").cloned();
     Ok(SignatureMetadata {
         label: label_input,
@@ -197,9 +195,7 @@ pub fn verify_http_message_signature(
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params
-        .get("expires")
-        .and_then(|value| value.parse::<i64>().ok());
+    let expires = parse_optional_i64_param(&params, "expires")?;
     let nonce = params.get("nonce").cloned();
 
     let body_bytes = body.unwrap_or_default();
@@ -387,6 +383,18 @@ fn required_signature_param(
         .filter(|value| !value.is_empty())
         .cloned()
         .ok_or(HttpSignatureError::InvalidSignatureInput)
+}
+
+fn parse_optional_i64_param(
+    params: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<Option<i64>, HttpSignatureError> {
+    params
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse::<i64>())
+        .transpose()
+        .map_err(|_| HttpSignatureError::InvalidSignatureInput)
 }
 
 fn parse_signature_header(signature_header: &str) -> Result<(String, Vec<u8>), HttpSignatureError> {

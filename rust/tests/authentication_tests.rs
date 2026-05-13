@@ -245,6 +245,72 @@ fn test_http_signature_metadata_rejects_empty_keyid_like_go() {
 }
 
 #[test]
+fn test_http_signature_metadata_rejects_malformed_expires_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;expires=not-a-number;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error =
+        extract_signature_metadata(&headers).expect_err("malformed expires should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
+fn test_http_signature_metadata_treats_empty_expires_as_absent_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;expires=;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let metadata =
+        extract_signature_metadata(&headers).expect("empty expires should be treated as absent");
+    assert_eq!(metadata.expires, None);
+}
+
+#[test]
+fn test_http_signature_verification_rejects_malformed_expires_like_go() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let mut headers = generate_http_signature_headers(
+        &bundle.did_document,
+        "https://api.example.com/orders",
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+    let original_input = headers
+        .get("Signature-Input")
+        .expect("Signature-Input should exist")
+        .clone();
+    headers.insert(
+        "Signature-Input".to_string(),
+        original_input.replacen(";expires=", ";expires=not-a-number-", 1),
+    );
+
+    let error = verify_http_message_signature(
+        &bundle.did_document,
+        "GET",
+        "https://api.example.com/orders",
+        &headers,
+        None,
+    )
+    .expect_err("malformed expires should be rejected before signature verification");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
 fn test_build_agent_message_service_with_service_did() {
     let service = build_agent_message_service_with_options(
         "did:wba:example.com:agents:alice:e1_demo",
