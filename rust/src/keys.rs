@@ -133,6 +133,19 @@ impl PrivateKeyMaterial {
         }
         Err(KeyMaterialError::InvalidKeyBytes)
     }
+
+    pub fn from_compatible_private_pem(input: &str) -> Result<Self, KeyMaterialError> {
+        let (label, bytes) = decode_pem(input)?;
+        match label.as_str() {
+            "PRIVATE KEY" => Self::from_pem(input),
+            "ANP ED25519 PRIVATE KEY" => private_key_from_legacy_ed25519(&bytes),
+            "ANP X25519 PRIVATE KEY" => private_key_from_legacy_x25519(&bytes),
+            "ANP SECP256R1 PRIVATE KEY" => private_key_from_legacy_secp256r1(&bytes),
+            "ANP SECP256K1 PRIVATE KEY" => private_key_from_legacy_secp256k1(&bytes),
+            "EC PRIVATE KEY" => private_key_from_sec1_der(&bytes),
+            _ => Err(KeyMaterialError::InvalidPemLabel(label)),
+        }
+    }
 }
 
 impl PublicKeyMaterial {
@@ -371,6 +384,200 @@ fn okp_public_from_spki_der(prefix: &[u8], der: &[u8]) -> Result<[u8; 32], KeyMa
     der[prefix.len()..]
         .try_into()
         .map_err(|_| KeyMaterialError::InvalidKeyBytes)
+}
+
+fn private_key_from_legacy_ed25519(raw: &[u8]) -> Result<PrivateKeyMaterial, KeyMaterialError> {
+    let bytes: [u8; 32] = raw
+        .try_into()
+        .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+    Ok(PrivateKeyMaterial::Ed25519(Ed25519SigningKey::from_bytes(
+        &bytes,
+    )))
+}
+
+fn private_key_from_legacy_x25519(raw: &[u8]) -> Result<PrivateKeyMaterial, KeyMaterialError> {
+    let bytes: [u8; 32] = raw
+        .try_into()
+        .map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+    Ok(PrivateKeyMaterial::X25519(X25519StaticSecret::from(bytes)))
+}
+
+fn private_key_from_legacy_secp256r1(raw: &[u8]) -> Result<PrivateKeyMaterial, KeyMaterialError> {
+    let scalar = padded_scalar(raw)?;
+    let key =
+        Secp256r1SigningKey::from_slice(&scalar).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+    Ok(PrivateKeyMaterial::Secp256r1(key))
+}
+
+fn private_key_from_legacy_secp256k1(raw: &[u8]) -> Result<PrivateKeyMaterial, KeyMaterialError> {
+    let scalar = validated_secp256k1_scalar(raw)?;
+    let key =
+        Secp256k1SigningKey::from_slice(&scalar).map_err(|_| KeyMaterialError::InvalidKeyBytes)?;
+    Ok(PrivateKeyMaterial::Secp256k1(key))
+}
+
+fn private_key_from_sec1_der(der: &[u8]) -> Result<PrivateKeyMaterial, KeyMaterialError> {
+    let key = Sec1PrivateKey::parse(der)?;
+    match key.parameters_oid {
+        Some(P256_OID) => private_key_from_legacy_secp256r1(key.private_key),
+        Some(SECP256K1_OID) | None => private_key_from_legacy_secp256k1(key.private_key),
+        _ => Err(KeyMaterialError::UnsupportedKeyType),
+    }
+}
+
+fn padded_scalar(raw: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    if raw.is_empty() || raw.len() > 32 {
+        return Err(KeyMaterialError::InvalidKeyBytes);
+    }
+    let mut scalar = [0u8; 32];
+    scalar[32 - raw.len()..].copy_from_slice(raw);
+    Ok(scalar)
+}
+
+fn validated_secp256k1_scalar(raw: &[u8]) -> Result<[u8; 32], KeyMaterialError> {
+    if raw.is_empty() || raw.len() > 32 {
+        return Err(KeyMaterialError::InvalidKeyBytes);
+    }
+    let value = BigUint::from_bytes_be(raw);
+    let order = secp256k1_order()?;
+    if value == BigUint::from(0u8) || value >= order {
+        return Err(KeyMaterialError::InvalidKeyBytes);
+    }
+    padded_scalar(raw)
+}
+
+fn secp256k1_order() -> Result<BigUint, KeyMaterialError> {
+    BigUint::parse_bytes(
+        b"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+        16,
+    )
+    .ok_or(KeyMaterialError::InvalidKeyBytes)
+}
+
+const P256_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+const SECP256K1_OID: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x0a];
+
+struct Sec1PrivateKey<'a> {
+    private_key: &'a [u8],
+    parameters_oid: Option<&'a [u8]>,
+}
+
+impl<'a> Sec1PrivateKey<'a> {
+    fn parse(der: &'a [u8]) -> Result<Self, KeyMaterialError> {
+        let mut reader = DerReader::new(der);
+        let sequence = reader.read_tlv(0x30)?;
+        reader.finish()?;
+
+        let mut sequence = DerReader::new(sequence);
+        if sequence.read_tlv(0x02)? != [0x01] {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        let private_key = sequence.read_tlv(0x04)?;
+        let mut parameters_oid = None;
+
+        while !sequence.is_finished() {
+            match sequence.peek_tag()? {
+                0xa0 => {
+                    if parameters_oid.is_some() {
+                        return Err(KeyMaterialError::InvalidKeyBytes);
+                    }
+                    let parameters = sequence.read_tlv(0xa0)?;
+                    let mut parameters = DerReader::new(parameters);
+                    parameters_oid = Some(parameters.read_tlv(0x06)?);
+                    parameters.finish()?;
+                }
+                0xa1 => {
+                    let _ = sequence.read_tlv(0xa1)?;
+                }
+                _ => return Err(KeyMaterialError::InvalidKeyBytes),
+            }
+        }
+
+        Ok(Self {
+            private_key,
+            parameters_oid,
+        })
+    }
+}
+
+struct DerReader<'a> {
+    input: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> DerReader<'a> {
+    fn new(input: &'a [u8]) -> Self {
+        Self { input, offset: 0 }
+    }
+
+    fn read_tlv(&mut self, expected_tag: u8) -> Result<&'a [u8], KeyMaterialError> {
+        let tag = self.read_byte()?;
+        if tag != expected_tag {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        let length = self.read_length()?;
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(KeyMaterialError::InvalidKeyBytes)?;
+        if end > self.input.len() {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        let value = &self.input[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn read_length(&mut self) -> Result<usize, KeyMaterialError> {
+        let first = self.read_byte()?;
+        if first & 0x80 == 0 {
+            return Ok(first as usize);
+        }
+        let length_bytes = (first & 0x7f) as usize;
+        if length_bytes == 0 || length_bytes > std::mem::size_of::<usize>() {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        if self.offset + length_bytes > self.input.len() {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        let mut length = 0usize;
+        for _ in 0..length_bytes {
+            length = (length << 8) | (self.read_byte()? as usize);
+        }
+        if length < 128 {
+            return Err(KeyMaterialError::InvalidKeyBytes);
+        }
+        Ok(length)
+    }
+
+    fn peek_tag(&self) -> Result<u8, KeyMaterialError> {
+        self.input
+            .get(self.offset)
+            .copied()
+            .ok_or(KeyMaterialError::InvalidKeyBytes)
+    }
+
+    fn read_byte(&mut self) -> Result<u8, KeyMaterialError> {
+        let byte = self
+            .input
+            .get(self.offset)
+            .copied()
+            .ok_or(KeyMaterialError::InvalidKeyBytes)?;
+        self.offset += 1;
+        Ok(byte)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.offset == self.input.len()
+    }
+
+    fn finish(&self) -> Result<(), KeyMaterialError> {
+        if self.is_finished() {
+            Ok(())
+        } else {
+            Err(KeyMaterialError::InvalidKeyBytes)
+        }
+    }
 }
 
 fn normalize_ecdsa_signature(
