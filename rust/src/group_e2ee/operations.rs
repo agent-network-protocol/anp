@@ -132,6 +132,11 @@ pub fn real_group_add_member(
 ) -> Result<Value, Value> {
     let group_did = required(params, "group_did")?;
     let member_did = required(params, "member_did")?;
+    let operation_id = params
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(request_id);
     let actor = params
         .get("actor_did")
         .or_else(|| params.get("owner_did"))
@@ -172,19 +177,17 @@ pub fn real_group_add_member(
     let (commit, welcome, _group_info) = group
         .add_members(provider, &signer, core::slice::from_ref(&key_package))
         .map_err(|e| mls_error("group_add_member_failed", e, request_id))?;
-    group
-        .merge_pending_commit(provider)
-        .map_err(|e| mls_error("group_add_merge_failed", e, request_id))?;
-    upsert_binding(
-        conn,
-        actor,
-        device_id,
-        group_did,
-        &binding.openmls_group_id,
-        group.epoch().as_u64(),
-        &binding.role,
-        request_id,
-    )?;
+    let pending = group.pending_commit().ok_or_else(|| {
+        error(
+            "pending_commit_missing",
+            "OpenMLS did not persist a pending add-member commit",
+            Some(request_id.to_owned()),
+        )
+    })?;
+    let to_epoch = pending.epoch().as_u64();
+    let epoch_authenticator_b64u = pending
+        .epoch_authenticator()
+        .map(|value| encode_b64u(value.as_slice()));
     let commit_b64u = encode_b64u(
         &commit
             .tls_serialize_detached()
@@ -205,22 +208,63 @@ pub fn real_group_add_member(
             .tls_serialize_detached()
             .map_err(|e| mls_error("welcome_encode_failed", e, request_id))?,
     );
-    let ratchet_tree: RatchetTreeIn = group.export_ratchet_tree().into();
-    let ratchet_tree_b64u = encode_b64u(
-        &ratchet_tree
-            .tls_serialize_detached()
-            .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?,
-    );
-    Ok(json!({
-        "crypto_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
-        "openmls_group_id_b64u": encode_b64u(binding.openmls_group_id.as_slice()),
-        "epoch": group.epoch().as_u64().to_string(),
-        "commit_b64u": commit_b64u,
-        "welcome_b64u": welcome_b64u,
-        "ratchet_tree_b64u": ratchet_tree_b64u,
-        "member_did": member_did,
-        "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
-    }))
+    let ratchet_tree_b64u = {
+        let tree_in: RatchetTreeIn = group.export_ratchet_tree().into();
+        encode_b64u(
+            &tree_in
+                .tls_serialize_detached()
+                .map_err(|e| mls_error("ratchet_tree_encode_failed", e, request_id))?,
+        )
+    };
+    let pending_commit_id = params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "pc-{}",
+                short_digest(&json!({"operation_id": operation_id}))
+            )
+        });
+    let mut result = membership_prepare_response(MembershipPrepare {
+        pending_commit_id: &pending_commit_id,
+        operation_id,
+        command: "group add-member",
+        actor_did: actor,
+        subject_did: member_did,
+        subject_status: "added",
+        group_did,
+        crypto_group_id_b64u: &encode_b64u(binding.openmls_group_id.as_slice()),
+        from_epoch: binding.epoch,
+        to_epoch,
+        commit_b64u: &commit_b64u,
+        welcome_b64u: Some(&welcome_b64u),
+        ratchet_tree_b64u: Some(&ratchet_tree_b64u),
+        group_info_b64u: None,
+        epoch_authenticator_b64u: epoch_authenticator_b64u.as_deref(),
+    });
+    result["member_did"] = json!(member_did);
+    insert_pending_commit(
+        conn,
+        &pending_commit_id,
+        operation_id,
+        "group add-member",
+        actor,
+        device_id,
+        group_did,
+        member_did,
+        "added",
+        binding.epoch,
+        to_epoch,
+        &commit_b64u,
+        Some(&ratchet_tree_b64u),
+        None,
+        epoch_authenticator_b64u.as_deref(),
+        &result,
+        request_id,
+    )?;
+    Ok(result)
 }
 
 pub fn real_group_update_member_prepare(

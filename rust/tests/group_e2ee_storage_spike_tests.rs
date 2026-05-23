@@ -166,7 +166,7 @@ fn storage_spike_separate_openmls_connection_cannot_join_existing_write_transact
 }
 
 #[test]
-fn storage_spike_current_add_member_merges_immediately_and_advances_binding_epoch() {
+fn storage_spike_add_member_prepare_keeps_binding_epoch_and_records_pending_commit() {
     let alice_dir = tempdir("anp-group-storage-spike-alice").expect("alice state");
     let bob_dir = tempdir("anp-group-storage-spike-bob").expect("bob state");
     let group_did = "did:wba:example.com:groups:storage-spike:e1";
@@ -207,11 +207,16 @@ fn storage_spike_current_add_member_merges_immediately_and_advances_binding_epoc
                 "device_id": "phone",
                 "group_did": group_did,
                 "member_did": bob(),
+                "pending_commit_id": "pc-add-spike",
                 "group_key_package": bob_kp["result"]["group_key_package"].clone()
             }
         }),
     );
+    assert_eq!(add["result"]["status"], "pending");
+    assert_eq!(add["result"]["from_epoch"], "0");
     assert_eq!(add["result"]["epoch"], "1");
+    assert_eq!(add["result"]["local_epoch"], "0");
+    assert_eq!(add["result"]["pending_commit_id"], "pc-add-spike");
 
     let status = run_anp_mls(
         alice_dir.path(),
@@ -226,16 +231,20 @@ fn storage_spike_current_add_member_merges_immediately_and_advances_binding_epoc
     );
     assert_eq!(status["result"]["status"], "active");
     assert_eq!(
-        status["result"]["local_epoch"], "1",
-        "current add-member has already merged the pending commit locally"
+        status["result"]["local_epoch"], "0",
+        "add-member prepare must not merge the pending commit before service acceptance"
     );
     assert_eq!(
         status["result"]["pending_commits"]
             .as_array()
             .expect("pending commits")
             .len(),
-        0,
-        "current add-member does not leave a pending commit for service accepted/rejected finalize"
+        1,
+        "add-member prepare must leave a pending commit for finalize/abort"
+    );
+    assert_eq!(
+        status["result"]["pending_commits"][0]["pending_commit_id"],
+        "pc-add-spike"
     );
 
     let conn = Connection::open(alice_dir.path().join("state.db")).expect("open alice state");
@@ -247,8 +256,8 @@ fn storage_spike_current_add_member_merges_immediately_and_advances_binding_epoc
         )
         .expect("read binding epoch");
     assert_eq!(
-        binding_epoch, 1,
-        "current add-member updates binding epoch before any message-service acceptance boundary"
+        binding_epoch, 0,
+        "add-member prepare must not update binding epoch before message-service acceptance"
     );
 }
 
@@ -294,6 +303,19 @@ fn storage_spike_remove_prepare_keeps_binding_epoch_and_records_pending_commit()
                 "group_did": group_did,
                 "member_did": bob(),
                 "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-finalize",
+            "operation_id": "op-add-finalize",
+            "params": {
+                "pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()
             }
         }),
     );

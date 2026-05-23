@@ -142,6 +142,21 @@ fn bootstrap_alice_bob_group_without_welcome(
 
 fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) -> Value {
     let add = bootstrap_alice_bob_group_without_welcome(alice_dir, bob_dir, group_did);
+    let finalized = run_anp_mls(
+        alice_dir,
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-bootstrap-add-finalize",
+            "operation_id": "op-bootstrap-add-finalize",
+            "params": {
+                "pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "1");
     run_anp_mls(
         bob_dir,
         "welcome",
@@ -293,12 +308,32 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
         }),
     );
     assert_eq!(add["result"]["epoch"], "1");
+    assert_eq!(add["result"]["status"], "pending");
+    assert_eq!(add["result"]["local_epoch"], "0");
+    assert_eq!(add["result"]["subject_status"], "added");
+    assert!(add["result"]["pending_commit_id"].as_str().is_some());
     let welcome_b64u = add["result"]["welcome_b64u"].as_str().expect("welcome");
     let ratchet_tree_b64u = add["result"]["ratchet_tree_b64u"]
         .as_str()
         .expect("ratchet tree");
     assert!(!welcome_b64u.is_empty());
     assert!(!ratchet_tree_b64u.is_empty());
+
+    let add_finalized = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-finalize",
+            "operation_id": "op-add-finalize",
+            "params": {
+                "pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    );
+    assert_eq!(add_finalized["result"]["status"], "finalized");
+    assert_eq!(add_finalized["result"]["epoch"], "1");
 
     let welcome = run_anp_mls(
         bob_dir.path(),
