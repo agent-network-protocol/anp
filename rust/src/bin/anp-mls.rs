@@ -266,9 +266,11 @@ fn run_real_mode(
             "key-package generate" => {
                 real_key_package(&mut provider, &app_conn, params, request_id)?
             }
-            "group create" => real_group_create(&mut provider, &app_conn, params, request_id)?,
+            "group create" => {
+                real_group_create(&mut provider, &app_conn, params, operation_id, request_id)?
+            }
             "group add-member" => {
-                real_group_add_member(&mut provider, &app_conn, params, request_id)?
+                real_group_add_member(&mut provider, &app_conn, params, operation_id, request_id)?
             }
             "group update-member-prepare" => real_group_update_member_prepare(
                 &mut provider,

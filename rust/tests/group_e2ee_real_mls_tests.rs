@@ -93,6 +93,73 @@ fn bob() -> &'static str {
     "did:wba:example.com:users:bob:e1"
 }
 
+fn create_alice_group(data_dir: &Path, group_did: &str) -> Value {
+    create_alice_group_with_operation(
+        data_dir,
+        group_did,
+        "req-bootstrap-create",
+        &format!("op-bootstrap-create-{group_did}"),
+    )
+}
+
+fn create_alice_group_with_operation(
+    data_dir: &Path,
+    group_did: &str,
+    request_id: &str,
+    operation_id: &str,
+) -> Value {
+    let create = run_anp_mls(
+        data_dir,
+        "group",
+        "create",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": request_id,
+            "operation_id": operation_id,
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(create["result"]["status"], "pending");
+    assert_eq!(create["result"]["epoch"], "0");
+    assert_eq!(create["result"]["local_epoch"], "0");
+    assert!(create["result"]["pending_commit_id"].as_str().is_some());
+    create
+}
+
+fn finalize_pending(
+    data_dir: &Path,
+    pending: &Value,
+    request_id: &str,
+    operation_id: &str,
+) -> Value {
+    run_anp_mls(
+        data_dir,
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": request_id,
+            "operation_id": operation_id,
+            "params": {
+                "pending_commit_id": pending["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    )
+}
+
+fn create_and_finalize_alice_group(data_dir: &Path, group_did: &str) -> Value {
+    let create = create_alice_group(data_dir, group_did);
+    let finalized = finalize_pending(
+        data_dir,
+        &create,
+        "req-bootstrap-create-finalize",
+        &format!("op-bootstrap-create-finalize-{group_did}"),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "0");
+    create
+}
+
 fn bootstrap_alice_bob_group_without_welcome(
     alice_dir: &Path,
     bob_dir: &Path,
@@ -109,17 +176,7 @@ fn bootstrap_alice_bob_group_without_welcome(
             "params": {"owner_did": bob(), "device_id": "phone"}
         }),
     );
-    run_anp_mls(
-        alice_dir,
-        "group",
-        "create",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-bootstrap-create",
-            "operation_id": "op-bootstrap-create",
-            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
-        }),
-    );
+    create_and_finalize_alice_group(alice_dir, group_did);
     let add = run_anp_mls(
         alice_dir,
         "group",
@@ -142,18 +199,11 @@ fn bootstrap_alice_bob_group_without_welcome(
 
 fn bootstrap_alice_bob_group(alice_dir: &Path, bob_dir: &Path, group_did: &str) -> Value {
     let add = bootstrap_alice_bob_group_without_welcome(alice_dir, bob_dir, group_did);
-    let finalized = run_anp_mls(
+    let finalized = finalize_pending(
         alice_dir,
-        "group",
-        "commit-finalize",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-bootstrap-add-finalize",
-            "operation_id": "op-bootstrap-add-finalize",
-            "params": {
-                "pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()
-            }
-        }),
+        &add,
+        "req-bootstrap-add-finalize",
+        &format!("op-bootstrap-add-finalize-{group_did}"),
     );
     assert_eq!(finalized["result"]["status"], "finalized");
     assert_eq!(finalized["result"]["epoch"], "1");
@@ -288,7 +338,17 @@ fn group_e2ee_anp_mls_create_add_welcome_encrypt_decrypt_round_trip() {
             "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
         }),
     );
+    assert_eq!(create["result"]["status"], "pending");
     assert_eq!(create["result"]["epoch"], "0");
+    assert_eq!(create["result"]["local_epoch"], "0");
+    let create_finalized = finalize_pending(
+        alice_dir.path(),
+        &create,
+        "req-create-finalize",
+        "op-create-finalize",
+    );
+    assert_eq!(create_finalized["result"]["status"], "finalized");
+    assert_eq!(create_finalized["result"]["epoch"], "0");
 
     let add = run_anp_mls(
         alice_dir.path(),
@@ -689,6 +749,178 @@ fn group_e2ee_add_member_prepare_abort_clears_without_advancing_epoch() {
             .len(),
         0
     );
+}
+
+#[test]
+fn group_e2ee_create_prepare_blocks_use_until_finalize() {
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
+    let group_did = "did:wba:example.com:groups:create-pending:e1";
+
+    let bob_kp = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-pending-bob-kp",
+            "operation_id": "op-create-pending-bob-kp",
+            "params": {"owner_did": bob(), "device_id": "phone"}
+        }),
+    );
+    let create = create_alice_group(alice_dir.path(), group_did);
+    assert_eq!(create["result"]["subject_status"], "created");
+
+    let status = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-pending-status",
+            "operation_id": "op-create-pending-status",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(status["result"]["status"], "pending_create");
+    assert_eq!(
+        status["result"]["pending_commits"][0]["pending_commit_id"],
+        create["result"]["pending_commit_id"]
+    );
+
+    let add_before_finalize = run_anp_mls_error(
+        alice_dir.path(),
+        "group",
+        "add-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-before-create-finalize",
+            "operation_id": "op-add-before-create-finalize",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(add_before_finalize["error"]["code"], "group_not_found");
+
+    let finalized = finalize_pending(
+        alice_dir.path(),
+        &create,
+        "req-create-pending-finalize",
+        "op-create-pending-finalize",
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "0");
+
+    let add_after_finalize = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "add-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-after-create-finalize",
+            "operation_id": "op-add-after-create-finalize",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(add_after_finalize["result"]["status"], "pending");
+    assert_eq!(add_after_finalize["result"]["from_epoch"], "0");
+}
+
+#[test]
+fn group_e2ee_create_abort_removes_pending_local_group_state() {
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
+    let group_did = "did:wba:example.com:groups:create-abort:e1";
+
+    let create = create_alice_group(alice_dir.path(), group_did);
+    let aborted = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-abort",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-abort",
+            "operation_id": "op-create-abort",
+            "params": {"pending_commit_id": create["result"]["pending_commit_id"].as_str().unwrap()}
+        }),
+    );
+    assert_eq!(aborted["result"]["status"], "aborted");
+    assert_eq!(aborted["result"]["local_epoch"], "0");
+
+    let status = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-abort-status",
+            "operation_id": "op-create-abort-status",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(status["result"]["status"], "empty");
+    assert_eq!(
+        status["result"]["pending_commits"]
+            .as_array()
+            .expect("pending commits")
+            .len(),
+        0
+    );
+
+    let bob_kp = run_anp_mls(
+        bob_dir.path(),
+        "key-package",
+        "generate",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-abort-bob-kp",
+            "operation_id": "op-create-abort-bob-kp",
+            "params": {"owner_did": bob(), "device_id": "phone"}
+        }),
+    );
+    let recreated = create_alice_group_with_operation(
+        alice_dir.path(),
+        group_did,
+        "req-create-abort-recreate",
+        "op-create-abort-recreate",
+    );
+    let recreate_finalized = finalize_pending(
+        alice_dir.path(),
+        &recreated,
+        "req-create-abort-recreate-finalize",
+        "op-create-abort-recreate-finalize",
+    );
+    assert_eq!(recreate_finalized["result"]["status"], "finalized");
+    let add = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "add-member",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create-abort-recreate-add",
+            "operation_id": "op-create-abort-recreate-add",
+            "params": {
+                "actor_did": alice(),
+                "device_id": "phone",
+                "group_did": group_did,
+                "member_did": bob(),
+                "group_key_package": bob_kp["result"]["group_key_package"].clone()
+            }
+        }),
+    );
+    assert_eq!(add["result"]["status"], "pending");
+    assert_eq!(add["result"]["from_epoch"], "0");
 }
 
 #[test]
@@ -1707,17 +1939,7 @@ fn group_e2ee_anp_mls_rejects_key_package_did_wba_binding_mismatch() {
             "params": {"owner_did": bob(), "device_id": "phone"}
         }),
     );
-    run_anp_mls(
-        alice_dir.path(),
-        "group",
-        "create",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-binding-create",
-            "operation_id": "op-binding-create",
-            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
-        }),
-    );
+    create_and_finalize_alice_group(alice_dir.path(), group_did);
     bob_kp["result"]["group_key_package"]["did_wba_binding"]["agent_did"] = json!(alice());
 
     let rejected = run_anp_mls_error(

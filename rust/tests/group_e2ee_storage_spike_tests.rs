@@ -70,6 +70,57 @@ fn bob() -> &'static str {
     "did:wba:example.com:users:bob:e1"
 }
 
+fn create_alice_group(data_dir: &Path, group_did: &str) -> Value {
+    let create = run_anp_mls(
+        data_dir,
+        "group",
+        "create",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-create",
+            "operation_id": format!("op-create-{group_did}"),
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(create["result"]["status"], "pending");
+    assert_eq!(create["result"]["local_epoch"], "0");
+    create
+}
+
+fn finalize_pending(
+    data_dir: &Path,
+    pending: &Value,
+    request_id: &str,
+    operation_id: &str,
+) -> Value {
+    run_anp_mls(
+        data_dir,
+        "group",
+        "commit-finalize",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": request_id,
+            "operation_id": operation_id,
+            "params": {
+                "pending_commit_id": pending["result"]["pending_commit_id"].as_str().unwrap()
+            }
+        }),
+    )
+}
+
+fn create_and_finalize_alice_group(data_dir: &Path, group_did: &str) -> Value {
+    let create = create_alice_group(data_dir, group_did);
+    let finalized = finalize_pending(
+        data_dir,
+        &create,
+        "req-create-finalize",
+        &format!("op-create-finalize-{group_did}"),
+    );
+    assert_eq!(finalized["result"]["status"], "finalized");
+    assert_eq!(finalized["result"]["epoch"], "0");
+    create
+}
+
 #[test]
 fn storage_spike_openmls_can_share_im_core_like_sqlite_without_changing_user_version() {
     let data_dir = tempdir("anp-group-storage-spike").expect("state");
@@ -182,17 +233,7 @@ fn storage_spike_add_member_prepare_keeps_binding_epoch_and_records_pending_comm
             "params": {"owner_did": bob(), "device_id": "phone"}
         }),
     );
-    run_anp_mls(
-        alice_dir.path(),
-        "group",
-        "create",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-create",
-            "operation_id": "op-create",
-            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
-        }),
-    );
+    create_and_finalize_alice_group(alice_dir.path(), group_did);
 
     let add = run_anp_mls(
         alice_dir.path(),
@@ -278,17 +319,7 @@ fn storage_spike_remove_prepare_keeps_binding_epoch_and_records_pending_commit()
             "params": {"owner_did": bob(), "device_id": "phone"}
         }),
     );
-    run_anp_mls(
-        alice_dir.path(),
-        "group",
-        "create",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-create",
-            "operation_id": "op-create",
-            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
-        }),
-    );
+    create_and_finalize_alice_group(alice_dir.path(), group_did);
     let add = run_anp_mls(
         alice_dir.path(),
         "group",
@@ -306,18 +337,11 @@ fn storage_spike_remove_prepare_keeps_binding_epoch_and_records_pending_commit()
             }
         }),
     );
-    run_anp_mls(
+    finalize_pending(
         alice_dir.path(),
-        "group",
-        "commit-finalize",
-        json!({
-            "api_version": "anp-mls/v1",
-            "request_id": "req-add-finalize",
-            "operation_id": "op-add-finalize",
-            "params": {
-                "pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()
-            }
-        }),
+        &add,
+        "req-add-finalize",
+        "op-add-finalize",
     );
 
     let prepare = run_anp_mls(

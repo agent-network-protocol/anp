@@ -5,7 +5,7 @@
 //! introduced around these operations.
 
 use super::commands::{error_response, DEVICE_ID_DEFAULT, GROUP_CIPHER_CONTENT_TYPE};
-use super::storage::SqliteMlsProvider;
+use super::storage::{JsonCodec, SqliteMlsProvider};
 use super::{build_send_aad, MTI_SUITE, SECURITY_PROFILE};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -87,11 +87,19 @@ pub fn real_group_create(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
+    operation_id: &str,
     request_id: &str,
 ) -> Result<Value, Value> {
     let group_did = required(params, "group_did")?;
     let creator = agent_did(params)?;
     let device_id = device_id(params);
+    if binding_status(conn, creator, device_id, group_did, request_id)?.is_some() {
+        return Err(error(
+            "group_already_exists",
+            "a local MLS group binding already exists for agent/device/group",
+            Some(request_id.to_owned()),
+        ));
+    }
     let (credential, signer) = ensure_agent(provider, conn, creator, device_id, request_id)?;
     let openmls_group_id = GroupId::from_slice(group_did.as_bytes());
     let config = group_create_config();
@@ -103,7 +111,7 @@ pub fn real_group_create(
         credential,
     )
     .map_err(|e| mls_error("group_create_failed", e, request_id))?;
-    upsert_binding(
+    upsert_binding_status(
         conn,
         creator,
         device_id,
@@ -111,32 +119,85 @@ pub fn real_group_create(
         &openmls_group_id,
         group.epoch().as_u64(),
         "creator",
+        "pending_create",
         request_id,
     )?;
-    Ok(json!({
+    let pending_commit_id = params
+        .get("pending_commit_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "pc-{}",
+                short_digest(&json!({"operation_id": operation_id}))
+            )
+        });
+    let epoch_authenticator_b64u = encode_b64u(group.epoch_authenticator().as_slice());
+    let commit_b64u = encode_b64u(
+        serde_json::to_vec(&json!({
+            "artifact_type": "local-create-binding",
+            "group_did": group_did,
+            "actor_did": creator,
+            "epoch": group.epoch().as_u64().to_string(),
+            "protocol_note": "MLS group creation creates local private state without an MLS commit; message-service acceptance is represented by finalize."
+        }))
+        .map_err(|e| error("artifact_failed", &e.to_string(), Some(request_id.to_owned())))?
+        .as_slice(),
+    );
+    let result = json!({
+        "pending_commit_id": &pending_commit_id,
+        "operation_id": operation_id,
+        "command": "group create",
+        "status": "pending",
+        "actor_did": creator,
+        "subject_did": creator,
+        "subject_status": "created",
         "group_did": group_did,
         "crypto_group_id_b64u": encode_b64u(openmls_group_id.as_slice()),
         "openmls_group_id_b64u": encode_b64u(openmls_group_id.as_slice()),
+        "from_epoch": "0",
         "epoch": group.epoch().as_u64().to_string(),
-        "epoch_authenticator": encode_b64u(group.epoch_authenticator().as_slice()),
+        "to_epoch": group.epoch().as_u64().to_string(),
+        "local_epoch": group.epoch().as_u64().to_string(),
+        "epoch_authenticator": &epoch_authenticator_b64u,
+        "epoch_authenticator_b64u": &epoch_authenticator_b64u,
+        "commit_b64u": &commit_b64u,
+        "artifact_type": "local-create-binding",
         "suite": MTI_SUITE,
         "group_state_ref": {"group_did": group_did, "group_state_version": group.epoch().as_u64().to_string()},
-    }))
+    });
+    insert_pending_commit(
+        conn,
+        &pending_commit_id,
+        operation_id,
+        "group create",
+        creator,
+        device_id,
+        group_did,
+        creator,
+        "created",
+        0,
+        group.epoch().as_u64(),
+        &commit_b64u,
+        None,
+        None,
+        Some(&epoch_authenticator_b64u),
+        &result,
+        request_id,
+    )?;
+    Ok(result)
 }
 
 pub fn real_group_add_member(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
+    operation_id: &str,
     request_id: &str,
 ) -> Result<Value, Value> {
     let group_did = required(params, "group_did")?;
     let member_did = required(params, "member_did")?;
-    let operation_id = params
-        .get("operation_id")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(request_id);
     let actor = params
         .get("actor_did")
         .or_else(|| params.get("owner_did"))
@@ -865,6 +926,16 @@ pub fn real_welcome_process(
     let group_did = required(params, "group_did")?;
     let welcome_b64u = required(params, "welcome_b64u")?;
     let ratchet_tree_b64u = required(params, "ratchet_tree_b64u")?;
+    if matches!(
+        binding_status(conn, agent, device_id, group_did, request_id)?.as_deref(),
+        Some("pending_create")
+    ) {
+        return Err(error(
+            "group_pending_create",
+            "local MLS group create is pending service acceptance",
+            Some(request_id.to_owned()),
+        ));
+    }
     let claimed_target_epoch = welcome_target_epoch(params);
     let mut replace_existing_group = false;
     if let (Some(target_epoch), Some(existing)) = (
@@ -1140,7 +1211,30 @@ pub fn real_group_commit_finalize(
         ));
     }
     let mut epoch_authenticator = None;
-    if pending.command != "group leave" {
+    if pending.command == "group create" {
+        let group = load_group(
+            provider,
+            &GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?),
+            request_id,
+        )?;
+        if group.epoch().as_u64() != pending.to_epoch {
+            return Err(error(
+                "group_epoch_mismatch",
+                "created OpenMLS group epoch does not match pending create record",
+                Some(request_id.to_owned()),
+            ));
+        }
+        epoch_authenticator = Some(encode_b64u(group.epoch_authenticator().as_slice()));
+        set_binding_epoch_status(
+            conn,
+            &pending.agent_did,
+            &pending.device_id,
+            &pending.group_did,
+            pending.to_epoch,
+            "active",
+            request_id,
+        )?;
+    } else if pending.command != "group leave" {
         let mut group = load_group(
             provider,
             &GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?),
@@ -1158,7 +1252,10 @@ pub fn real_group_commit_finalize(
             .map_err(|e| mls_error("pending_commit_finalize_failed", e, request_id))?;
         epoch_authenticator = Some(encode_b64u(group.epoch_authenticator().as_slice()));
     }
-    if pending.subject_did == pending.agent_did {
+    if pending.command == "group create" {
+        // The binding was already activated above. MLS create has no pending
+        // OpenMLS commit to merge; finalize only marks the local group usable.
+    } else if pending.subject_did == pending.agent_did {
         mark_binding_inactive(
             conn,
             &pending.agent_did,
@@ -1211,7 +1308,18 @@ pub fn real_group_commit_abort(
         ));
     }
     if pending.status != "aborted" {
-        if pending.command != "group leave" {
+        if pending.command == "group create" {
+            let group_id =
+                GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?);
+            delete_openmls_group_state(conn, &group_id, request_id)?;
+            delete_binding(
+                conn,
+                &pending.agent_did,
+                &pending.device_id,
+                &pending.group_did,
+                request_id,
+            )?;
+        } else if pending.command != "group leave" {
             let mut group = load_group(
                 provider,
                 &GroupId::from_slice(&decode_b64u(&pending.crypto_group_id_b64u, request_id)?),
@@ -1554,18 +1662,51 @@ fn upsert_binding(
     role: &str,
     request_id: &str,
 ) -> Result<(), Value> {
+    upsert_binding_status(
+        conn,
+        agent_did,
+        device_id,
+        group_did,
+        openmls_group_id,
+        epoch,
+        role,
+        "active",
+        request_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upsert_binding_status(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    openmls_group_id: &GroupId,
+    epoch: u64,
+    role: &str,
+    status: &str,
+    request_id: &str,
+) -> Result<(), Value> {
     let group_id_b64u = encode_b64u(openmls_group_id.as_slice());
     conn.execute(
         "INSERT INTO group_bindings(agent_did, device_id, group_did, crypto_group_id_b64u, openmls_group_id_b64u, epoch, role, status, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, 'active', CURRENT_TIMESTAMP)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
          ON CONFLICT(agent_did, device_id, group_did) DO UPDATE SET
            crypto_group_id_b64u = excluded.crypto_group_id_b64u,
            openmls_group_id_b64u = excluded.openmls_group_id_b64u,
            epoch = excluded.epoch,
            role = excluded.role,
-           status = 'active',
+           status = excluded.status,
            updated_at = CURRENT_TIMESTAMP",
-        params![agent_did, device_id, group_did, group_id_b64u, epoch as i64, role],
+        params![
+            agent_did,
+            device_id,
+            group_did,
+            group_id_b64u,
+            epoch as i64,
+            role,
+            status
+        ],
     )
     .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
     Ok(())
@@ -1613,6 +1754,21 @@ fn mark_binding_inactive(
         inactive_status,
         request_id,
     )
+}
+
+fn delete_binding(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    request_id: &str,
+) -> Result<(), Value> {
+    conn.execute(
+        "DELETE FROM group_bindings WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3",
+        params![agent_did, device_id, group_did],
+    )
+    .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1769,6 +1925,22 @@ fn active_binding(
     }))
 }
 
+fn binding_status(
+    conn: &Connection,
+    agent_did: &str,
+    device_id: &str,
+    group_did: &str,
+    request_id: &str,
+) -> Result<Option<String>, Value> {
+    conn.query_row(
+        "SELECT status FROM group_bindings WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3",
+        params![agent_did, device_id, group_did],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| sqlite_error("state_read_failed", e, request_id))
+}
+
 fn welcome_target_epoch(params: &Value) -> Option<u64> {
     ["to_epoch", "epoch", "local_epoch"]
         .into_iter()
@@ -1910,13 +2082,21 @@ fn delete_openmls_group_state(
     group_id: &GroupId,
     request_id: &str,
 ) -> Result<(), Value> {
+    let group_id_key =
+        <JsonCodec as openmls_sqlite_storage::Codec>::to_vec(group_id).map_err(|e| {
+            error(
+                "state_write_failed",
+                &e.to_string(),
+                Some(request_id.to_owned()),
+            )
+        })?;
     for statement in [
         "DELETE FROM openmls_group_data WHERE group_id = ?1",
         "DELETE FROM openmls_own_leaf_nodes WHERE group_id = ?1",
         "DELETE FROM openmls_proposals WHERE group_id = ?1",
         "DELETE FROM openmls_epoch_keys_pairs WHERE group_id = ?1",
     ] {
-        conn.execute(statement, params![group_id.as_slice()])
+        conn.execute(statement, params![group_id_key.as_slice()])
             .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
     }
     Ok(())
