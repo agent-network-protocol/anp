@@ -20,6 +20,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+pub mod typed;
+pub use typed::*;
+
 pub fn real_key_package(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,

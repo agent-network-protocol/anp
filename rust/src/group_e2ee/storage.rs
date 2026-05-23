@@ -7,8 +7,9 @@ use openmls_traits::OpenMlsProvider;
 use rusqlite::Connection;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
+    fs,
     fs::{File, OpenOptions},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use thiserror::Error;
 
@@ -118,6 +119,99 @@ pub fn sqlite_mls_provider(db_path: &Path) -> Result<SqliteMlsProvider, SqliteMl
         crypto: RustCrypto::default(),
         storage,
     })
+}
+
+#[derive(Debug, Error)]
+pub enum GroupMlsStoreError {
+    #[error("create group MLS data dir {path}: {source}")]
+    CreateDataDir {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    StateLock(#[from] StateLockError),
+    #[error("open group MLS app SQLite {path}: {source}")]
+    OpenAppSqlite {
+        path: PathBuf,
+        #[source]
+        source: rusqlite::Error,
+    },
+    #[error("initialize group MLS app schema: {0}")]
+    InitAppSchema(#[source] rusqlite::Error),
+    #[error(transparent)]
+    OpenMlsProvider(#[from] SqliteMlsProviderError),
+}
+
+impl GroupMlsStoreError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::CreateDataDir { .. } => "state_write_failed",
+            Self::StateLock(err) => err.code(),
+            Self::OpenAppSqlite { .. } => "state_open_failed",
+            Self::InitAppSchema(_) => "state_migration_failed",
+            Self::OpenMlsProvider(err) => err.code(),
+        }
+    }
+}
+
+pub trait GroupMlsStore {
+    fn open_operation(&self) -> Result<GroupMlsOperationScope, GroupMlsStoreError>;
+}
+
+pub struct GroupMlsOperationScope {
+    _lock: StateLock,
+    data_dir: PathBuf,
+    pub(crate) app_conn: Connection,
+    pub(crate) provider: SqliteMlsProvider,
+}
+
+impl GroupMlsOperationScope {
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CompatDataDirStore {
+    data_dir: PathBuf,
+}
+
+impl CompatDataDirStore {
+    pub fn new(data_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            data_dir: data_dir.into(),
+        }
+    }
+
+    fn state_db_path(&self) -> PathBuf {
+        self.data_dir.join("state.db")
+    }
+}
+
+impl GroupMlsStore for CompatDataDirStore {
+    fn open_operation(&self) -> Result<GroupMlsOperationScope, GroupMlsStoreError> {
+        fs::create_dir_all(&self.data_dir).map_err(|source| GroupMlsStoreError::CreateDataDir {
+            path: self.data_dir.clone(),
+            source,
+        })?;
+        let lock = StateLock::try_acquire(&self.data_dir)?;
+        let state_db_path = self.state_db_path();
+        let app_conn = Connection::open(&state_db_path).map_err(|source| {
+            GroupMlsStoreError::OpenAppSqlite {
+                path: state_db_path.clone(),
+                source,
+            }
+        })?;
+        init_app_schema(&app_conn).map_err(GroupMlsStoreError::InitAppSchema)?;
+        let provider = sqlite_mls_provider(&state_db_path)?;
+        Ok(GroupMlsOperationScope {
+            _lock: lock,
+            data_dir: self.data_dir.clone(),
+            app_conn,
+            provider,
+        })
+    }
 }
 
 pub fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
