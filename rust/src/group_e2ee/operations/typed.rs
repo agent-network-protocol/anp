@@ -11,7 +11,7 @@ use super::{
     real_welcome_process,
 };
 use crate::group_e2ee::commands::GROUP_CIPHER_CONTENT_TYPE;
-use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsStore};
+use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsOwnerScope, GroupMlsStore};
 use crate::group_e2ee::{
     GroupApplicationPlaintext, GroupCipherObject, GroupKeyPackage, GroupStateRef, SECURITY_PROFILE,
 };
@@ -367,6 +367,13 @@ pub fn generate_key_package<S: GroupMlsStore>(
     store: &S,
     input: GenerateKeyPackageInput,
 ) -> GroupMlsOperationResult<GroupKeyPackageOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.owner_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "owner_did": input.owner_did,
@@ -389,6 +396,13 @@ pub fn create_group_prepare<S: GroupMlsStore>(
     store: &S,
     input: CreateGroupInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.creator_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "agent_did": input.creator_did,
@@ -411,6 +425,13 @@ pub fn add_member_prepare<S: GroupMlsStore>(
     store: &S,
     input: AddMemberInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.actor_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "actor_did": input.actor_did,
@@ -435,6 +456,13 @@ pub fn remove_member_prepare<S: GroupMlsStore>(
     store: &S,
     input: RemoveMemberInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.actor_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "actor_did": input.actor_did,
@@ -459,6 +487,13 @@ pub fn leave_prepare<S: GroupMlsStore>(
     store: &S,
     input: LeaveGroupInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.actor_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "actor_did": input.actor_did,
@@ -482,6 +517,13 @@ pub fn update_member_prepare<S: GroupMlsStore>(
     store: &S,
     input: UpdateMemberInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.actor_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "actor_did": input.actor_did,
@@ -513,6 +555,13 @@ pub fn recover_member_prepare<S: GroupMlsStore>(
     store: &S,
     input: RecoverMemberInput,
 ) -> GroupMlsOperationResult<PreparedMlsCommitOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.actor_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "actor_did": input.actor_did,
@@ -575,6 +624,13 @@ pub fn status<S: GroupMlsStore>(
     store: &S,
     input: StatusInput,
 ) -> GroupMlsOperationResult<StatusOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        input.agent_did.as_deref(),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let data_dir = scope.data_dir().to_path_buf();
     let mut params = json!({
@@ -597,6 +653,13 @@ pub fn process_welcome<S: GroupMlsStore>(
     store: &S,
     input: ProcessWelcomeInput,
 ) -> GroupMlsOperationResult<ProcessWelcomeOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.agent_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let params = json!({
         "agent_did": input.agent_did,
@@ -622,6 +685,13 @@ pub fn process_notice<S: GroupMlsStore>(
     store: &S,
     input: ProcessNoticeInput,
 ) -> GroupMlsOperationResult<ProcessNoticeOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.recipient_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let mut params = json!({
         "recipient_did": input.recipient_did,
@@ -646,6 +716,13 @@ pub fn encrypt<S: GroupMlsStore>(
     store: &S,
     input: EncryptInput,
 ) -> GroupMlsOperationResult<EncryptOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.sender_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let params = json!({
         "sender_did": input.sender_did,
@@ -671,6 +748,13 @@ pub fn decrypt<S: GroupMlsStore>(
     store: &S,
     input: DecryptInput,
 ) -> GroupMlsOperationResult<DecryptOutput> {
+    let owner_scope = store.owner_scope();
+    validate_store_scope(
+        owner_scope.as_ref(),
+        Some(input.recipient_did.as_str()),
+        input.device_id.as_str(),
+        &input.request_id,
+    )?;
     let mut scope = open_scope(store, &input.request_id)?;
     let params = json!({
         "recipient_did": input.recipient_did,
@@ -704,6 +788,35 @@ fn open_scope<S: GroupMlsStore>(
             message: err.to_string(),
             request_id: Some(request_id.to_owned()),
         })
+}
+
+fn validate_store_scope(
+    scope: Option<&GroupMlsOwnerScope>,
+    owner_did: Option<&str>,
+    device_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let Some(scope) = scope else {
+        return Ok(());
+    };
+    if let Some(owner_did) = owner_did {
+        if owner_did != scope.owner_did {
+            return Err(GroupMlsOperationError {
+                code: "owner_scope_mismatch".to_owned(),
+                message: "operation owner_did is outside the group MLS store owner scope"
+                    .to_owned(),
+                request_id: Some(request_id.to_owned()),
+            });
+        }
+    }
+    if device_id != scope.device_id {
+        return Err(GroupMlsOperationError {
+            code: "owner_scope_mismatch".to_owned(),
+            message: "operation device_id is outside the group MLS store owner scope".to_owned(),
+            request_id: Some(request_id.to_owned()),
+        });
+    }
+    Ok(())
 }
 
 fn decode_output<T: for<'de> Deserialize<'de>>(value: Value) -> GroupMlsOperationResult<T> {

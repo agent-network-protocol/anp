@@ -1692,15 +1692,8 @@ fn upsert_binding_status(
 ) -> Result<(), Value> {
     let group_id_b64u = encode_b64u(openmls_group_id.as_slice());
     conn.execute(
-        "INSERT INTO group_bindings(agent_did, device_id, group_did, crypto_group_id_b64u, openmls_group_id_b64u, epoch, role, status, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
-         ON CONFLICT(agent_did, device_id, group_did) DO UPDATE SET
-           crypto_group_id_b64u = excluded.crypto_group_id_b64u,
-           openmls_group_id_b64u = excluded.openmls_group_id_b64u,
-           epoch = excluded.epoch,
-           role = excluded.role,
-           status = excluded.status,
-           updated_at = CURRENT_TIMESTAMP",
+        "INSERT OR REPLACE INTO group_bindings(agent_did, device_id, group_did, crypto_group_id_b64u, openmls_group_id_b64u, epoch, role, status, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
         params![
             agent_did,
             device_id,

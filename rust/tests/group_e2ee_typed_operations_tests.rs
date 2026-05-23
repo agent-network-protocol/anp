@@ -9,9 +9,10 @@ use anp::group_e2ee::operations::{
     GenerateKeyPackageInput, ProcessNoticeInput, ProcessWelcomeInput, RemoveMemberInput,
     StatusInput,
 };
-use anp::group_e2ee::storage::CompatDataDirStore;
+use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{GroupApplicationPlaintext, GroupStateRef};
 use common::tempdir;
+use rusqlite::{params, Connection};
 
 fn alice() -> &'static str {
     "did:wba:example.com:users:alice:e1"
@@ -266,4 +267,162 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     assert_eq!(bob_notice.status, "inactive");
     assert!(bob_notice.self_removed);
     assert_eq!(bob_notice.subject_status, "removed");
+}
+
+#[test]
+fn typed_operations_im_core_store_uses_owner_device_scoped_group_mls_tables() {
+    let root = tempdir("anp-group-typed-im-core").expect("state");
+    let local_state = root.path().join("local_state.sqlite");
+    let alice_store = ImCoreSqliteGroupMlsStore::from_local_state_sqlite_path(
+        &local_state,
+        "identity-alice",
+        alice(),
+        "phone",
+    )
+    .expect("alice im-core store");
+    let bob_store = ImCoreSqliteGroupMlsStore::from_local_state_sqlite_path(
+        &local_state,
+        "identity-bob",
+        bob(),
+        "phone",
+    )
+    .expect("bob im-core store");
+    assert_ne!(alice_store.state_db_path(), bob_store.state_db_path());
+    assert!(alice_store.state_db_path().ends_with("mls_state.sqlite"));
+    let group_did = "did:wba:example.com:groups:typed-im-core-store:e1";
+
+    let bob_kp = generate_key_package(
+        &bob_store,
+        GenerateKeyPackageInput {
+            owner_did: bob().to_owned(),
+            device_id: "phone".to_owned(),
+            operation_id: "op-im-core-bob-kp".to_owned(),
+            request_id: "req-im-core-bob-kp".to_owned(),
+            key_package_id: Some("kp-im-core-bob".to_owned()),
+            purpose: None,
+            group_did: Some(group_did.to_owned()),
+        },
+    )
+    .expect("bob key package");
+
+    let wrong_owner = generate_key_package(
+        &alice_store,
+        GenerateKeyPackageInput {
+            owner_did: bob().to_owned(),
+            device_id: "phone".to_owned(),
+            operation_id: "op-im-core-wrong-owner".to_owned(),
+            request_id: "req-im-core-wrong-owner".to_owned(),
+            key_package_id: None,
+            purpose: None,
+            group_did: None,
+        },
+    )
+    .expect_err("wrong owner should fail before writing local MLS state");
+    assert_eq!(wrong_owner.code, "owner_scope_mismatch");
+
+    let create = create_group_prepare(
+        &alice_store,
+        CreateGroupInput {
+            creator_did: alice().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            operation_id: "op-im-core-create".to_owned(),
+            request_id: "req-im-core-create".to_owned(),
+            pending_commit_id: Some("pc-im-core-create".to_owned()),
+        },
+    )
+    .expect("create");
+    finalize_commit(
+        &alice_store,
+        FinalizeCommitInput {
+            pending_commit_id: create.pending_commit_id,
+            request_id: "req-im-core-create-finalize".to_owned(),
+        },
+    )
+    .expect("finalize create");
+
+    let add = add_member_prepare(
+        &alice_store,
+        AddMemberInput {
+            actor_did: alice().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            member_did: bob().to_owned(),
+            group_key_package: bob_kp.group_key_package,
+            operation_id: "op-im-core-add".to_owned(),
+            request_id: "req-im-core-add".to_owned(),
+            pending_commit_id: Some("pc-im-core-add".to_owned()),
+        },
+    )
+    .expect("add prepare");
+    finalize_commit(
+        &alice_store,
+        FinalizeCommitInput {
+            pending_commit_id: add.pending_commit_id,
+            request_id: "req-im-core-add-finalize".to_owned(),
+        },
+    )
+    .expect("finalize add");
+
+    process_welcome(
+        &bob_store,
+        ProcessWelcomeInput {
+            agent_did: bob().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            welcome_b64u: add.welcome_b64u.expect("welcome"),
+            ratchet_tree_b64u: add.ratchet_tree_b64u.expect("ratchet tree"),
+            group_state_ref: GroupStateRef {
+                group_did: group_did.to_owned(),
+                group_state_version: "1".to_owned(),
+                policy_hash: None,
+            },
+            crypto_group_id_b64u: add.crypto_group_id_b64u,
+            epoch: add.epoch,
+            request_id: "req-im-core-bob-welcome".to_owned(),
+        },
+    )
+    .expect("bob welcome");
+
+    assert_im_core_store_owner_rows(
+        alice_store.state_db_path(),
+        "identity-alice",
+        alice(),
+        group_did,
+    );
+    assert_im_core_store_owner_rows(bob_store.state_db_path(), "identity-bob", bob(), group_did);
+}
+
+fn assert_im_core_store_owner_rows(
+    db_path: &std::path::Path,
+    owner_identity_id: &str,
+    owner_did: &str,
+    group_did: &str,
+) {
+    let conn = Connection::open(db_path).expect("open im-core group mls state");
+    let binding_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM group_mls_bindings
+             WHERE owner_identity_id = ?1 AND owner_did = ?2 AND device_id = 'phone' AND group_did = ?3",
+            params![owner_identity_id, owner_did, group_did],
+            |row| row.get(0),
+        )
+        .expect("binding count");
+    assert_eq!(binding_count, 1);
+    let legacy_binding_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'group_bindings'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("legacy table count");
+    assert_eq!(legacy_binding_count, 0);
+    let openmls_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'openmls_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("openmls table count");
+    assert!(openmls_table_count > 0);
 }
