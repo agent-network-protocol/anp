@@ -644,6 +644,54 @@ fn group_e2ee_remove_pending_commit_abort_clears_without_advancing_epoch() {
 }
 
 #[test]
+fn group_e2ee_add_member_prepare_abort_clears_without_advancing_epoch() {
+    let alice_dir = tempdir("anp-group-mls").expect("alice state");
+    let bob_dir = tempdir("anp-group-mls").expect("bob state");
+    let group_did = "did:wba:example.com:groups:add-abort:e1";
+
+    let add =
+        bootstrap_alice_bob_group_without_welcome(alice_dir.path(), bob_dir.path(), group_did);
+    assert_eq!(add["result"]["status"], "pending");
+    assert_eq!(add["result"]["from_epoch"], "0");
+    assert_eq!(add["result"]["epoch"], "1");
+    assert_eq!(add["result"]["local_epoch"], "0");
+
+    let aborted = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "commit-abort",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-abort-clear",
+            "operation_id": "op-add-abort-clear",
+            "params": {"pending_commit_id": add["result"]["pending_commit_id"].as_str().unwrap()}
+        }),
+    );
+    assert_eq!(aborted["result"]["status"], "aborted");
+    assert_eq!(aborted["result"]["local_epoch"], "0");
+
+    let still_epoch_zero = run_anp_mls(
+        alice_dir.path(),
+        "group",
+        "status",
+        json!({
+            "api_version": "anp-mls/v1",
+            "request_id": "req-add-abort-status",
+            "operation_id": "op-add-abort-status",
+            "params": {"agent_did": alice(), "device_id": "phone", "group_did": group_did}
+        }),
+    );
+    assert_eq!(still_epoch_zero["result"]["local_epoch"], "0");
+    assert_eq!(
+        still_epoch_zero["result"]["pending_commits"]
+            .as_array()
+            .expect("pending commits")
+            .len(),
+        0
+    );
+}
+
+#[test]
 fn group_e2ee_recover_member_prepare_finalize_replaces_lost_local_state() {
     let alice_dir = tempdir("anp-group-mls").expect("alice state");
     let bob_initial_dir = tempdir("anp-group-mls").expect("bob initial state");
