@@ -14,6 +14,8 @@ use thiserror::Error;
 
 pub mod commands;
 #[cfg(feature = "mls")]
+pub mod operations;
+#[cfg(feature = "mls")]
 pub mod storage;
 
 pub const PROFILE: &str = "anp.group.e2ee.v1";
