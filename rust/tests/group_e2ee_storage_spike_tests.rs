@@ -161,7 +161,8 @@ fn storage_spike_separate_openmls_connection_cannot_join_existing_write_transact
         "expected SQLite lock/busy evidence, got {encoded}"
     );
 
-    conn.execute_batch("ROLLBACK").expect("rollback probe transaction");
+    conn.execute_batch("ROLLBACK")
+        .expect("rollback probe transaction");
 }
 
 #[test]

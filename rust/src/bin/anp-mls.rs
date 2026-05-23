@@ -2,59 +2,34 @@
 //! [OUTPUT] A single JSON response on stdout; real mode persists OpenMLS state, pending membership/recovery/update commits, local active/inactive bindings, and contract-test mode emits explicit non-cryptographic fixtures.
 //! [POS] Boundary binary between Go/product clients and Rust MLS state; keep private MLS material local to `--data-dir` while exposing opaque P6 remove/leave/recovery/update/commit artifacts.
 
+use anp::group_e2ee::commands::{
+    error_response, ok_response, response_for_operation_log, system_version, DEVICE_ID_DEFAULT,
+    GROUP_CIPHER_CONTENT_TYPE,
+};
+use anp::group_e2ee::storage::{
+    init_app_schema, sqlite_mls_provider, SqliteMlsProvider, StateLock,
+};
 use anp::group_e2ee::{
     build_send_aad, deterministic_contract_artifact, CONTRACT_ARTIFACT_MODE, METHOD_UPDATE,
     MTI_SUITE, SECURITY_PROFILE,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use fs2::FileExt;
 use openmls::prelude::{
     tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize},
     *,
 };
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::RustCrypto;
-use openmls_sqlite_storage::{Connection as MlsConnection, SqliteStorageProvider};
 use openmls_traits::OpenMlsProvider;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-
-const API_VERSION: &str = "anp-mls/v1";
-const DEVICE_ID_DEFAULT: &str = "default";
-const BINARY_NAME: &str = "anp-mls";
-const GROUP_CIPHER_CONTENT_TYPE: &str = "application/anp-group-cipher+json";
-const SUPPORTED_COMMANDS: &[&str] = &[
-    "system version",
-    "key-package generate",
-    "group create",
-    "group add-member",
-    "group update-member-prepare",
-    "group update-member-finalize",
-    "group update-member-abort",
-    "group recover-member-prepare",
-    "group recover-member-finalize",
-    "group recover-member-abort",
-    "group remove-member",
-    "group leave",
-    "group commit-finalize",
-    "group commit-abort",
-    "welcome process",
-    "commit process",
-    "notice process",
-    "message encrypt",
-    "message decrypt",
-    "group restore",
-    "group status",
-];
 
 fn main() {
     let code = match run() {
@@ -99,12 +74,7 @@ fn run() -> Result<Value, Value> {
         || std::env::var("ANP_MLS_CONTRACT_TEST").ok().as_deref() == Some("1");
     let params = request_params(&req);
     if command == "system version" {
-        return Ok(json!({
-            "ok": true,
-            "api_version": API_VERSION,
-            "request_id": request_id,
-            "result": system_version(),
-        }));
+        return Ok(ok_response(&request_id, system_version()));
     }
     if contract_enabled {
         return run_contract_mode(&command, &request_id, &params, invocation.data_dir.as_ref());
@@ -235,12 +205,7 @@ fn run_contract_mode(
     if let Some(data_dir) = data_dir {
         append_contract_operation_log(data_dir, request_id, command)?;
     }
-    Ok(json!({
-        "ok": true,
-        "api_version": API_VERSION,
-        "request_id": request_id,
-        "result": result,
-    }))
+    Ok(ok_response(request_id, result))
 }
 
 fn run_real_mode(
@@ -264,7 +229,8 @@ fn run_real_mode(
             Some(request_id.to_owned()),
         )
     })?;
-    let _lock = StateLock::try_acquire(data_dir, request_id)?;
+    let _lock = StateLock::try_acquire(data_dir)
+        .map_err(|e| error(e.code(), &e.to_string(), Some(request_id.to_owned())))?;
     let db_path = data_dir.join("state.db");
     let app_conn =
         Connection::open(&db_path).map_err(|e| sqlite_error("state_open_failed", e, request_id))?;
@@ -298,7 +264,8 @@ fn run_real_mode(
     }
 
     let result = {
-        let mut provider = sqlite_mls_provider(&db_path, request_id)?;
+        let mut provider = sqlite_mls_provider(&db_path)
+            .map_err(|e| error(e.code(), &e.to_string(), Some(request_id.to_owned())))?;
         match command {
             "key-package generate" => {
                 real_key_package(&mut provider, &app_conn, params, request_id)?
@@ -373,12 +340,7 @@ fn run_real_mode(
             }
         }
     };
-    let response = json!({
-        "ok": true,
-        "api_version": API_VERSION,
-        "request_id": request_id,
-        "result": result,
-    });
+    let response = ok_response(request_id, result);
     let recorded_response = response_for_operation_log(command, &response);
     record_operation(
         &app_conn,
@@ -389,194 +351,6 @@ fn run_real_mode(
     )
     .map_err(|e| sqlite_error("state_write_failed", e, request_id))?;
     Ok(response)
-}
-
-fn system_version() -> Value {
-    json!({
-        "api_version": API_VERSION,
-        "binary_name": BINARY_NAME,
-        "binary_version": env!("CARGO_PKG_VERSION"),
-        "build_version": env!("CARGO_PKG_VERSION"),
-        "supported_commands": SUPPORTED_COMMANDS,
-    })
-}
-
-fn response_for_operation_log(command: &str, response: &Value) -> Value {
-    let mut stored = response.clone();
-    if command == "message decrypt" {
-        if let Some(result) = stored.get_mut("result").and_then(Value::as_object_mut) {
-            result.remove("application_plaintext");
-            result.insert(
-                "plaintext_redacted".to_owned(),
-                json!({"redacted": true, "reason": "plaintext is never persisted in operations"}),
-            );
-        }
-    }
-    stored
-}
-
-struct StateLock {
-    file: File,
-}
-
-impl StateLock {
-    fn try_acquire(data_dir: &Path, request_id: &str) -> Result<Self, Value> {
-        let lock_path = data_dir.join("state.lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&lock_path)
-            .map_err(|e| {
-                error(
-                    "state_lock_failed",
-                    &format!("open state lock: {e}"),
-                    Some(request_id.to_owned()),
-                )
-            })?;
-        file.try_lock_exclusive().map_err(|e| {
-            error(
-                "state_locked",
-                &format!("state is locked by another anp-mls operation: {e}"),
-                Some(request_id.to_owned()),
-            )
-        })?;
-        Ok(Self { file })
-    }
-}
-
-impl Drop for StateLock {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
-    }
-}
-
-#[derive(Default)]
-struct JsonCodec;
-
-impl openmls_sqlite_storage::Codec for JsonCodec {
-    type Error = serde_json::Error;
-
-    fn to_vec<T: Serialize>(value: &T) -> Result<Vec<u8>, Self::Error> {
-        serde_json::to_vec(value)
-    }
-
-    fn from_slice<T: DeserializeOwned>(slice: &[u8]) -> Result<T, Self::Error> {
-        serde_json::from_slice(slice)
-    }
-}
-
-struct SqliteMlsProvider {
-    crypto: RustCrypto,
-    storage: SqliteStorageProvider<JsonCodec, MlsConnection>,
-}
-
-impl OpenMlsProvider for SqliteMlsProvider {
-    type CryptoProvider = RustCrypto;
-    type RandProvider = RustCrypto;
-    type StorageProvider = SqliteStorageProvider<JsonCodec, MlsConnection>;
-
-    fn storage(&self) -> &Self::StorageProvider {
-        &self.storage
-    }
-
-    fn crypto(&self) -> &Self::CryptoProvider {
-        &self.crypto
-    }
-
-    fn rand(&self) -> &Self::RandProvider {
-        &self.crypto
-    }
-}
-
-fn sqlite_mls_provider(db_path: &Path, request_id: &str) -> Result<SqliteMlsProvider, Value> {
-    let connection = MlsConnection::open(db_path)
-        .map_err(|e| sqlite_error("state_open_failed", e, request_id))?;
-    let mut storage = SqliteStorageProvider::<JsonCodec, MlsConnection>::new(connection);
-    storage.run_migrations().map_err(|e| {
-        error(
-            "state_migration_failed",
-            &format!("OpenMLS SQLite migrations failed: {e}"),
-            Some(request_id.to_owned()),
-        )
-    })?;
-    Ok(SqliteMlsProvider {
-        crypto: RustCrypto::default(),
-        storage,
-    })
-}
-
-fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-         );
-         INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
-         CREATE TABLE IF NOT EXISTS operations (
-            operation_id TEXT PRIMARY KEY,
-            command TEXT NOT NULL,
-            input_digest TEXT NOT NULL,
-            response_json TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-         );
-         CREATE TABLE IF NOT EXISTS agents (
-            agent_did TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            signature_public_key BLOB NOT NULL,
-            signature_scheme TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY(agent_did, device_id)
-         );
-         CREATE TABLE IF NOT EXISTS key_packages (
-            agent_did TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            key_package_id TEXT PRIMARY KEY,
-            public_json TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            consumed_at TEXT
-         );
-         CREATE TABLE IF NOT EXISTS group_bindings (
-            agent_did TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            group_did TEXT NOT NULL,
-            crypto_group_id_b64u TEXT NOT NULL,
-            openmls_group_id_b64u TEXT NOT NULL,
-            epoch INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            status TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY(agent_did, device_id, group_did)
-         );
-         CREATE TABLE IF NOT EXISTS pending_commits (
-            pending_commit_id TEXT PRIMARY KEY,
-            operation_id TEXT NOT NULL,
-            command TEXT NOT NULL,
-            agent_did TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            group_did TEXT NOT NULL,
-            crypto_group_id_b64u TEXT NOT NULL,
-            subject_did TEXT NOT NULL,
-            subject_status TEXT NOT NULL,
-            from_epoch INTEGER NOT NULL,
-            to_epoch INTEGER NOT NULL,
-            commit_b64u TEXT NOT NULL,
-            ratchet_tree_b64u TEXT,
-            group_info_b64u TEXT,
-            epoch_authenticator_b64u TEXT,
-            status TEXT NOT NULL,
-            response_json TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-         );
-         CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_commits_operation_id
-            ON pending_commits(operation_id);",
-    )
 }
 
 fn lookup_operation(
@@ -3488,10 +3262,5 @@ fn mls_error(code: &str, err: impl std::fmt::Display, request_id: &str) -> Value
 }
 
 fn error(code: &str, message: &str, request_id: Option<String>) -> Value {
-    json!({
-        "ok": false,
-        "api_version": API_VERSION,
-        "request_id": request_id,
-        "error": {"code": code, "message": message}
-    })
+    error_response(code, message, request_id)
 }

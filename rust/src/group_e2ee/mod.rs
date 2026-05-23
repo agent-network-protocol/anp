@@ -1,9 +1,9 @@
 //! P6 wire helpers for ANP group E2EE.
 //!
 //! This module owns P6 data models, canonical AAD helpers, and the explicit
-//! non-cryptographic contract-test artifact generator. Real OpenMLS group
-//! operations live in the `anp-mls` binary so SDK/product integrations can share
-//! wire semantics without embedding local MLS private state in this helper module.
+//! non-cryptographic contract-test artifact generator. The `commands` module
+//! owns the `anp-mls/v1` compatibility command surface while real OpenMLS
+//! operations are extracted into library modules behind the `mls` feature.
 
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+pub mod commands;
+#[cfg(feature = "mls")]
+pub mod storage;
 
 pub const PROFILE: &str = "anp.group.e2ee.v1";
 pub const SECURITY_PROFILE: &str = "group-e2ee";
