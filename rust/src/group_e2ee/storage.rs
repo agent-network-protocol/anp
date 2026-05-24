@@ -19,7 +19,7 @@ use thiserror::Error;
 pub enum StateLockError {
     #[error("open state lock: {0}")]
     Open(#[source] std::io::Error),
-    #[error("state is locked by another anp-mls operation: {0}")]
+    #[error("state is locked by another group MLS operation: {0}")]
     Locked(#[source] std::io::Error),
 }
 
@@ -57,7 +57,7 @@ impl Drop for StateLock {
 }
 
 #[derive(Default)]
-pub struct JsonCodec;
+pub(crate) struct JsonCodec;
 
 impl openmls_sqlite_storage::Codec for JsonCodec {
     type Error = serde_json::Error;
@@ -71,7 +71,7 @@ impl openmls_sqlite_storage::Codec for JsonCodec {
     }
 }
 
-pub struct SqliteMlsProvider {
+pub(crate) struct SqliteMlsProvider {
     crypto: RustCrypto,
     storage: SqliteStorageProvider<JsonCodec, MlsConnection>,
 }
@@ -111,7 +111,7 @@ impl SqliteMlsProviderError {
     }
 }
 
-pub fn sqlite_mls_provider(db_path: &Path) -> Result<SqliteMlsProvider, SqliteMlsProviderError> {
+fn sqlite_mls_provider(db_path: &Path) -> Result<SqliteMlsProvider, SqliteMlsProviderError> {
     let connection = MlsConnection::open(db_path).map_err(SqliteMlsProviderError::Open)?;
     let mut storage = SqliteStorageProvider::<JsonCodec, MlsConnection>::new(connection);
     storage
@@ -336,7 +336,7 @@ impl GroupMlsStore for ImCoreSqliteGroupMlsStore {
     }
 }
 
-pub fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
+fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -409,7 +409,7 @@ pub fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-pub fn init_im_core_group_mls_schema(conn: &Connection) -> rusqlite::Result<()> {
+fn init_im_core_group_mls_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          PRAGMA foreign_keys=ON;

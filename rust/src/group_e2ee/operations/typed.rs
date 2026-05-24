@@ -1,7 +1,7 @@
 //! Typed one-shot group MLS operation facade.
 //!
 //! This module keeps provider, SQLite path, and OpenMLS storage details behind
-//! `GroupMlsStore` while reusing the compatibility operation implementation.
+//! `GroupMlsStore` while reusing the internal OpenMLS operation implementation.
 
 use super::{
     real_commit_process, real_group_add_member, real_group_commit_abort,
@@ -10,10 +10,10 @@ use super::{
     real_group_update_member_prepare, real_key_package, real_message_decrypt, real_message_encrypt,
     real_welcome_process,
 };
-use crate::group_e2ee::commands::GROUP_CIPHER_CONTENT_TYPE;
 use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsOwnerScope, GroupMlsStore};
 use crate::group_e2ee::{
-    GroupApplicationPlaintext, GroupCipherObject, GroupKeyPackage, GroupStateRef, SECURITY_PROFILE,
+    GroupApplicationPlaintext, GroupCipherObject, GroupKeyPackage, GroupStateRef,
+    GROUP_CIPHER_CONTENT_TYPE, SECURITY_PROFILE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -198,7 +198,6 @@ pub struct DecryptInput {
 pub struct PreparedMlsCommitOutput {
     pub pending_commit_id: String,
     pub operation_id: String,
-    pub command: String,
     pub status: String,
     pub actor_did: String,
     pub subject_did: String,
@@ -308,7 +307,6 @@ pub struct DecryptOutput {
 pub struct PendingCommitStatus {
     pub pending_commit_id: String,
     pub operation_id: String,
-    pub command: String,
     pub agent_did: String,
     pub device_id: String,
     pub group_did: String,

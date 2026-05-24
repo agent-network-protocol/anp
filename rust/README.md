@@ -20,31 +20,32 @@ cargo add anp
 - Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`
 - RFC 9421 origin proof helpers for ANP request objects
 - WNS models, validation, and resolver helpers
-- `anp-mls` one-shot group E2EE helper for ANP-P6 real OpenMLS key-package, group create/add,
-  MLS-backed member removal, local leave terminal-state handling, commit notice processing,
-  pending commit finalize/abort, welcome processing, message encrypt/decrypt, and local status
-  operations backed by a `state.db` SQLite store plus `state.lock` mutation lock. Contract-test artifacts remain
-  available only when explicitly enabled by request or `ANP_MLS_CONTRACT_TEST=1`. Packaging
-  and doctor integrations can probe compatibility with `anp-mls system version --json-in -`.
+- `anp::group_e2ee::operations` one-shot group E2EE APIs for ANP-P6 real OpenMLS
+  KeyPackage generation, group create/add/remove prepare, local leave terminal-state
+  handling, commit notice processing, pending commit finalize/abort, welcome processing,
+  message encrypt/decrypt, and local status operations. MLS state is kept behind
+  `anp::group_e2ee::storage` store implementations rather than a subprocess or CLI JSON
+  command surface.
 
 ## Compatibility Notes
 
 - `create_did_wba_document_with_key_binding` is deprecated. Use `create_did_wba_document` with `DidDocumentOptions::with_profile(DidProfile::K1)` when you need a `k1_` DID.
-- Real `anp-mls` mode requires `--data-dir DIR`; MLS private material, KeyPackage state,
-  group bindings, operation idempotency records, and OpenMLS persistence are local to
-  `DIR/state.db` and are not emitted to service-facing P6 payloads.
-- `anp-mls system version --json-in -` does not require `--data-dir`; it returns
-  `api_version`, `binary_name`, `binary_version`/`build_version`, and `supported_commands`.
+- Group MLS operations are library calls, not `anp-mls` subprocess calls. Use
+  `CompatDataDirStore` for the legacy `state.db` layout or `ImCoreSqliteGroupMlsStore`
+  for owner/device-scoped MLS state managed from an im-core local-state root.
+- MLS private material, KeyPackage state, group bindings, pending commits, and OpenMLS
+  persistence stay local to the selected `GroupMlsStore` and are not emitted to
+  service-facing P6 payloads.
 - Message encrypt/decrypt rejects incoming group-state or cipher claims whose
   `crypto_group_id_b64u`/`openmls_group_id_b64u` or epoch does not match the local
   SQLite group binding before invoking OpenMLS.
-- Decrypted plaintext is returned to stdout for the active request only and is redacted from
-  the local operation idempotency table.
-- `group remove-member` creates a durable OpenMLS pending commit and returns opaque commit,
-  ratchet-tree/group-info-compatible public artifacts, from/to epochs, and `pending_commit_id`;
-  local epoch remains unchanged until `group commit-finalize`, while `group commit-abort`
-  clears the pending commit after deterministic service rejection.
-- `group leave` records a local terminal pending artifact because OpenMLS 0.8 rejects
+- Decrypted plaintext is returned only as the typed `DecryptOutput` for the active library
+  call; callers must not persist plaintext in diagnostics or operation logs.
+- `remove_member_prepare` creates a durable OpenMLS pending commit and returns opaque
+  commit, ratchet-tree/group-info-compatible public artifacts, from/to epochs, and
+  `pending_commit_id`; local epoch remains unchanged until `finalize_commit`, while
+  `abort_commit` clears the pending commit after deterministic service rejection.
+- `leave_prepare` records a local terminal pending artifact because OpenMLS 0.8 rejects
   same-member self-remove commits; finalizing it marks the local binding `left` without
   advancing the local epoch. PR-B1 service/CLI integrations should use the hidden
   `group.e2ee.leave_request` control plane and process it through an authorized

@@ -64,11 +64,6 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 tiny_http = "0.12"
 serde_json_canonicalizer = "0.3.2"
 
-[[bin]]
-name = "anp-mls"
-path = "src/bin/anp-mls.rs"
-required-features = ["mls"]
-
 [[test]]
 name = "python_network_interop_tests"
 path = "tests/python_network_interop_tests.rs"

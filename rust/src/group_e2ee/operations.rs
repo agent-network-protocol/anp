@@ -1,12 +1,12 @@
 //! Real OpenMLS group E2EE operations.
 //!
-//! This module is extracted from the `anp-mls` compatibility binary. It keeps
-//! the `anp-mls/v1` JSON-shaped input/output while the native typed API is
-//! introduced around these operations.
+//! The public entry point is the typed API re-exported from this module. The
+//! JSON-shaped functions below are crate-internal adapters shared by the typed
+//! facade while the OpenMLS implementation is being kept close to its original
+//! operation boundaries.
 
-use super::commands::{error_response, DEVICE_ID_DEFAULT, GROUP_CIPHER_CONTENT_TYPE};
 use super::storage::{JsonCodec, SqliteMlsProvider};
-use super::{build_send_aad, MTI_SUITE, SECURITY_PROFILE};
+use super::{build_send_aad, GROUP_CIPHER_CONTENT_TYPE, MTI_SUITE, SECURITY_PROFILE};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use openmls::prelude::{
@@ -23,7 +23,9 @@ use std::path::Path;
 pub mod typed;
 pub use typed::*;
 
-pub fn real_key_package(
+const DEVICE_ID_DEFAULT: &str = "default";
+
+pub(crate) fn real_key_package(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -86,7 +88,7 @@ pub fn real_key_package(
     }))
 }
 
-pub fn real_group_create(
+pub(crate) fn real_group_create(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -192,7 +194,7 @@ pub fn real_group_create(
     Ok(result)
 }
 
-pub fn real_group_add_member(
+pub(crate) fn real_group_add_member(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -331,7 +333,7 @@ pub fn real_group_add_member(
     Ok(result)
 }
 
-pub fn real_group_update_member_prepare(
+pub(crate) fn real_group_update_member_prepare(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -511,7 +513,7 @@ pub fn real_group_update_member_prepare(
     Ok(result)
 }
 
-pub fn real_group_recover_member_prepare(
+pub(crate) fn real_group_recover_member_prepare(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -678,7 +680,7 @@ pub fn real_group_recover_member_prepare(
     Ok(result)
 }
 
-pub fn real_group_remove_member(
+pub(crate) fn real_group_remove_member(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -713,7 +715,7 @@ pub fn real_group_remove_member(
     )
 }
 
-pub fn real_group_leave(
+pub(crate) fn real_group_leave(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -917,7 +919,7 @@ fn prepare_membership_remove(
     Ok(result)
 }
 
-pub fn real_welcome_process(
+pub(crate) fn real_welcome_process(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1036,7 +1038,7 @@ pub fn real_welcome_process(
     }))
 }
 
-pub fn real_message_encrypt(
+pub(crate) fn real_message_encrypt(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1092,7 +1094,7 @@ pub fn real_message_encrypt(
     }))
 }
 
-pub fn real_message_decrypt(
+pub(crate) fn real_message_decrypt(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1186,7 +1188,7 @@ pub fn real_message_decrypt(
     }))
 }
 
-pub fn real_group_commit_finalize(
+pub(crate) fn real_group_commit_finalize(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1295,7 +1297,7 @@ pub fn real_group_commit_finalize(
     }))
 }
 
-pub fn real_group_commit_abort(
+pub(crate) fn real_group_commit_abort(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1346,7 +1348,7 @@ pub fn real_group_commit_abort(
     }))
 }
 
-pub fn real_commit_process(
+pub(crate) fn real_commit_process(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -1453,7 +1455,7 @@ pub fn real_commit_process(
     }))
 }
 
-pub fn real_group_status(
+pub(crate) fn real_group_status(
     provider: &mut SqliteMlsProvider,
     conn: &Connection,
     params: &Value,
@@ -2774,5 +2776,9 @@ fn mls_error(code: &str, err: impl std::fmt::Display, request_id: &str) -> Value
 }
 
 fn error(code: &str, message: &str, request_id: Option<String>) -> Value {
-    error_response(code, message, request_id)
+    json!({
+        "ok": false,
+        "request_id": request_id,
+        "error": {"code": code, "message": message}
+    })
 }

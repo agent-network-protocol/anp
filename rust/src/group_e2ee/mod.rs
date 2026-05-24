@@ -1,9 +1,8 @@
 //! P6 wire helpers for ANP group E2EE.
 //!
 //! This module owns P6 data models, canonical AAD helpers, and the explicit
-//! non-cryptographic contract-test artifact generator. The `commands` module
-//! owns the `anp-mls/v1` compatibility command surface while real OpenMLS
-//! operations are extracted into library modules behind the `mls` feature.
+//! non-cryptographic contract-test artifact generator. Real OpenMLS operations
+//! are exposed as typed library APIs behind the `mls` feature.
 
 use crate::canonical_json::{canonicalize_json, CanonicalJsonError};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -12,7 +11,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub mod commands;
 #[cfg(feature = "mls")]
 pub mod operations;
 #[cfg(feature = "mls")]
@@ -27,7 +25,7 @@ pub const METHOD_LEAVE_REQUEST: &str = "group.e2ee.leave_request";
 pub const METHOD_LEAVE_REQUEST_PROCESS: &str = "group.e2ee.process_leave_request";
 pub const METHOD_RECOVER_MEMBER: &str = "group.e2ee.recover_member";
 pub const METHOD_UPDATE: &str = "group.e2ee.update";
-pub const ANP_MLS_API_VERSION: &str = "anp-mls/v1";
+pub const GROUP_CIPHER_CONTENT_TYPE: &str = "application/anp-group-cipher+json";
 
 #[derive(Debug, Error)]
 pub enum GroupE2eeError {
@@ -248,64 +246,6 @@ pub struct GroupApplicationPlaintext {
     pub payload: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_b64u: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Request {
-    pub api_version: String,
-    pub request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_did: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_id: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub contract_test_enabled: bool,
-    pub params: Value,
-}
-
-impl Request {
-    pub fn new(request_id: impl Into<String>, params: Value) -> Self {
-        Self {
-            api_version: ANP_MLS_API_VERSION.to_owned(),
-            request_id: request_id.into(),
-            agent_did: None,
-            device_id: None,
-            contract_test_enabled: false,
-            params,
-        }
-    }
-
-    pub fn with_agent(
-        mut self,
-        agent_did: impl Into<String>,
-        device_id: impl Into<String>,
-    ) -> Self {
-        self.agent_did = Some(agent_did.into());
-        self.device_id = Some(device_id.into());
-        self
-    }
-
-    pub fn with_contract_test_enabled(mut self, enabled: bool) -> Self {
-        self.contract_test_enabled = enabled;
-        self
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Response {
-    pub ok: bool,
-    pub api_version: String,
-    pub request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorObject>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ErrorObject {
-    pub code: String,
-    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -735,80 +675,5 @@ mod tests {
             deterministic_contract_artifact("cipher", &json!({"x": 1}), true).expect("artifact");
         assert!(artifact.non_cryptographic);
         assert_eq!(artifact.artifact_mode, CONTRACT_ARTIFACT_MODE);
-    }
-
-    #[test]
-    fn anp_mls_request_model_matches_go_exec_provider_envelope() {
-        let request = Request::new(
-            "req-1",
-            json!({
-                "application_plaintext": {
-                    "application_content_type": "text/plain",
-                    "text": "super secret"
-                }
-            }),
-        )
-        .with_contract_test_enabled(true);
-
-        let encoded = serde_json::to_value(&request).expect("request json");
-        assert_eq!(
-            encoded,
-            json!({
-                "api_version": ANP_MLS_API_VERSION,
-                "request_id": "req-1",
-                "contract_test_enabled": true,
-                "params": {
-                    "application_plaintext": {
-                        "application_content_type": "text/plain",
-                        "text": "super secret"
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn anp_mls_request_model_supports_top_level_agent_defaults() {
-        let request = Request::new("req-top-level-envelope", json!({}))
-            .with_agent("did:wba:example.com:users:alice:e1", "phone");
-
-        let encoded = serde_json::to_value(&request).expect("request json");
-        assert_eq!(encoded["api_version"], ANP_MLS_API_VERSION);
-        assert_eq!(encoded["agent_did"], "did:wba:example.com:users:alice:e1");
-        assert_eq!(encoded["device_id"], "phone");
-        assert_eq!(encoded["params"], json!({}));
-        assert!(encoded.get("contract_test_enabled").is_none());
-    }
-
-    #[test]
-    fn anp_mls_response_model_decodes_success_and_error_shapes() {
-        let success: Response = serde_json::from_str(
-            r#"{"ok":true,"api_version":"anp-mls/v1","request_id":"req-1","result":{"non_cryptographic":true}}"#,
-        )
-        .expect("success response");
-        assert!(success.ok);
-        assert_eq!(success.api_version, ANP_MLS_API_VERSION);
-        assert_eq!(
-            success
-                .result
-                .as_ref()
-                .and_then(|value| value.get("non_cryptographic")),
-            Some(&json!(true))
-        );
-        assert!(success.error.is_none());
-
-        let failure: Response = serde_json::from_str(
-            r#"{"ok":false,"api_version":"anp-mls/v1","request_id":"req-2","error":{"code":"missing_field","message":"agent_did is required"}}"#,
-        )
-        .expect("error response");
-        assert!(!failure.ok);
-        assert_eq!(
-            failure.error,
-            Some(ErrorObject {
-                code: "missing_field".to_owned(),
-                message: "agent_did is required".to_owned(),
-            })
-        );
-        assert!(failure.result.is_none());
     }
 }
