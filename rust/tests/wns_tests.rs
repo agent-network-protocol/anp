@@ -1,11 +1,12 @@
+mod common;
+
 use anp::wns::{
     build_handle_service_entry, parse_wba_uri, resolve_handle_with_options, validate_handle,
     verify_handle_binding_with_options, BindingVerificationOptions, HandleStatus,
     ResolveHandleOptions,
 };
+use common::JsonTestServer;
 use serde_json::json;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
 fn test_validate_handle_and_parse_wba_uri() {
@@ -20,17 +21,15 @@ fn test_validate_handle_and_parse_wba_uri() {
 
 #[tokio::test]
 async fn test_resolve_handle_with_mock_server() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/.well-known/handle/alice"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+    let server = JsonTestServer::start([(
+        "/.well-known/handle/alice",
+        json!({
             "handle": "alice.example.com",
             "did": "did:wba:example.com:user:alice",
             "status": "active",
             "updated": "2025-01-01T00:00:00Z",
-        })))
-        .mount(&server)
-        .await;
+        }),
+    )]);
 
     let result = resolve_handle_with_options(
         "alice.example.com",
@@ -48,16 +47,14 @@ async fn test_resolve_handle_with_mock_server() {
 
 #[tokio::test]
 async fn test_verify_handle_binding_with_supplied_did_document() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/.well-known/handle/alice"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+    let server = JsonTestServer::start([(
+        "/.well-known/handle/alice",
+        json!({
             "handle": "alice.example.com",
             "did": "did:wba:example.com:user:alice",
             "status": "active",
-        })))
-        .mount(&server)
-        .await;
+        }),
+    )]);
 
     let did_document = json!({
         "id": "did:wba:example.com:user:alice",
@@ -87,16 +84,14 @@ async fn test_verify_handle_binding_with_supplied_did_document() {
 
 #[tokio::test]
 async fn test_verify_handle_binding_accepts_matching_https_domain() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/.well-known/handle/alice"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+    let server = JsonTestServer::start([(
+        "/.well-known/handle/alice",
+        json!({
             "handle": "alice.example.com",
             "did": "did:wba:example.com:user:alice",
             "status": "active",
-        })))
-        .mount(&server)
-        .await;
+        }),
+    )]);
 
     let did_document = json!({
         "id": "did:wba:example.com:user:alice",

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use serde_json::Value;
+#[cfg(feature = "network")]
+use url::Url;
 
 use crate::keys::PrivateKeyMaterial;
 
@@ -101,7 +103,7 @@ impl DIDWbaAuthHeader {
         let domain = extract_domain(server_url);
         if let Some(value) = get_header_case_insensitive(headers, "Authentication-Info") {
             let parsed = parse_authentication_info(value);
-            if let Some(token) = parsed.get("access_token") {
+            if let Some(token) = parsed.get("access_token").filter(|token| !token.is_empty()) {
                 self.tokens.insert(domain, token.clone());
                 return Some(token.clone());
             }
@@ -217,10 +219,42 @@ impl DIDWbaAuthHeader {
 }
 
 fn extract_domain(server_url: &str) -> String {
-    url::Url::parse(server_url)
-        .ok()
-        .and_then(|value| value.host_str().map(|host| host.to_string()))
-        .unwrap_or_else(|| server_url.to_string())
+    #[cfg(feature = "network")]
+    {
+        return Url::parse(server_url)
+            .ok()
+            .and_then(|value| value.host_str().map(|host| host.to_string()))
+            .unwrap_or_else(|| server_url.to_string());
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        server_url
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .and_then(|authority| {
+                authority
+                    .rsplit_once('@')
+                    .map(|(_, host)| host)
+                    .or(Some(authority))
+            })
+            .map(|authority| {
+                if let Some(stripped) = authority.strip_prefix('[') {
+                    stripped
+                        .split_once(']')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                } else {
+                    authority
+                        .split_once(':')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                }
+            })
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| server_url.to_string())
+    }
 }
 
 fn get_header_case_insensitive<'a>(
@@ -287,7 +321,7 @@ fn normalize_covered_components(
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .map(|(key, value)| (key.to_ascii_lowercase(), value))
+        .filter_map(|(key, value)| (!value.is_empty()).then(|| (key.to_ascii_lowercase(), value)))
         .collect::<BTreeMap<_, _>>();
 
     let mut result = Vec::new();
@@ -314,5 +348,5 @@ fn normalize_covered_components(
         }
         result.push(component.clone());
     }
-    Some(result)
+    (!result.is_empty()).then_some(result)
 }

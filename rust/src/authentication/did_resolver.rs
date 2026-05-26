@@ -1,13 +1,18 @@
 use percent_encoding::percent_decode_str;
+#[cfg(feature = "network")]
 use reqwest::Client;
 use serde_json::Value;
 
+#[cfg(feature = "network")]
 use crate::proof::{verify_w3c_proof, ProofVerificationOptions};
 
+#[cfg(feature = "network")]
+use super::did_wba::{find_verification_method, validate_did_document_binding};
 use super::did_wba::{
-    find_verification_method, resolve_did_wba_document_sync, resolve_did_wba_document_with_options,
-    validate_did_document_binding, AuthenticationError, DidResolutionOptions,
+    resolve_did_wba_document_sync, resolve_did_wba_document_with_options, AuthenticationError,
+    DidResolutionOptions,
 };
+#[cfg(feature = "network")]
 use super::verification_methods::extract_public_key;
 
 pub async fn resolve_did_document(
@@ -57,46 +62,57 @@ pub async fn resolve_did_document_with_options(
         )
     };
 
-    let client = Client::builder()
-        .danger_accept_invalid_certs(!options.verify_ssl)
-        .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
-        .build()
-        .map_err(|_| AuthenticationError::NetworkFailure)?;
-    let document: Value = client
-        .get(url)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|_| AuthenticationError::NetworkFailure)?
-        .error_for_status()
-        .map_err(|_| AuthenticationError::NetworkFailure)?
-        .json()
-        .await
-        .map_err(|_| AuthenticationError::JsonFailure)?;
+    #[cfg(not(feature = "network"))]
+    {
+        let _ = url;
+        return Err(AuthenticationError::NetworkFailure);
+    }
 
-    if document.get("id").and_then(Value::as_str) != Some(did) {
-        return Err(AuthenticationError::InvalidDidDocument);
-    }
-    if did.starts_with("did:wba:") && !validate_did_document_binding(&document, verify_proof) {
-        return Err(AuthenticationError::InvalidDidBinding);
-    }
-    if verify_proof {
-        if let Some(proof) = document.get("proof") {
-            let verification_method = proof
-                .get("verificationMethod")
-                .and_then(Value::as_str)
-                .ok_or(AuthenticationError::InvalidDidDocument)?;
-            let method = find_verification_method(&document, verification_method)
-                .ok_or(AuthenticationError::VerificationMethodNotFound)?;
-            let public_key = extract_public_key(&method)
-                .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
-            if !verify_w3c_proof(&document, &public_key, ProofVerificationOptions::default()) {
-                return Err(AuthenticationError::VerificationFailed);
+    #[cfg(feature = "network")]
+    {
+        let client = Client::builder()
+            .danger_accept_invalid_certs(!options.verify_ssl)
+            .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
+            .build()
+            .map_err(|_| AuthenticationError::NetworkFailure)?;
+        let mut request = client.get(url).header("Accept", "application/json");
+        for (key, value) in &options.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        let document: Value = request
+            .send()
+            .await
+            .map_err(|_| AuthenticationError::NetworkFailure)?
+            .error_for_status()
+            .map_err(|_| AuthenticationError::NetworkFailure)?
+            .json()
+            .await
+            .map_err(|_| AuthenticationError::JsonFailure)?;
+
+        if document.get("id").and_then(Value::as_str) != Some(did) {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        if did.starts_with("did:wba:") && !validate_did_document_binding(&document, verify_proof) {
+            return Err(AuthenticationError::InvalidDidBinding);
+        }
+        if verify_proof {
+            if let Some(proof) = document.get("proof") {
+                let verification_method = proof
+                    .get("verificationMethod")
+                    .and_then(Value::as_str)
+                    .ok_or(AuthenticationError::InvalidDidDocument)?;
+                let method = find_verification_method(&document, verification_method)
+                    .ok_or(AuthenticationError::VerificationMethodNotFound)?;
+                let public_key = extract_public_key(&method)
+                    .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
+                if !verify_w3c_proof(&document, &public_key, ProofVerificationOptions::default()) {
+                    return Err(AuthenticationError::VerificationFailed);
+                }
             }
         }
-    }
 
-    Ok(document)
+        Ok(document)
+    }
 }
 
 pub fn resolve_did_document_sync(

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(feature = "network")]
 use url::Url;
 
 use crate::authentication::{resolve_did_wba_document_with_options, DidResolutionOptions};
@@ -196,13 +197,45 @@ pub fn extract_handle_service_from_did_document(did_document: &Value) -> Vec<Val
 }
 
 fn matches_handle_service_domain(service_endpoint: &str, expected_domain: &str) -> bool {
-    Url::parse(service_endpoint)
-        .ok()
-        .and_then(|url| {
-            url.host_str().map(|host| {
-                url.scheme().eq_ignore_ascii_case("https")
-                    && host.eq_ignore_ascii_case(expected_domain)
+    #[cfg(feature = "network")]
+    {
+        return Url::parse(service_endpoint)
+            .ok()
+            .and_then(|url| {
+                url.host_str().map(|host| {
+                    url.scheme().eq_ignore_ascii_case("https")
+                        && host.eq_ignore_ascii_case(expected_domain)
+                })
             })
-        })
-        .unwrap_or(false)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        let Some((scheme, rest)) = service_endpoint.split_once("://") else {
+            return false;
+        };
+        if !scheme.eq_ignore_ascii_case("https") {
+            return false;
+        }
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .rsplit_once('@')
+            .map(|(_, host)| host)
+            .unwrap_or_else(|| rest.split(['/', '?', '#']).next().unwrap_or_default());
+        let host = if let Some(stripped) = authority.strip_prefix('[') {
+            stripped
+                .split_once(']')
+                .map(|(host, _)| host)
+                .unwrap_or(authority)
+        } else {
+            authority
+                .split_once(':')
+                .map(|(host, _)| host)
+                .unwrap_or(authority)
+        };
+        host.eq_ignore_ascii_case(expected_domain)
+    }
 }

@@ -5,6 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+#[cfg(feature = "network")]
 use url::Url;
 
 use crate::keys::base64url_encode;
@@ -156,17 +157,12 @@ pub fn extract_signature_metadata(
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
-    let keyid = params
-        .get("keyid")
-        .cloned()
-        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let keyid = required_signature_param(&params, "keyid")?;
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params
-        .get("expires")
-        .and_then(|value| value.parse::<i64>().ok());
+    let expires = parse_optional_i64_param(&params, "expires")?;
     let nonce = params.get("nonce").cloned();
     Ok(SignatureMetadata {
         label: label_input,
@@ -194,17 +190,12 @@ pub fn verify_http_message_signature(
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
-    let keyid = params
-        .get("keyid")
-        .cloned()
-        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    let keyid = required_signature_param(&params, "keyid")?;
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let expires = params
-        .get("expires")
-        .and_then(|value| value.parse::<i64>().ok());
+    let expires = parse_optional_i64_param(&params, "expires")?;
     let nonce = params.get("nonce").cloned();
 
     let body_bytes = body.unwrap_or_default();
@@ -289,18 +280,37 @@ fn component_value(
     match component {
         "@method" => Ok(method.to_uppercase()),
         "@target-uri" => Ok(url.to_string()),
-        "@authority" => {
-            let parsed = Url::parse(url).map_err(|_| HttpSignatureError::InvalidSignatureInput)?;
-            let host = parsed.host_str().unwrap_or_default();
-            if let Some(port) = parsed.port() {
-                Ok(format!("{}:{}", host, port))
-            } else {
-                Ok(host.to_string())
-            }
-        }
+        "@authority" => extract_url_authority(url).ok_or(HttpSignatureError::InvalidSignatureInput),
         other => get_header_case_insensitive(headers, other)
             .cloned()
             .ok_or(HttpSignatureError::InvalidSignatureInput),
+    }
+}
+
+fn extract_url_authority(url: &str) -> Option<String> {
+    #[cfg(feature = "network")]
+    {
+        let parsed = Url::parse(url).ok()?;
+        let host = parsed.host_str()?;
+        return if let Some(port) = parsed.port() {
+            Some(format!("{host}:{port}"))
+        } else {
+            Some(host.to_string())
+        };
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        let (_, rest) = url.split_once("://")?;
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if authority.is_empty() || authority.contains('@') {
+            return None;
+        }
+        Some(authority.to_string())
     }
 }
 
@@ -339,6 +349,9 @@ fn parse_signature_input(
     let close_index = remainder
         .find(')')
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
+    if close_index <= open_index {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     let components_raw = &remainder[open_index + 1..close_index];
     let params_raw = remainder[close_index + 1..].trim_start_matches(';');
     let components = components_raw
@@ -359,6 +372,29 @@ fn parse_signature_input(
         params.insert(name.to_string(), value.trim_matches('"').to_string());
     }
     Ok((label.to_string(), components, params))
+}
+
+fn required_signature_param(
+    params: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<String, HttpSignatureError> {
+    params
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .ok_or(HttpSignatureError::InvalidSignatureInput)
+}
+
+fn parse_optional_i64_param(
+    params: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<Option<i64>, HttpSignatureError> {
+    params
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse::<i64>())
+        .transpose()
+        .map_err(|_| HttpSignatureError::InvalidSignatureInput)
 }
 
 fn parse_signature_header(signature_header: &str) -> Result<(String, Vec<u8>), HttpSignatureError> {

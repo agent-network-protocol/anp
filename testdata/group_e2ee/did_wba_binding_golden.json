@@ -1,0 +1,73 @@
+{
+  "did_document": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      "https://w3id.org/security/data-integrity/v2",
+      "https://w3id.org/security/multikey/v1",
+      "https://w3id.org/security/suites/x25519-2019/v1"
+    ],
+    "assertionMethod": [
+      "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+    ],
+    "authentication": [
+      "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+    ],
+    "id": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+    "keyAgreement": [
+      "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-3"
+    ],
+    "proof": {
+      "created": "2026-03-29T12:00:00Z",
+      "cryptosuite": "eddsa-jcs-2022",
+      "proofPurpose": "assertionMethod",
+      "proofValue": "x-XO3_askTU-gQ_ne89pK-V3KaUm2ts_Tjv3d_tghdzjk2VxbdJCTKK3kMLiiOXCO-RcTtOCxs6cVsoelUOvDg",
+      "type": "DataIntegrityProof",
+      "verificationMethod": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+    },
+    "verificationMethod": [
+      {
+        "controller": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+        "id": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1",
+        "publicKeyMultibase": "z6MkeedY94GwPARtkTjnsBXh98yp7MqoNc2poReBYKea4DD8",
+        "type": "Multikey"
+      },
+      {
+        "controller": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+        "id": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-2",
+        "publicKeyJwk": {
+          "crv": "P-256",
+          "kty": "EC",
+          "x": "bO4vJkef7Meicf3huYnLhgwlaeYyPH53cB2LBVWKyoQ",
+          "y": "VxTwUkKS6lNLb0FQwvaXaU3RSK9eyWQUGEe5_jjm7bE"
+        },
+        "type": "EcdsaSecp256r1VerificationKey2019"
+      },
+      {
+        "controller": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+        "id": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-3",
+        "publicKeyMultibase": "z6LSsbD3AfMagZh8iKb7tjPJQR7dAGJ2FHN7K1iXji1MvBvM",
+        "type": "X25519KeyAgreementKey2019"
+      }
+    ]
+  },
+  "did_wba_binding": {
+    "agent_did": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+    "expires_at": "2099-04-29T12:00:00Z",
+    "issued_at": "2026-03-29T12:00:00Z",
+    "leaf_signature_key_b64u": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+    "proof": {
+      "created": "2026-03-29T12:00:00Z",
+      "cryptosuite": "eddsa-jcs-2022",
+      "proofPurpose": "assertionMethod",
+      "proofValue": "z3sXm3UfFFMkPB9iEXDYtfdxvhXRmjaxPQ6SZJ6ZLWxTf3Pa4CRTuf2EiNDF87AXNCNig9wMmkSqpnYVk9u999dvp",
+      "type": "DataIntegrityProof",
+      "verificationMethod": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+    },
+    "verification_method": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+  },
+  "issuer_did": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU",
+  "leaf_signature_key_b64u": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+  "name": "p6-did-wba-binding-e1-object-proof-v1",
+  "now": "2026-03-30T12:00:00Z",
+  "verification_method": "did:wba:a.example:agents:alice:e1_Uu45_iD0TWNEHTnINHGRVUe7i04mAC1B7VErsItoQUU#key-1"
+}

@@ -112,6 +112,20 @@ Common production entry points:
 - `MessageServiceDirectE2eeClient.ProcessIncoming`
 - `MessageServiceDirectE2eeClient.DecryptHistoryPage`
 
+### `group_e2ee`
+
+Wire models and an `ExecProvider` for `anp.group.e2ee.v1`. Real group E2EE flows are owned by the Rust `anp-mls` one-shot binary, which keeps OpenMLS private state in its local SQLite state directory and receives plaintext through stdin, not argv. PR-B1 safe leave uses hidden/test-only `group.e2ee.leave_request` control-plane objects plus owner/admin processing through an epoch-advancing remove commit; it does not make same-member local-terminal leave a service success. Contract-test artifacts are still available only when explicitly enabled for compatibility tests, and those deterministic artifacts must be marked `non_cryptographic=true` and `artifact_mode=contract-test`.
+
+Key APIs:
+
+- `ExecProvider.Call`
+- `GroupKeyPackage`
+- `GroupCipherObject`
+- `GroupLeaveRequestObject`
+- `GroupLeaveRequestProcessObject`
+- `GroupStateRef`
+- `ApplicationPlaintext`
+
 ## Compatibility Notes
 
 - Pure Go implementation only

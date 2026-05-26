@@ -9,6 +9,7 @@ use anp::authentication::{
     DidResolutionOptions, DidWbaVerifier, DidWbaVerifierConfig,
 };
 use anp::{PrivateKeyMaterial, PublicKeyMaterial};
+use common::named_temp_file;
 use serde_json::Value;
 
 #[test]
@@ -161,7 +162,7 @@ fn test_rust_generated_standard_pem_keys_load_in_python() {
             {"keys": k1.keys},
         ]
     });
-    let temp = tempfile::NamedTempFile::new().expect("temp file should create");
+    let temp = named_temp_file("anp-python-interop").expect("temp file should create");
     std::fs::write(temp.path(), serde_json::to_vec(&fixture).unwrap()).unwrap();
 
     let payload = run_python_json_owned(

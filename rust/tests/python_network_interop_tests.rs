@@ -9,9 +9,9 @@ use std::time::Duration;
 use anp::authentication::{
     create_did_wba_document, AuthMode, DIDWbaAuthHeader, DidDocumentOptions,
 };
+use common::tempdir;
 use reqwest::Client;
 use serde_json::Value;
-use tempfile::tempdir;
 
 #[tokio::test]
 async fn test_rust_http_client_to_python_server() {
@@ -25,7 +25,7 @@ async fn test_rust_http_client_to_python_server() {
         DidDocumentOptions::default().with_path_segments(["user", "rust-http"]),
     )
     .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-python-network").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key-1.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -61,7 +61,7 @@ async fn test_rust_legacy_client_to_python_server() {
             .with_path_segments(["user", "rust-legacy"]),
     )
     .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-python-network").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key-1.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();

@@ -5,6 +5,8 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "network")]
+use url::Url;
 
 use super::did_wba::{
     extract_auth_header_parts, is_authentication_authorized, resolve_did_wba_document_with_options,
@@ -107,9 +109,7 @@ impl DidWbaVerifier {
             }
         }
 
-        if get_header_case_insensitive(headers, "Signature-Input").is_some()
-            || get_header_case_insensitive(headers, "Signature").is_some()
-        {
+        if get_header_case_insensitive(headers, "Signature-Input").is_some() {
             if !self.config.allow_http_signatures {
                 return Err(self.challenge_error(
                     "HTTP Message Signatures authentication is disabled",
@@ -164,9 +164,7 @@ impl DidWbaVerifier {
             }
         }
 
-        if get_header_case_insensitive(headers, "Signature-Input").is_some()
-            || get_header_case_insensitive(headers, "Signature").is_some()
-        {
+        if get_header_case_insensitive(headers, "Signature-Input").is_some() {
             if !self.config.allow_http_signatures {
                 return Err(self.challenge_error(
                     "HTTP Message Signatures authentication is disabled",
@@ -265,6 +263,7 @@ impl DidWbaVerifier {
             .unwrap_or_default()
             .to_string();
 
+        self.validate_document_id_matches(did_document, &did, domain)?;
         self.validate_did_binding(did_document)?;
         if !is_authentication_authorized(did_document, &metadata.keyid) {
             return Err(DidWbaVerifierError {
@@ -354,6 +353,7 @@ impl DidWbaVerifier {
                 "invalid_timestamp",
             ));
         }
+        self.validate_document_id_matches(did_document, &parsed.did, domain)?;
         if !self.is_valid_nonce(&parsed.did, &parsed.nonce) {
             return Err(self.challenge_error(
                 "Legacy DIDWba nonce has already been used or expired",
@@ -449,6 +449,24 @@ impl DidWbaVerifier {
         }
     }
 
+    fn validate_document_id_matches(
+        &self,
+        did_document: &serde_json::Value,
+        did: &str,
+        domain: &str,
+    ) -> Result<(), DidWbaVerifierError> {
+        if did_document.get("id").and_then(serde_json::Value::as_str) == Some(did) {
+            Ok(())
+        } else {
+            Err(self.challenge_error(
+                "DID document ID does not match authenticated DID",
+                401,
+                domain,
+                "invalid_did",
+            ))
+        }
+    }
+
     fn validate_did_binding(
         &self,
         did_document: &serde_json::Value,
@@ -541,11 +559,7 @@ impl DidWbaVerifier {
             })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(EncodingKey::from_secret(secret.as_bytes())),
-            _ => EncodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
-                message: "Invalid JWT private key".to_string(),
-                status_code: 500,
-                headers: BTreeMap::new(),
-            }),
+            _ => rsa_encoding_key(secret),
         }
     }
 
@@ -562,11 +576,7 @@ impl DidWbaVerifier {
             })?;
         match self.config.jwt_algorithm.as_str() {
             "HS256" | "HS384" | "HS512" => Ok(DecodingKey::from_secret(secret.as_bytes())),
-            _ => DecodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
-                message: "Invalid JWT public key".to_string(),
-                status_code: 500,
-                headers: BTreeMap::new(),
-            }),
+            _ => rsa_decoding_key(secret),
         }
     }
 
@@ -612,6 +622,42 @@ impl DidWbaVerifier {
     }
 }
 
+#[cfg(feature = "jwt-pem")]
+fn rsa_encoding_key(secret: &str) -> Result<EncodingKey, DidWbaVerifierError> {
+    EncodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
+        message: "Invalid JWT private key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(not(feature = "jwt-pem"))]
+fn rsa_encoding_key(_secret: &str) -> Result<EncodingKey, DidWbaVerifierError> {
+    Err(DidWbaVerifierError {
+        message: "Invalid JWT private key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(feature = "jwt-pem")]
+fn rsa_decoding_key(secret: &str) -> Result<DecodingKey, DidWbaVerifierError> {
+    DecodingKey::from_rsa_pem(secret.as_bytes()).map_err(|_| DidWbaVerifierError {
+        message: "Invalid JWT public key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
+#[cfg(not(feature = "jwt-pem"))]
+fn rsa_decoding_key(_secret: &str) -> Result<DecodingKey, DidWbaVerifierError> {
+    Err(DidWbaVerifierError {
+        message: "Invalid JWT public key".to_string(),
+        status_code: 500,
+        headers: BTreeMap::new(),
+    })
+}
+
 fn parse_algorithm(value: &str) -> Result<Algorithm, DidWbaVerifierError> {
     match value {
         "HS256" => Ok(Algorithm::HS256),
@@ -639,8 +685,39 @@ fn get_header_case_insensitive<'a>(
 }
 
 fn extract_domain(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|value| value.host_str().map(|item| item.to_string()))
-        .unwrap_or_else(|| url.to_string())
+    #[cfg(feature = "network")]
+    {
+        return Url::parse(url)
+            .ok()
+            .and_then(|value| value.host_str().map(|item| item.to_string()))
+            .unwrap_or_else(|| url.to_string());
+    }
+
+    #[cfg(not(feature = "network"))]
+    {
+        url.split_once("://")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .and_then(|authority| {
+                authority
+                    .rsplit_once('@')
+                    .map(|(_, host)| host)
+                    .or(Some(authority))
+            })
+            .map(|authority| {
+                if let Some(stripped) = authority.strip_prefix('[') {
+                    stripped
+                        .split_once(']')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                } else {
+                    authority
+                        .split_once(':')
+                        .map(|(host, _)| host.to_string())
+                        .unwrap_or_else(|| authority.to_string())
+                }
+            })
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| url.to_string())
+    }
 }

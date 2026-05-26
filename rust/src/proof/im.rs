@@ -366,7 +366,32 @@ mod tests {
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
     use crate::PrivateKeyMaterial;
+    use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
     use serde_json::json;
+
+    const AGENT_TARGET_ENCODE_SET: &AsciiSet = &CONTROLS
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'&')
+        .add(b'+')
+        .add(b':')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}');
+
+    fn encoded_agent_target(did: &str) -> String {
+        percent_encode(did.as_bytes(), AGENT_TARGET_ENCODE_SET).to_string()
+    }
 
     fn business_signature_base(
         method: &str,
@@ -420,10 +445,7 @@ mod tests {
             "direct.send",
             &format!(
                 "anp://agent/{}",
-                url::form_urlencoded::byte_serialize(
-                    bundle.did().expect("did should exist").as_bytes()
-                )
-                .collect::<String>()
+                encoded_agent_target(bundle.did().expect("did should exist"))
             ),
             &build_im_content_digest(payload),
             &signature_input,
@@ -473,10 +495,7 @@ mod tests {
                 "direct.send",
                 &format!(
                     "anp://agent/{}",
-                    url::form_urlencoded::byte_serialize(
-                        bundle.did().expect("did should exist").as_bytes()
-                    )
-                    .collect::<String>()
+                    encoded_agent_target(bundle.did().expect("did should exist"))
                 ),
                 &build_im_content_digest(payload),
                 &build_im_signature_input(
@@ -494,10 +513,7 @@ mod tests {
             "direct.send",
             &format!(
                 "anp://agent/{}",
-                url::form_urlencoded::byte_serialize(
-                    bundle.did().expect("did should exist").as_bytes()
-                )
-                .collect::<String>()
+                encoded_agent_target(bundle.did().expect("did should exist"))
             ),
             &proof.content_digest,
             &proof.signature_input,
@@ -601,10 +617,7 @@ mod tests {
             "direct.send",
             &format!(
                 "anp://agent/{}",
-                url::form_urlencoded::byte_serialize(
-                    bundle.did().expect("did should exist").as_bytes()
-                )
-                .collect::<String>()
+                encoded_agent_target(bundle.did().expect("did should exist"))
             ),
             &build_im_content_digest(payload),
             &signature_input,
@@ -634,10 +647,7 @@ mod tests {
                 "direct.send",
                 &format!(
                     "anp://agent/{}",
-                    url::form_urlencoded::byte_serialize(
-                        bundle.did().expect("did should exist").as_bytes()
-                    )
-                    .collect::<String>()
+                    encoded_agent_target(bundle.did().expect("did should exist"))
                 ),
                 &proof.content_digest,
                 &proof.signature_input,
@@ -658,10 +668,7 @@ mod tests {
                 "direct.send",
                 &format!(
                     "anp://agent/{}",
-                    url::form_urlencoded::byte_serialize(
-                        bundle.did().expect("did should exist").as_bytes()
-                    )
-                    .collect::<String>()
+                    encoded_agent_target(bundle.did().expect("did should exist"))
                 ),
                 &proof.content_digest,
                 &proof.signature_input,

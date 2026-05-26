@@ -2,7 +2,7 @@
 name = "anp"
 version = "0.8.7"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.88.0"
 description = "Rust SDK for Agent Network Protocol (ANP)"
 license = "MIT"
 readme = "README.md"
@@ -17,12 +17,26 @@ exclude = ["target/*"]
 name = "anp"
 path = "src/lib.rs"
 
+[features]
+default = ["jwt-pem", "mls", "network"]
+jwt-pem = ["jsonwebtoken/use_pem"]
+network = ["dep:reqwest", "dep:url"]
+mls = [
+    "dep:fs2",
+    "dep:openmls",
+    "dep:openmls_basic_credential",
+    "dep:openmls_rust_crypto",
+    "dep:openmls_sqlite_storage",
+    "dep:openmls_traits",
+    "dep:rusqlite",
+]
+
 [dependencies]
 base64 = "0.22"
 bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
-ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"] }
-jsonwebtoken = "9"
+ed25519-dalek = { version = "=2.1.1", features = ["rand_core", "pkcs8", "pem"] }
+jsonwebtoken = { version = "9", default-features = false }
 num-bigint = "0.4"
 k256 = { version = "0.13", features = ["ecdsa", "arithmetic", "pkcs8", "pem"] }
 p256 = { version = "0.13", features = ["ecdsa", "arithmetic", "pkcs8", "pem"] }
@@ -30,19 +44,32 @@ percent-encoding = "2.3"
 pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 ring = "0.17"
+fs2 = { version = "0.4", optional = true }
+openmls = { version = "=0.8.0", optional = true }
+openmls_basic_credential = { version = "0.5.0", optional = true }
+openmls_rust_crypto = { version = "=0.5.0", optional = true }
+openmls_sqlite_storage = { version = "0.2.0", optional = true }
+openmls_traits = { version = "0.5.0", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 spki = { version = "0.7", features = ["pem"] }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-url = "2"
+url = { version = "2", optional = true }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 tiny_http = "0.12"
 serde_json_canonicalizer = "0.3.2"
 
-[dev-dependencies]
-tempfile = "3"
-wiremock = "0.6"
+[[test]]
+name = "python_network_interop_tests"
+path = "tests/python_network_interop_tests.rs"
+required-features = ["network"]
+
+[[test]]
+name = "wns_tests"
+path = "tests/wns_tests.rs"
+required-features = ["network"]

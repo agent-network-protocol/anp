@@ -2,6 +2,7 @@
 
 mod canonical_json;
 pub mod direct_e2ee;
+pub mod group_e2ee;
 mod keys;
 
 pub mod authentication;

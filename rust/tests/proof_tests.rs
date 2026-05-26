@@ -195,6 +195,53 @@ fn test_generate_and_verify_did_wba_binding() {
 }
 
 #[test]
+fn test_did_wba_binding_golden_vector_verifies_and_tamper_fails() {
+    let vector: serde_json::Value = serde_json::from_str(include_str!(
+        "../../testdata/group_e2ee/did_wba_binding_golden.json"
+    ))
+    .expect("golden vector should decode");
+    let issuer_did = vector["issuer_did"]
+        .as_str()
+        .expect("issuer DID should be present");
+    let binding = vector
+        .get("did_wba_binding")
+        .expect("binding should be present");
+    let did_document = vector
+        .get("did_document")
+        .expect("issuer DID document should be present");
+    let now = vector["now"].as_str().expect("now should be present");
+
+    verify_did_wba_binding(
+        binding,
+        did_document,
+        DidWbaBindingVerificationOptions {
+            now: Some(now.to_string()),
+            expected_leaf_signature_key_b64u: Some(
+                vector["leaf_signature_key_b64u"]
+                    .as_str()
+                    .expect("leaf key should be present")
+                    .to_string(),
+            ),
+            expected_credential_identity: Some(issuer_did.to_string()),
+        },
+    )
+    .expect("golden DID WBA binding should verify");
+
+    let mut tampered = binding.clone();
+    tampered["leaf_signature_key_b64u"] = json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    assert!(verify_did_wba_binding(
+        &tampered,
+        did_document,
+        DidWbaBindingVerificationOptions {
+            now: Some(now.to_string()),
+            expected_credential_identity: Some(issuer_did.to_string()),
+            ..DidWbaBindingVerificationOptions::default()
+        },
+    )
+    .is_err());
+}
+
+#[test]
 fn test_expired_did_wba_binding_fails() {
     let bundle = create_did_wba_document(
         "a.example",

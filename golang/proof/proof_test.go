@@ -1,6 +1,9 @@
 package proof_test
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	anp "github.com/agent-network-protocol/anp/golang"
@@ -105,6 +108,49 @@ func TestDidWbaBindingProof(t *testing.T) {
 	if err := proof.VerifyDidWbaBinding(binding, bundle.DidDocument, proof.DidWbaBindingVerificationOptions{Now: "2026-03-30T12:00:00Z", ExpectedCredentialIdentity: agentDID}); err != nil {
 		t.Fatalf("VerifyDidWbaBinding failed: %v", err)
 	}
+}
+
+func TestDidWbaBindingGoldenVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "group_e2ee", "did_wba_binding_golden.json"))
+	if err != nil {
+		t.Fatalf("ReadFile golden vector failed: %v", err)
+	}
+	var vector map[string]any
+	if err := json.Unmarshal(raw, &vector); err != nil {
+		t.Fatalf("Unmarshal golden vector failed: %v", err)
+	}
+	binding, ok := vector["did_wba_binding"].(map[string]any)
+	if !ok {
+		t.Fatalf("golden vector did_wba_binding has unexpected shape: %#v", vector["did_wba_binding"])
+	}
+	didDocument, ok := vector["did_document"].(map[string]any)
+	if !ok {
+		t.Fatalf("golden vector did_document has unexpected shape: %#v", vector["did_document"])
+	}
+	if err := proof.VerifyDidWbaBinding(binding, didDocument, proof.DidWbaBindingVerificationOptions{
+		Now:                        testStringValue(vector["now"]),
+		ExpectedLeafSignatureKey:   testStringValue(vector["leaf_signature_key_b64u"]),
+		ExpectedCredentialIdentity: testStringValue(vector["issuer_did"]),
+	}); err != nil {
+		t.Fatalf("VerifyDidWbaBinding golden vector failed: %v", err)
+	}
+
+	tampered := cloneMap(binding)
+	tampered["leaf_signature_key_b64u"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := proof.VerifyDidWbaBinding(tampered, didDocument, proof.DidWbaBindingVerificationOptions{
+		Now:                        testStringValue(vector["now"]),
+		ExpectedCredentialIdentity: testStringValue(vector["issuer_did"]),
+	}); err == nil {
+		t.Fatalf("tampered golden vector should fail verification")
+	}
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func testStringValue(value any) string {

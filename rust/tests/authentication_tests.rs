@@ -1,3 +1,5 @@
+mod common;
+
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -8,14 +10,18 @@ use anp::authentication::{
     validate_did_document_binding, verify_auth_header_signature, verify_federated_http_request,
     verify_http_message_signature, AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader,
     DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
-    FederatedVerificationOptions,
+    FederatedVerificationOptions, HttpSignatureError,
+};
+#[cfg(feature = "network")]
+use anp::authentication::{
+    resolve_did_document_with_options, resolve_did_wba_document_with_options, DidResolutionOptions,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use common::tempdir;
+#[cfg(feature = "network")]
+use common::{JsonTestServer, RecordingJsonTestServer};
 use ed25519_dalek::SigningKey;
 use serde_json::json;
-use tempfile::tempdir;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
 fn test_create_did_document_profiles() {
@@ -155,6 +161,28 @@ fn test_legacy_auth_header_generation_and_verification() {
 }
 
 #[test]
+fn test_legacy_auth_header_empty_version_defaults_to_1_1() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+
+    let header = generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "")
+        .expect("auth header generation should succeed");
+
+    assert!(header.starts_with("DIDWba v=\"1.1\""));
+    verify_auth_header_signature(&header, &bundle.did_document, "api.example.com")
+        .expect("verification should treat an empty requested version as 1.1");
+}
+
+#[test]
 fn test_http_signature_verification_rejects_tampered_body() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
@@ -186,6 +214,100 @@ fn test_http_signature_verification_rejects_tampered_body() {
         Some(br#"{"item":"music"}"#),
     )
     .is_err());
+}
+
+#[test]
+fn test_http_signature_metadata_rejects_malformed_component_bounds_without_panic() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=)"@method" "content-digest"(;created=1712000000;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error =
+        extract_signature_metadata(&headers).expect_err("malformed input should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
+fn test_http_signature_metadata_rejects_empty_keyid_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;keyid="""#.to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error = extract_signature_metadata(&headers).expect_err("empty keyid should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
+fn test_http_signature_metadata_rejects_malformed_expires_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;expires=not-a-number;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let error =
+        extract_signature_metadata(&headers).expect_err("malformed expires should be rejected");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
+}
+
+#[test]
+fn test_http_signature_metadata_treats_empty_expires_as_absent_like_go() {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Signature-Input".to_string(),
+        r#"sig1=("@method");created=1712000000;expires=;keyid="did:wba:example.com#key-1""#
+            .to_string(),
+    );
+    headers.insert("Signature".to_string(), "sig1=:YWJj:".to_string());
+
+    let metadata =
+        extract_signature_metadata(&headers).expect("empty expires should be treated as absent");
+    assert_eq!(metadata.expires, None);
+}
+
+#[test]
+fn test_http_signature_verification_rejects_malformed_expires_like_go() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let mut headers = generate_http_signature_headers(
+        &bundle.did_document,
+        "https://api.example.com/orders",
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+    let original_input = headers
+        .get("Signature-Input")
+        .expect("Signature-Input should exist")
+        .clone();
+    headers.insert(
+        "Signature-Input".to_string(),
+        original_input.replacen(";expires=", ";expires=not-a-number-", 1),
+    );
+
+    let error = verify_http_message_signature(
+        &bundle.did_document,
+        "GET",
+        "https://api.example.com/orders",
+        &headers,
+        None,
+    )
+    .expect_err("malformed expires should be rejected before signature verification");
+    assert!(matches!(error, HttpSignatureError::InvalidSignatureInput));
 }
 
 #[test]
@@ -336,7 +458,7 @@ async fn test_verify_federated_http_request_with_did_web_service_did() {
 fn test_did_wba_auth_header_reads_files_and_generates_headers() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -351,10 +473,75 @@ fn test_did_wba_auth_header_reads_files_and_generates_headers() {
 }
 
 #[test]
+fn test_did_wba_auth_header_ignores_empty_auth_info_access_token() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "Authentication-Info".to_string(),
+        r#"access_token="", token_type="Bearer""#.to_string(),
+    );
+    response_headers.insert(
+        "Authorization".to_string(),
+        "Bearer legacy-token".to_string(),
+    );
+
+    let token = helper
+        .update_token("https://api.example.com/orders", &response_headers)
+        .expect("legacy Authorization token should be captured");
+    assert_eq!(token, "legacy-token");
+
+    let headers = helper
+        .get_auth_header("https://api.example.com/orders", false, "GET", None, None)
+        .expect("cached token should be reused");
+    assert_eq!(
+        headers.get("Authorization").map(String::as_str),
+        Some("Bearer legacy-token")
+    );
+}
+
+#[test]
+fn test_did_wba_auth_header_ignores_empty_auth_info_without_fallback() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "Authentication-Info".to_string(),
+        r#"access_token="", token_type="Bearer""#.to_string(),
+    );
+
+    assert_eq!(
+        helper.update_token("https://api.example.com/orders", &response_headers),
+        None
+    );
+
+    let headers = helper
+        .get_auth_header("https://api.example.com/orders", false, "GET", None, None)
+        .expect("missing cached token should fall back to signature auth");
+    assert!(!headers.contains_key("Authorization"));
+    assert!(headers.contains_key("Signature-Input"));
+    assert!(headers.contains_key("Signature"));
+}
+
+#[test]
 fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -392,10 +579,106 @@ fn test_did_wba_auth_header_reuses_server_nonce_for_challenge() {
 }
 
 #[test]
+fn test_did_wba_auth_header_drops_empty_accepted_headers() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "WWW-Authenticate".to_string(),
+        "DIDWba realm=\"api.example.com\", nonce=\"server-nonce-123\"".to_string(),
+    );
+    response_headers.insert(
+        "Accept-Signature".to_string(),
+        "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"x-optional\");created;expires;nonce;keyid".to_string(),
+    );
+    let mut request_headers = BTreeMap::new();
+    request_headers.insert("Content-Type".to_string(), String::new());
+    request_headers.insert("X-Optional".to_string(), String::new());
+
+    let headers = helper
+        .get_challenge_auth_header(
+            "https://api.example.com/orders",
+            &response_headers,
+            "GET",
+            Some(&request_headers),
+            None,
+        )
+        .expect("challenge auth headers should be generated");
+    let metadata = extract_signature_metadata(&headers).expect("metadata should parse");
+    assert_eq!(metadata.nonce.as_deref(), Some("server-nonce-123"));
+    assert!(!metadata
+        .components
+        .iter()
+        .any(|value| value == "content-type"));
+    assert!(!metadata
+        .components
+        .iter()
+        .any(|value| value == "x-optional"));
+    assert_eq!(
+        metadata.components,
+        vec![
+            "@method".to_string(),
+            "@target-uri".to_string(),
+            "@authority".to_string()
+        ]
+    );
+}
+
+#[test]
+fn test_did_wba_auth_header_falls_back_when_challenge_components_are_unusable() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
+    let did_path = temp.path().join("did.json");
+    let key_path = temp.path().join("key.pem");
+    fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
+    fs::write(&key_path, &bundle.keys["key-1"].private_key_pem).unwrap();
+
+    let mut helper = DIDWbaAuthHeader::new(&did_path, &key_path, AuthMode::HttpSignatures);
+    let mut response_headers = BTreeMap::new();
+    response_headers.insert(
+        "WWW-Authenticate".to_string(),
+        "DIDWba realm=\"api.example.com\", nonce=\"server-nonce-123\"".to_string(),
+    );
+    response_headers.insert(
+        "Accept-Signature".to_string(),
+        "sig1=(\"content-type\" \"x-missing\");created;expires;nonce;keyid".to_string(),
+    );
+
+    let headers = helper
+        .get_challenge_auth_header(
+            "https://api.example.com/orders",
+            &response_headers,
+            "GET",
+            None,
+            None,
+        )
+        .expect("challenge auth headers should be generated");
+    let metadata = extract_signature_metadata(&headers).expect("metadata should parse");
+
+    assert_eq!(
+        metadata.components,
+        vec![
+            "@method".to_string(),
+            "@target-uri".to_string(),
+            "@authority".to_string()
+        ]
+    );
+    assert_eq!(metadata.nonce.as_deref(), Some("server-nonce-123"));
+}
+
+#[test]
 fn test_did_wba_auth_header_should_not_retry_invalid_did() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let temp = tempdir().expect("temp dir should exist");
+    let temp = tempdir("anp-auth").expect("temp dir should exist");
     let did_path = temp.path().join("did.json");
     let key_path = temp.path().join("key.pem");
     fs::write(&did_path, serde_json::to_vec(&bundle.did_document).unwrap()).unwrap();
@@ -414,12 +697,206 @@ fn test_did_wba_auth_header_should_not_retry_invalid_did() {
 async fn test_did_wba_verifier_accepts_http_signatures() {
     let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("DID creation should succeed");
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/.well-known/did.json"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bundle.did_document.clone()))
-        .mount(&server)
-        .await;
+
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let request_url = "https://api.example.com/orders";
+    let headers = generate_http_signature_headers(
+        &bundle.did_document,
+        request_url,
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            request_url,
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("verification should succeed");
+    assert_eq!(result.auth_scheme, "http_signatures");
+    assert!(result.access_token.is_some());
+}
+
+#[tokio::test]
+async fn test_did_wba_verifier_rejects_http_signature_document_id_mismatch() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let request_url = "https://api.example.com/orders";
+    let headers = generate_http_signature_headers(
+        &bundle.did_document,
+        request_url,
+        "GET",
+        &private_key,
+        None,
+        None,
+        Default::default(),
+    )
+    .expect("HTTP signature generation should succeed");
+    let mut mismatched_document = bundle.did_document.clone();
+    mismatched_document["id"] = json!("did:wba:attacker.example.com");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let error = verifier
+        .verify_request_with_did_document(
+            "GET",
+            request_url,
+            &headers,
+            None,
+            Some("api.example.com"),
+            &mismatched_document,
+        )
+        .await
+        .expect_err("document id must match the DID authenticated by keyid");
+
+    assert_eq!(error.status_code, 401);
+    assert_eq!(
+        error.message,
+        "DID document ID does not match authenticated DID"
+    );
+    assert_eq!(
+        error.headers.get("WWW-Authenticate").map(String::as_str),
+        Some(
+            "DIDWba realm=\"api.example.com\", error=\"invalid_did\", error_description=\"DID document ID does not match authenticated DID\""
+        )
+    );
+}
+
+#[tokio::test]
+async fn test_did_wba_verifier_rejects_legacy_document_id_mismatch_before_nonce_use() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let auth_header =
+        generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "1.1")
+            .expect("legacy DID-WBA auth header generation should succeed");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_string(), auth_header);
+    let mut mismatched_document = bundle.did_document.clone();
+    mismatched_document["id"] = json!("did:wba:attacker.example.com");
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let error = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &mismatched_document,
+        )
+        .await
+        .expect_err("document id must match the DID authenticated by Authorization");
+
+    assert_eq!(error.status_code, 401);
+    assert_eq!(
+        error.message,
+        "DID document ID does not match authenticated DID"
+    );
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("mismatch rejection should not consume the legacy nonce");
+    assert_eq!(result.auth_scheme, "legacy_didwba");
+}
+
+#[tokio::test]
+async fn test_did_wba_verifier_keeps_legacy_auth_when_only_signature_header_is_extra() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            did_profile: DidProfile::K1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let auth_header =
+        generate_auth_header(&bundle.did_document, "api.example.com", &private_key, "1.1")
+            .expect("legacy DID-WBA auth header generation should succeed");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_string(), auth_header);
+    headers.insert(
+        "Signature".to_string(),
+        "sig1=:not-an-http-signature-discriminator:".to_string(),
+    );
+
+    let mut verifier = DidWbaVerifier::new(DidWbaVerifierConfig {
+        jwt_private_key: Some("test-secret".to_string()),
+        jwt_public_key: Some("test-secret".to_string()),
+        jwt_algorithm: "HS256".to_string(),
+        ..DidWbaVerifierConfig::default()
+    });
+
+    let result = verifier
+        .verify_request_with_did_document(
+            "GET",
+            "https://api.example.com/orders",
+            &headers,
+            None,
+            Some("api.example.com"),
+            &bundle.did_document,
+        )
+        .await
+        .expect("legacy verification should ignore a stray Signature header");
+
+    assert_eq!(result.auth_scheme, "legacy_didwba");
+    assert!(result.access_token.is_some());
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_wba_verifier_accepts_http_signatures_with_network_resolution() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let server = JsonTestServer::start([("/.well-known/did.json", bundle.did_document.clone())]);
 
     let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
         .expect("private key should load");
@@ -443,6 +920,7 @@ async fn test_did_wba_verifier_accepts_http_signatures() {
             base_url_override: Some(server.uri()),
             verify_ssl: false,
             timeout_seconds: 5.0,
+            ..anp::authentication::DidResolutionOptions::default()
         },
         ..DidWbaVerifierConfig::default()
     });
@@ -453,4 +931,83 @@ async fn test_did_wba_verifier_accepts_http_signatures() {
         .expect("verification should succeed");
     assert_eq!(result.auth_scheme, "http_signatures");
     assert!(result.access_token.is_some());
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_wba_resolution_sends_custom_headers_like_go() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let server =
+        RecordingJsonTestServer::start([("/.well-known/did.json", bundle.did_document.clone())]);
+    let mut headers = BTreeMap::new();
+    headers.insert("X-ANP-Resolver".to_string(), "lane-d".to_string());
+
+    let document = resolve_did_wba_document_with_options(
+        "did:wba:example.com",
+        false,
+        &DidResolutionOptions {
+            base_url_override: Some(server.uri()),
+            verify_ssl: false,
+            timeout_seconds: 5.0,
+            headers,
+        },
+    )
+    .await
+    .expect("DID WBA resolution should succeed");
+
+    assert_eq!(document["id"], json!("did:wba:example.com"));
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/.well-known/did.json");
+    assert_eq!(
+        header_value(&requests[0].headers, "X-ANP-Resolver").as_deref(),
+        Some("lane-d")
+    );
+}
+
+#[cfg(feature = "network")]
+#[tokio::test]
+async fn test_did_web_resolution_sends_custom_headers_like_go() {
+    let server = RecordingJsonTestServer::start([(
+        "/agents/alice/did.json",
+        json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": "did:web:example.com:agents:alice",
+            "verificationMethod": [],
+            "authentication": [],
+        }),
+    )]);
+    let mut headers = BTreeMap::new();
+    headers.insert("X-ANP-Resolver".to_string(), "did-web".to_string());
+
+    let document = resolve_did_document_with_options(
+        "did:web:example.com:agents:alice",
+        false,
+        &DidResolutionOptions {
+            base_url_override: Some(server.uri()),
+            verify_ssl: false,
+            timeout_seconds: 5.0,
+            headers,
+        },
+    )
+    .await
+    .expect("DID web resolution should succeed");
+
+    assert_eq!(document["id"], json!("did:web:example.com:agents:alice"));
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/agents/alice/did.json");
+    assert_eq!(
+        header_value(&requests[0].headers, "X-ANP-Resolver").as_deref(),
+        Some("did-web")
+    );
+}
+
+#[cfg(feature = "network")]
+fn header_value(headers: &BTreeMap<String, String>, name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
 }

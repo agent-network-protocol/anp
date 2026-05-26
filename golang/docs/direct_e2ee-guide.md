@@ -4,6 +4,8 @@
 
 `direct_e2ee` implements the ANP direct end-to-end encryption profile used by `anp.direct.e2ee.v1`.
 
+For the cross-repo SDK/product boundary map, see [`../../docs/e2e/direct-e2ee-p5-sdk.md`](../../docs/e2e/direct-e2ee-p5-sdk.md) and the harness entry [`../../../../awiki-harness/features/direct-e2ee.md`](../../../../awiki-harness/features/direct-e2ee.md).
+
 The current Go implementation provides:
 
 - signed prekey publication helpers
