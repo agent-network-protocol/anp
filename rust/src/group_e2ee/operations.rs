@@ -584,9 +584,21 @@ pub(crate) fn real_group_recover_member_prepare(
         .validate(provider.crypto(), ProtocolVersion::Mls10)
         .map_err(|e| mls_error("key_package_validate_failed", e, request_id))?;
     validate_key_package_did_wba_binding(params, member_did, &key_package, request_id)?;
+    let target_leaf = member_leaf_index_by_did(&group, member_did).ok_or_else(|| {
+        error(
+            "member_not_found",
+            "target member is not an active MLS leaf in the local group",
+            Some(request_id.to_owned()),
+        )
+    })?;
     let original_tree = group.export_ratchet_tree();
-    let (commit, welcome, _group_info) = group
-        .add_members(provider, &signer, core::slice::from_ref(&key_package))
+    let recovery_messages = group
+        .swap_members(
+            provider,
+            &signer,
+            &[target_leaf],
+            core::slice::from_ref(&key_package),
+        )
         .map_err(|e| mls_error("group_recover_member_prepare_failed", e, request_id))?;
     let pending = group.pending_commit().ok_or_else(|| {
         error(
@@ -611,11 +623,12 @@ pub(crate) fn real_group_recover_member_prepare(
         })
         .transpose()?;
     let commit_b64u = encode_b64u(
-        &commit
+        &recovery_messages
+            .commit
             .tls_serialize_detached()
             .map_err(|e| mls_error("commit_encode_failed", e, request_id))?,
     );
-    let welcome_body = match welcome.body() {
+    let welcome_body = match recovery_messages.welcome.body() {
         MlsMessageBodyOut::Welcome(welcome) => welcome.clone(),
         _ => {
             return Err(error(
