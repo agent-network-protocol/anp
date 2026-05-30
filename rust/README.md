@@ -51,6 +51,31 @@ cargo add anp
   `group.e2ee.leave_request` control plane and process it through an authorized
   epoch-advancing remove commit for remaining members.
 
+## Message Payload Notes
+
+Plain text, ordinary JSON, and attachments use the same ANP message operations
+defined by the protocol profiles. This crate does not add separate REST APIs or
+high-level base-message senders for JSON. If a product constructs `direct.send` or
+`group.send` requests for `text/plain` at the application layer, it should construct
+ordinary JSON messages at the same layer by setting `meta.content_type` to
+`application/json` and placing the JSON object directly in `body.payload`.
+
+For Direct E2EE, use the existing plaintext model:
+
+```rust
+use anp::direct_e2ee::ApplicationPlaintext;
+use serde_json::json;
+
+let plaintext = ApplicationPlaintext::new_json(
+    "application/json",
+    json!({"type": "example", "data": {"hello": "world"}}),
+);
+```
+
+The SDK treats the JSON object as an opaque application payload; command, status,
+task, result, or other business meanings are defined by the caller above the ANP
+SDK layer.
+
 ## Repository
 
 - Source: <https://github.com/agent-network-protocol/AgentConnect>

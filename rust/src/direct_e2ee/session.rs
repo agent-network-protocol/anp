@@ -564,13 +564,17 @@ mod tests {
             &ApplicationPlaintext::new_json("application/json", json!({"ack": "ok"})),
         )
         .expect("encrypt first reply");
-        DirectE2eeSession::decrypt_follow_up(
+        let reply_plaintext = DirectE2eeSession::decrypt_follow_up(
             &mut alice_session,
             &reply_metadata,
             &reply_body,
             "application/json",
         )
         .expect("decrypt first reply");
+        assert_eq!(reply_plaintext.application_content_type, "application/json");
+        assert_eq!(reply_plaintext.payload, Some(json!({"ack": "ok"})));
+        assert_eq!(reply_plaintext.text, None);
+        assert_eq!(reply_plaintext.payload_b64u, None);
 
         let msg2_metadata = DirectEnvelopeMetadata {
             sender_did: alice_did.to_owned(),

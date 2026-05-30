@@ -43,6 +43,33 @@ P5 rules that product integrations rely on:
 - Direct init/cipher AAD uses JCS/RFC8785 and P5 `content_type` bindings.
 - Old HPKE-style `e2ee_init` / `e2ee_msg` service target objects are not P5.
 
+For ordinary structured JSON, products should use `application/json` as the inner
+`application_content_type` and put the JSON object directly in `payload`:
+
+```json
+{
+  "application_content_type": "application/json",
+  "payload": {
+    "type": "example",
+    "data": {
+      "hello": "world"
+    }
+  }
+}
+```
+
+In Rust this is represented with the existing helper:
+
+```rust
+ApplicationPlaintext::new_json(
+    "application/json",
+    serde_json::json!({"type": "example", "data": {"hello": "world"}}),
+)
+```
+
+The SDK does not define command/status/task/result schemas; those are product
+semantics above the ANP SDK layer.
+
 ## Product boundaries
 
 | Product repo | Consumes SDK for | Must not do |
