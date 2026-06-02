@@ -2741,6 +2741,17 @@ fn application_plaintext_bytes(params: &Value, request_id: &str) -> Result<Vec<u
 }
 
 fn application_plaintext_value(bytes: &[u8]) -> Value {
+    if let Ok(value) = serde_json::from_slice::<Value>(bytes) {
+        if value
+            .get("application_content_type")
+            .and_then(Value::as_str)
+            .filter(|content_type| !content_type.trim().is_empty())
+            .is_some()
+            && (value.get("payload").is_some() || value.get("payload_b64u").is_some())
+        {
+            return value;
+        }
+    }
     match std::str::from_utf8(bytes) {
         Ok(text) => json!({"application_content_type": "text/plain", "text": text}),
         Err(_) => {

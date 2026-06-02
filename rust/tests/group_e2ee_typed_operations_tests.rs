@@ -13,6 +13,7 @@ use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{GroupApplicationPlaintext, GroupStateRef};
 use common::tempdir;
 use rusqlite::{params, Connection};
+use serde_json::json;
 
 fn alice() -> &'static str {
     "did:wba:example.com:users:alice:e1"
@@ -203,6 +204,77 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
         decrypted.application_plaintext.text.as_deref(),
         Some("typed hello")
     );
+
+    let attachment_manifest = json!({
+        "attachments": [{
+            "attachment_id": "att-typed-group",
+            "size": "48",
+            "digest": {
+                "alg": "sha-256",
+                "value_b64u": "digest"
+            },
+            "mime_type": "text/plain",
+            "encryption_info": {
+                "mode": "object-e2ee",
+                "object_cipher": "chacha20-poly1305",
+                "object_key_b64u": "OBJECT-KEY",
+                "nonce_b64u": "NONCE",
+                "plaintext_size": "31"
+            }
+        }],
+        "caption": "secure attachment",
+        "primary_attachment_id": "att-typed-group"
+    });
+    let encrypted_payload = encrypt(
+        &alice_store,
+        EncryptInput {
+            sender_did: alice().to_owned(),
+            device_id: "phone".to_owned(),
+            group_state_ref: GroupStateRef {
+                group_did: group_did.to_owned(),
+                group_state_version: "1".to_owned(),
+                policy_hash: None,
+            },
+            message_id: "msg-typed-attachment".to_owned(),
+            operation_id: "op-typed-attachment-encrypt".to_owned(),
+            application_plaintext: GroupApplicationPlaintext {
+                application_content_type: "application/anp-attachment-manifest+json".to_owned(),
+                thread_id: Some(group_did.to_owned()),
+                reply_to_message_id: None,
+                annotations: Default::default(),
+                text: None,
+                payload: Some(attachment_manifest.clone()),
+                payload_b64u: None,
+            },
+            request_id: "req-typed-attachment-encrypt".to_owned(),
+        },
+    )
+    .expect("typed payload encrypt");
+    let decrypted_payload = decrypt(
+        &bob_store,
+        DecryptInput {
+            recipient_did: bob().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            sender_did: alice().to_owned(),
+            message_id: "msg-typed-attachment".to_owned(),
+            operation_id: "op-typed-attachment-encrypt".to_owned(),
+            group_cipher_object: encrypted_payload.group_cipher_object,
+            request_id: "req-typed-attachment-decrypt".to_owned(),
+        },
+    )
+    .expect("typed payload decrypt");
+    assert_eq!(
+        decrypted_payload
+            .application_plaintext
+            .application_content_type,
+        "application/anp-attachment-manifest+json"
+    );
+    assert_eq!(
+        decrypted_payload.application_plaintext.payload,
+        Some(attachment_manifest)
+    );
+    assert_eq!(decrypted_payload.application_plaintext.text, None);
 
     let active_status = status(
         &alice_store,
