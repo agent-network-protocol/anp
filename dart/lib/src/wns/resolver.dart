@@ -50,13 +50,27 @@ Future<HandleResolutionDocument> resolveHandle(
         "handle mismatch: requested '$normalized', got '$responseHandle'",
       );
     }
+    final did = map['did']?.toString() ?? '';
+    var profile = map['profile'] is Map
+        ? DidSubjectProfile.fromJson(
+            Map<String, Object?>.from(
+              (map['profile'] as Map).cast<String, Object?>(),
+            ),
+          )
+        : null;
+    if (profile != null && profile.subjectDid != did) {
+      profile = null;
+    } else if (profile?.handle != null && profile!.handle != responseHandle) {
+      profile = null;
+    }
     return HandleResolutionDocument(
-      handle: normalized,
-      did: map['did']?.toString() ?? '',
-      status: HandleStatus.values.firstWhere(
-        (s) => s.name == (map['status'] ?? 'active'),
-        orElse: () => HandleStatus.active,
-      ),
+      handle: responseHandle,
+      did: did,
+      status: _parseHandleStatus(map['status']),
+      updated: map['updated']?.toString(),
+      versionId: map['versionId']?.toString(),
+      ttl: map['ttl'] is int ? map['ttl'] as int : null,
+      profile: profile,
       didDocument: map['didDocument'] is Map
           ? Map<String, Object?>.from(
               (map['didDocument'] as Map).cast<String, Object?>(),
@@ -73,3 +87,11 @@ Future<HandleResolutionDocument> resolveHandleFromUri(
   ResolveHandleOptions options = const ResolveHandleOptions(),
   http.Client? client,
 }) => resolveHandle(parseWbaUri(uri).handle, options: options, client: client);
+
+HandleStatus _parseHandleStatus(Object? value) {
+  final normalized = value?.toString().toLowerCase() ?? 'active';
+  for (final status in HandleStatus.values) {
+    if (status.name == normalized) return status;
+  }
+  throw AnpWnsException("unexpected handle status '$normalized'");
+}

@@ -9,11 +9,41 @@ export enum HandleStatus {
   Revoked = 'revoked',
 }
 
+export enum SubjectType {
+  Person = 'person',
+  Agent = 'agent',
+  Group = 'group',
+  Organization = 'organization',
+  Service = 'service',
+  Application = 'application',
+  Unknown = 'unknown',
+}
+
+export interface DIDSubjectProfile {
+  type?: string;
+  subject_did: string;
+  subject_type?: SubjectType;
+  handle?: string;
+  display_name?: string;
+  description?: string;
+  avatar_uri?: string;
+  profile_uri?: string;
+  discoverability?: string;
+  labels?: Record<string, unknown>;
+  updated?: string;
+  versionId?: string;
+  ttl?: number;
+  proof?: Record<string, unknown>;
+}
+
 export interface HandleResolutionDocument {
   handle: string;
   did: string;
   status: HandleStatus;
   updated?: string;
+  versionId?: string;
+  ttl?: number;
+  profile?: DIDSubjectProfile;
 }
 
 export interface HandleServiceEntry {

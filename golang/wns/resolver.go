@@ -59,6 +59,7 @@ func ResolveHandleWithOptions(ctx context.Context, handle string, options Resolv
 	if strings.ToLower(document.Handle) != normalized {
 		return HandleResolutionDocument{}, fmt.Errorf("handle mismatch: requested '%s', got '%s'", normalized, document.Handle)
 	}
+	dropInvalidProfileProjection(&document)
 	return document, nil
 }
 
@@ -87,4 +88,35 @@ func authenticationDecodeJSON(reader io.Reader, target any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
 	return decoder.Decode(target)
+}
+
+func dropInvalidProfileProjection(document *HandleResolutionDocument) {
+	if document.Profile == nil {
+		return
+	}
+	if !isKnownSubjectType(document.Profile.SubjectType) {
+		document.Profile.SubjectType = SubjectTypeUnknown
+	}
+	if document.Profile.SubjectDID != document.DID {
+		document.Profile = nil
+		return
+	}
+	if document.Profile.Handle != "" && document.Profile.Handle != document.Handle {
+		document.Profile = nil
+	}
+}
+
+func isKnownSubjectType(value SubjectType) bool {
+	switch value {
+	case SubjectTypePerson,
+		SubjectTypeAgent,
+		SubjectTypeGroup,
+		SubjectTypeOrganization,
+		SubjectTypeService,
+		SubjectTypeApplication,
+		SubjectTypeUnknown:
+		return true
+	default:
+		return false
+	}
 }

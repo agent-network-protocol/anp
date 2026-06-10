@@ -5,10 +5,12 @@ import unittest
 from pydantic import ValidationError
 
 from anp.wns.models import (
+    DIDSubjectProfile,
     HandleResolutionDocument,
     HandleServiceEntry,
     HandleStatus,
     ParsedWbaUri,
+    SubjectType,
 )
 
 
@@ -31,11 +33,15 @@ class TestHandleResolutionDocument(unittest.TestCase):
             did="did:wba:example.com:user:alice",
             status=HandleStatus.ACTIVE,
             updated="2025-01-01T00:00:00Z",
+            versionId="42",
+            ttl=300,
         )
         self.assertEqual(doc.handle, "alice.example.com")
         self.assertEqual(doc.did, "did:wba:example.com:user:alice")
         self.assertEqual(doc.status, HandleStatus.ACTIVE)
         self.assertEqual(doc.updated, "2025-01-01T00:00:00Z")
+        self.assertEqual(doc.versionId, "42")
+        self.assertEqual(doc.ttl, 300)
 
     def test_optional_updated(self):
         doc = HandleResolutionDocument(
@@ -61,9 +67,54 @@ class TestHandleResolutionDocument(unittest.TestCase):
             "did": "did:wba:example.com:user:alice",
             "status": "active",
             "updated": "2025-01-01T00:00:00Z",
+            "profile": {
+                "type": "DIDSubjectProfile",
+                "subject_did": "did:wba:example.com:user:alice",
+                "subject_type": "person",
+                "handle": "alice.example.com",
+                "display_name": "Alice",
+                "avatar_uri": "https://example.com/avatars/alice.png",
+                "labels": {"locale": "en-US"},
+                "proof": {"type": "DataIntegrityProof"},
+            },
         }
         doc = HandleResolutionDocument.model_validate(data)
         self.assertEqual(doc.status, HandleStatus.ACTIVE)
+        self.assertIsNotNone(doc.profile)
+        self.assertEqual(doc.profile.subject_type, SubjectType.PERSON)
+        self.assertEqual(doc.profile.display_name, "Alice")
+        self.assertEqual(doc.profile.proof["type"], "DataIntegrityProof")
+
+    def test_profile_subject_did_mismatch_is_ignored(self):
+        doc = HandleResolutionDocument.model_validate(
+            {
+                "handle": "alice.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
+                "profile": {
+                    "subject_did": "did:wba:example.com:user:bob",
+                    "display_name": "Bob",
+                },
+            }
+        )
+
+        self.assertIsNone(doc.profile)
+
+    def test_profile_handle_mismatch_is_ignored(self):
+        doc = HandleResolutionDocument.model_validate(
+            {
+                "handle": "alice.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
+                "profile": {
+                    "subject_did": "did:wba:example.com:user:alice",
+                    "handle": "bob.example.com",
+                    "display_name": "Bob",
+                },
+            }
+            )
+
+        self.assertIsNone(doc.profile)
 
     def test_missing_required_field(self):
         with self.assertRaises(ValidationError):
@@ -79,6 +130,31 @@ class TestHandleResolutionDocument(unittest.TestCase):
                 did="did:wba:example.com:user:alice",
                 status="unknown",
             )
+
+
+class TestDIDSubjectProfile(unittest.TestCase):
+
+    def test_valid_profile(self):
+        profile = DIDSubjectProfile(
+            subject_did="did:wba:example.com:user:alice",
+            subject_type=SubjectType.PERSON,
+            handle="alice.example.com",
+            display_name="Alice",
+            ttl=300,
+        )
+        self.assertEqual(profile.type, "DIDSubjectProfile")
+        self.assertEqual(profile.subject_type, SubjectType.PERSON)
+        self.assertEqual(profile.display_name, "Alice")
+
+    def test_unknown_subject_type_defaults_to_unknown(self):
+        missing = DIDSubjectProfile(subject_did="did:wba:example.com:user:alice")
+        custom = DIDSubjectProfile(
+            subject_did="did:wba:example.com:user:alice",
+            subject_type="custom-private-type",
+        )
+
+        self.assertEqual(missing.subject_type, SubjectType.UNKNOWN)
+        self.assertEqual(custom.subject_type, SubjectType.UNKNOWN)
 
 
 class TestHandleServiceEntry(unittest.TestCase):

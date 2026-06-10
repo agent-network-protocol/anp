@@ -142,7 +142,7 @@ pub async fn resolve_handle_with_options(
             ),
             status_code: 502,
         })?;
-        let document: HandleResolutionDocument =
+        let mut document: HandleResolutionDocument =
             serde_json::from_value(data).map_err(|err| HandleResolutionError {
                 message: format!(
                     "Unexpected error resolving handle '{}': {}",
@@ -159,6 +159,7 @@ pub async fn resolve_handle_with_options(
                 status_code: 502,
             });
         }
+        document.drop_invalid_profile_projection();
         Ok(document)
     }
 }

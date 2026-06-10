@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 
 import {
   HandleStatus,
+  SubjectType,
   buildHandleServiceEntry,
   buildWbaUri,
   parseWbaUri,
@@ -40,6 +41,17 @@ describe('wns', () => {
             did: 'did:wba:example.com:user:alice',
             status: 'active',
             updated: '2025-01-01T00:00:00Z',
+            versionId: '42',
+            ttl: 300,
+            profile: {
+              type: 'DIDSubjectProfile',
+              subject_did: 'did:wba:example.com:user:alice',
+              subject_type: 'person',
+              handle: 'alice.example.com',
+              display_name: 'Alice',
+              avatar_uri: 'https://example.com/avatars/alice.png',
+              proof: { type: 'DataIntegrityProof' },
+            },
           })
         );
         return;
@@ -54,6 +66,99 @@ describe('wns', () => {
     const result = await resolveHandle('alice.example.com', { baseUrlOverride: baseUrl });
     expect(result.did).toBe('did:wba:example.com:user:alice');
     expect(result.status).toBe(HandleStatus.Active);
+    expect(result.versionId).toBe('42');
+    expect(result.ttl).toBe(300);
+    expect(result.profile?.subject_type).toBe(SubjectType.Person);
+    expect(result.profile?.display_name).toBe('Alice');
+    expect(result.profile?.proof?.type).toBe('DataIntegrityProof');
+  });
+
+  test('ignores profile subject DID mismatch during resolution', async () => {
+    server = createServer((request, response) => {
+      if (request.url === '/.well-known/handle/alice') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            handle: 'alice.example.com',
+            did: 'did:wba:example.com:user:alice',
+            status: 'active',
+            profile: {
+              subject_did: 'did:wba:example.com:user:bob',
+              display_name: 'Bob',
+            },
+          })
+        );
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl =
+      typeof address === 'object' && address ? `http://127.0.0.1:${address.port}` : '';
+
+    const result = await resolveHandle('alice.example.com', { baseUrlOverride: baseUrl });
+    expect(result.did).toBe('did:wba:example.com:user:alice');
+    expect(result.profile).toBeUndefined();
+  });
+
+  test('ignores profile handle mismatch during resolution', async () => {
+    server = createServer((request, response) => {
+      if (request.url === '/.well-known/handle/alice') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            handle: 'alice.example.com',
+            did: 'did:wba:example.com:user:alice',
+            status: 'active',
+            profile: {
+              subject_did: 'did:wba:example.com:user:alice',
+              handle: 'bob.example.com',
+              display_name: 'Bob',
+            },
+          })
+        );
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl =
+      typeof address === 'object' && address ? `http://127.0.0.1:${address.port}` : '';
+
+    const result = await resolveHandle('alice.example.com', { baseUrlOverride: baseUrl });
+    expect(result.did).toBe('did:wba:example.com:user:alice');
+    expect(result.profile).toBeUndefined();
+  });
+
+  test('normalizes unknown profile subject type to unknown', async () => {
+    server = createServer((request, response) => {
+      if (request.url === '/.well-known/handle/alice') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            handle: 'alice.example.com',
+            did: 'did:wba:example.com:user:alice',
+            status: 'active',
+            profile: {
+              subject_did: 'did:wba:example.com:user:alice',
+              subject_type: 'custom-private-type',
+              display_name: 'Alice',
+            },
+          })
+        );
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl =
+      typeof address === 'object' && address ? `http://127.0.0.1:${address.port}` : '';
+
+    const result = await resolveHandle('alice.example.com', { baseUrlOverride: baseUrl });
+    expect(result.profile?.subject_type).toBe(SubjectType.Unknown);
   });
 
   test('verifies forward and reverse handle binding', async () => {

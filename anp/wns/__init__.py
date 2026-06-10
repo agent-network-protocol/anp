@@ -18,10 +18,12 @@ from .exceptions import (
 # Data models
 from .models import (
     ANP_HANDLE_SERVICE_TYPE,
+    DIDSubjectProfile,
     HandleResolutionDocument,
     HandleServiceEntry,
     HandleStatus,
     ParsedWbaUri,
+    SubjectType,
 )
 
 # Validation (pure functions, no I/O)
@@ -60,6 +62,8 @@ __all__ = [
     "HandleBindingError",
     "WbaUriParseError",
     # Models
+    "DIDSubjectProfile",
+    "SubjectType",
     "HandleStatus",
     "HandleResolutionDocument",
     "HandleServiceEntry",

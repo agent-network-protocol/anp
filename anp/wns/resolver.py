@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 import aiohttp
+from pydantic import ValidationError
 
 from .exceptions import (
     HandleGoneError,
@@ -103,7 +104,12 @@ async def resolve_handle(
             f"Unexpected error resolving handle '{normalized}': {exc}"
         ) from exc
 
-    doc = HandleResolutionDocument.model_validate(data)
+    try:
+        doc = HandleResolutionDocument.model_validate(data)
+    except ValidationError as exc:
+        raise HandleResolutionError(
+            f"Unexpected error resolving handle '{normalized}': {exc}"
+        ) from exc
 
     # Verify that the returned handle matches the requested one.
     if normalize_handle(doc.handle) != normalized:

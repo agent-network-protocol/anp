@@ -26,6 +26,14 @@ def _make_app():
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
                 "updated": "2025-01-01T00:00:00Z",
+                "profile": {
+                    "type": "DIDSubjectProfile",
+                    "subject_did": "did:wba:example.com:user:alice",
+                    "subject_type": "person",
+                    "handle": "alice.example.com",
+                    "display_name": "Alice",
+                    "avatar_uri": "https://example.com/avatars/alice.png",
+                },
             }
         )
 
@@ -64,6 +72,33 @@ def _make_app():
             }
         )
 
+    async def handle_profile_mismatched_did(request):
+        return web.json_response(
+            {
+                "handle": "profile-mismatch.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
+                "profile": {
+                    "subject_did": "did:wba:example.com:user:bob",
+                    "display_name": "Bob",
+                },
+            }
+        )
+
+    async def handle_profile_mismatched_handle(request):
+        return web.json_response(
+            {
+                "handle": "profile-handle-mismatch.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
+                "profile": {
+                    "subject_did": "did:wba:example.com:user:alice",
+                    "handle": "alice.example.com",
+                    "display_name": "Alice",
+                },
+            }
+        )
+
     app = web.Application()
     app.router.add_get("/.well-known/handle/alice", handle_alice)
     app.router.add_get("/.well-known/handle/suspended", handle_suspended)
@@ -71,6 +106,13 @@ def _make_app():
     app.router.add_get("/.well-known/handle/gone", handle_gone)
     app.router.add_get("/.well-known/handle/moved", handle_moved)
     app.router.add_get("/.well-known/handle/mismatched", handle_mismatched)
+    app.router.add_get(
+        "/.well-known/handle/profile-mismatch", handle_profile_mismatched_did
+    )
+    app.router.add_get(
+        "/.well-known/handle/profile-handle-mismatch",
+        handle_profile_mismatched_handle,
+    )
     return app
 
 
@@ -110,6 +152,8 @@ class TestResolveHandle(AioHTTPTestCase):
         self.assertEqual(doc.did, "did:wba:example.com:user:alice")
         self.assertEqual(doc.status, HandleStatus.ACTIVE)
         self.assertEqual(doc.updated, "2025-01-01T00:00:00Z")
+        self.assertIsNotNone(doc.profile)
+        self.assertEqual(doc.profile.display_name, "Alice")
 
     async def test_resolve_with_wba_uri_prefix(self):
         """wba://alice.example.com should resolve identically to alice.example.com."""
@@ -155,6 +199,16 @@ class TestResolveHandle(AioHTTPTestCase):
         with self.assertRaises(HandleResolutionError) as ctx:
             await self._resolve("mismatched")
         self.assertIn("mismatch", str(ctx.exception).lower())
+
+    async def test_resolve_ignores_profile_subject_did_mismatch(self):
+        doc = await self._resolve("profile-mismatch")
+        self.assertEqual(doc.did, "did:wba:example.com:user:alice")
+        self.assertIsNone(doc.profile)
+
+    async def test_resolve_ignores_profile_handle_mismatch(self):
+        doc = await self._resolve("profile-handle-mismatch")
+        self.assertEqual(doc.did, "did:wba:example.com:user:alice")
+        self.assertIsNone(doc.profile)
 
 
 if __name__ == "__main__":
