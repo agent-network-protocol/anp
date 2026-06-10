@@ -6,9 +6,10 @@ use std::fs;
 use anp::authentication::{
     build_agent_message_service, build_agent_message_service_with_options,
     build_anp_message_service, build_group_message_service, create_did_wba_document,
-    extract_signature_metadata, generate_auth_header, generate_http_signature_headers,
-    validate_did_document_binding, verify_auth_header_signature, verify_federated_http_request,
-    verify_http_message_signature, AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader,
+    create_did_wba_document_with_creation_options, extract_signature_metadata,
+    generate_auth_header, generate_http_signature_headers, validate_did_document_binding,
+    verify_auth_header_signature, verify_federated_http_request, verify_http_message_signature,
+    AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader, DidDocumentCreationOptions,
     DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
     FederatedVerificationOptions, HttpSignatureError,
 };
@@ -16,6 +17,7 @@ use anp::authentication::{
 use anp::authentication::{
     resolve_did_document_with_options, resolve_did_wba_document_with_options, DidResolutionOptions,
 };
+use anp::proof::{verify_w3c_proof, ProofVerificationOptions};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use common::tempdir;
 #[cfg(feature = "network")]
@@ -70,6 +72,134 @@ fn test_create_did_document_profiles() {
 }
 
 #[test]
+fn test_default_did_document_has_no_additional_authentication_methods() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("e1 DID creation should succeed");
+
+    let methods = bundle
+        .did_document
+        .get("verificationMethod")
+        .and_then(serde_json::Value::as_array)
+        .expect("verification methods");
+    assert!(!methods.iter().any(|method| method
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id.ends_with("#daemon-key-1"))));
+    let authentication = bundle
+        .did_document
+        .get("authentication")
+        .and_then(serde_json::Value::as_array)
+        .expect("authentication");
+    assert!(!authentication.iter().any(|entry| entry
+        .as_str()
+        .is_some_and(|id| id.ends_with("#daemon-key-1"))));
+}
+
+#[test]
+fn test_additional_authentication_methods_are_signed_before_proof() {
+    let delegated_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let delegated_public_multibase =
+        ed25519_public_key_to_multibase(&delegated_key.verifying_key());
+    let options = DidDocumentCreationOptions::new(DidDocumentOptions {
+        path_segments: vec!["user".to_string(), "alice".to_string()],
+        ..DidDocumentOptions::default()
+    })
+    .with_additional_verification_method(json!({
+        "id": "#daemon-key-1",
+        "type": "Multikey",
+        "publicKeyMultibase": delegated_public_multibase,
+    }))
+    .with_additional_authentication("#daemon-key-1");
+
+    let bundle = create_did_wba_document_with_creation_options("example.com", options)
+        .expect("DID creation should succeed");
+    let did = bundle.did().expect("DID should exist");
+    let delegated_method_id = format!("{did}#daemon-key-1");
+    let methods = bundle
+        .did_document
+        .get("verificationMethod")
+        .and_then(serde_json::Value::as_array)
+        .expect("verification methods");
+    let delegated_method = methods
+        .iter()
+        .find(|method| {
+            method.get("id").and_then(serde_json::Value::as_str)
+                == Some(delegated_method_id.as_str())
+        })
+        .expect("delegated method should exist");
+    assert_eq!(delegated_method["controller"], json!(did));
+    assert_eq!(
+        delegated_method["publicKeyMultibase"],
+        json!(delegated_public_multibase)
+    );
+    assert!(bundle
+        .did_document
+        .get("authentication")
+        .and_then(serde_json::Value::as_array)
+        .expect("authentication")
+        .iter()
+        .any(|entry| entry.as_str() == Some(delegated_method_id.as_str())));
+
+    let signing_public = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("key-1 private should load")
+        .public_key();
+    assert!(verify_w3c_proof(
+        &bundle.did_document,
+        &signing_public,
+        ProofVerificationOptions {
+            expected_purpose: Some("assertionMethod".to_string()),
+            ..ProofVerificationOptions::default()
+        }
+    ));
+
+    let mut tampered = bundle.did_document.clone();
+    tampered["authentication"] = json!([format!("{did}#key-1")]);
+    assert!(!verify_w3c_proof(
+        &tampered,
+        &signing_public,
+        ProofVerificationOptions {
+            expected_purpose: Some("assertionMethod".to_string()),
+            ..ProofVerificationOptions::default()
+        }
+    ));
+}
+
+#[test]
+fn test_additional_verification_method_rejects_controller_mismatch() {
+    let delegated_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let options = DidDocumentCreationOptions::new(DidDocumentOptions {
+        path_segments: vec!["user".to_string(), "alice".to_string()],
+        ..DidDocumentOptions::default()
+    })
+    .with_additional_verification_method(json!({
+        "id": "#daemon-key-1",
+        "type": "Multikey",
+        "controller": "did:wba:evil.example",
+        "publicKeyMultibase": ed25519_public_key_to_multibase(&delegated_key.verifying_key()),
+    }))
+    .with_additional_authentication("#daemon-key-1");
+
+    assert!(create_did_wba_document_with_creation_options("example.com", options).is_err());
+}
+
+#[test]
+fn test_additional_authentication_rejects_unknown_reference() {
+    let options = DidDocumentCreationOptions::new(DidDocumentOptions {
+        path_segments: vec!["user".to_string(), "alice".to_string()],
+        ..DidDocumentOptions::default()
+    })
+    .with_additional_authentication("#daemon-key-1");
+
+    assert!(create_did_wba_document_with_creation_options("example.com", options).is_err());
+}
+
+#[test]
 fn test_validate_did_document_binding_rejects_e1_without_assertion_method_authorization() {
     let bundle = create_did_wba_document(
         "example.com",
@@ -91,6 +221,12 @@ fn test_validate_did_document_binding_rejects_e1_without_assertion_method_author
         !validate_did_document_binding(&document, false),
         "e1 DID binding should require proof.verificationMethod authorization in assertionMethod",
     );
+}
+
+fn ed25519_public_key_to_multibase(key: &ed25519_dalek::VerifyingKey) -> String {
+    let mut bytes = vec![0xed, 0x01];
+    bytes.extend_from_slice(&key.to_bytes());
+    format!("z{}", bs58::encode(bytes).into_string())
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
 use percent_encoding::percent_decode_str;
@@ -117,6 +117,50 @@ impl DidDocumentOptions {
 
     pub fn with_service(mut self, service: Value) -> Self {
         self.services.push(service);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DidDocumentCreationOptions {
+    pub document_options: DidDocumentOptions,
+    pub additional_verification_methods: Vec<Value>,
+    pub additional_authentication: Vec<Value>,
+}
+
+impl Default for DidDocumentCreationOptions {
+    fn default() -> Self {
+        Self {
+            document_options: DidDocumentOptions::default(),
+            additional_verification_methods: Vec::new(),
+            additional_authentication: Vec::new(),
+        }
+    }
+}
+
+impl From<DidDocumentOptions> for DidDocumentCreationOptions {
+    fn from(value: DidDocumentOptions) -> Self {
+        Self {
+            document_options: value,
+            additional_verification_methods: Vec::new(),
+            additional_authentication: Vec::new(),
+        }
+    }
+}
+
+impl DidDocumentCreationOptions {
+    pub fn new(document_options: DidDocumentOptions) -> Self {
+        Self::from(document_options)
+    }
+
+    pub fn with_additional_verification_method(mut self, method: Value) -> Self {
+        self.additional_verification_methods.push(method);
+        self
+    }
+
+    pub fn with_additional_authentication(mut self, reference: impl Into<String>) -> Self {
+        self.additional_authentication
+            .push(Value::String(reference.into()));
         self
     }
 }
@@ -428,12 +472,27 @@ pub fn create_did_wba_document(
     hostname: &str,
     options: DidDocumentOptions,
 ) -> Result<DidDocumentBundle, AuthenticationError> {
+    create_did_wba_document_with_creation_options(
+        hostname,
+        DidDocumentCreationOptions::from(options),
+    )
+}
+
+pub fn create_did_wba_document_with_creation_options(
+    hostname: &str,
+    options: DidDocumentCreationOptions,
+) -> Result<DidDocumentBundle, AuthenticationError> {
     if hostname.trim().is_empty() {
         return Err(AuthenticationError::EmptyHostname);
     }
     if is_ip_address(hostname) {
         return Err(AuthenticationError::IpAddressNotAllowed);
     }
+    let DidDocumentCreationOptions {
+        document_options: options,
+        additional_verification_methods,
+        additional_authentication,
+    } = options;
 
     let did_base = build_did_base(hostname, options.port);
     let mut path_segments = options.path_segments.clone();
@@ -605,6 +664,12 @@ pub fn create_did_wba_document(
     if !services.is_empty() {
         document.insert("service".to_string(), Value::Array(services));
     }
+    apply_additional_authentication_methods(
+        &mut document,
+        &did,
+        &additional_verification_methods,
+        &additional_authentication,
+    )?;
 
     let proof_options = ProofGenerationOptions {
         proof_purpose: Some(options.proof_purpose.clone()),
@@ -1280,6 +1345,150 @@ fn build_service_entries(
         output.push(copy);
     }
     output
+}
+
+fn normalize_did_method_reference(
+    did: &str,
+    reference: &Value,
+) -> Result<String, AuthenticationError> {
+    let reference = reference
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(AuthenticationError::InvalidDidDocument)?;
+    if reference.starts_with('#') {
+        return Ok(format!("{did}{reference}"));
+    }
+    if reference.starts_with(&format!("{did}#")) {
+        return Ok(reference.to_string());
+    }
+    Err(AuthenticationError::InvalidDidDocument)
+}
+
+fn normalize_additional_verification_methods(
+    did: &str,
+    additional_verification_methods: &[Value],
+) -> Result<Vec<Value>, AuthenticationError> {
+    let mut output = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    for method in additional_verification_methods {
+        let method_object = method
+            .as_object()
+            .ok_or(AuthenticationError::InvalidDidDocument)?;
+        let method_id = normalize_did_method_reference(
+            did,
+            method_object
+                .get("id")
+                .ok_or(AuthenticationError::InvalidDidDocument)?,
+        )?;
+        if !seen_ids.insert(method_id.clone()) {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        let method_type = method_object
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(AuthenticationError::InvalidDidDocument)?;
+        if method_type.is_empty()
+            || !(method_object.contains_key("publicKeyMultibase")
+                || method_object.contains_key("publicKeyJwk"))
+        {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        if method_object
+            .get("controller")
+            .and_then(Value::as_str)
+            .unwrap_or(did)
+            != did
+        {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+
+        let mut normalized = method_object.clone();
+        normalized.insert("id".to_string(), Value::String(method_id));
+        normalized.insert("controller".to_string(), Value::String(did.to_string()));
+        output.push(Value::Object(normalized));
+    }
+    Ok(output)
+}
+
+fn apply_additional_authentication_methods(
+    document: &mut Map<String, Value>,
+    did: &str,
+    additional_verification_methods: &[Value],
+    additional_authentication: &[Value],
+) -> Result<(), AuthenticationError> {
+    if additional_verification_methods.is_empty() && additional_authentication.is_empty() {
+        return Ok(());
+    }
+
+    let normalized_methods =
+        normalize_additional_verification_methods(did, additional_verification_methods)?;
+    let methods = document
+        .get_mut("verificationMethod")
+        .and_then(Value::as_array_mut)
+        .ok_or(AuthenticationError::InvalidDidDocument)?;
+    let mut existing_method_ids = methods
+        .iter()
+        .filter_map(|method| {
+            method
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    for method in normalized_methods {
+        let method_id = method
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or(AuthenticationError::InvalidDidDocument)?
+            .to_string();
+        if !existing_method_ids.insert(method_id) {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        methods.push(method);
+    }
+
+    let mut auth_refs = Vec::new();
+    for reference in additional_authentication {
+        let reference_value = if let Some(object) = reference.as_object() {
+            object
+                .get("id")
+                .ok_or(AuthenticationError::InvalidDidDocument)?
+        } else {
+            reference
+        };
+        let auth_ref = normalize_did_method_reference(did, reference_value)?;
+        if !existing_method_ids.contains(&auth_ref) {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        if !auth_refs.contains(&auth_ref) {
+            auth_refs.push(auth_ref);
+        }
+    }
+
+    let authentication = document
+        .get_mut("authentication")
+        .and_then(Value::as_array_mut)
+        .ok_or(AuthenticationError::InvalidDidDocument)?;
+    let mut existing_auth_ids = authentication
+        .iter()
+        .filter_map(|entry| {
+            entry.as_str().map(ToOwned::to_owned).or_else(|| {
+                entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    for auth_ref in auth_refs {
+        if existing_auth_ids.insert(auth_ref.clone()) {
+            authentication.push(Value::String(auth_ref));
+        }
+    }
+    Ok(())
 }
 
 fn build_did_base(hostname: &str, port: Option<u16>) -> String {

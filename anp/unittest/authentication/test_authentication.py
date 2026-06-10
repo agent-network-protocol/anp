@@ -21,10 +21,11 @@ from anp.authentication import (
     verify_http_message_signature,
 )
 from anp.authentication.did_wba import (
+    _ed25519_public_key_to_multibase,
     is_legacy_secp256k1_authentication_proof,
     validate_did_document_binding,
 )
-from anp.proof import PROOF_TYPE_SECP256K1, generate_w3c_proof
+from anp.proof import PROOF_TYPE_SECP256K1, generate_w3c_proof, verify_w3c_proof
 
 
 def _load_private_key(private_key_pem: bytes):
@@ -119,6 +120,104 @@ class TestDidDocumentProfiles(unittest.TestCase):
         self.assertTrue(caught)
         self.assertIn("deprecated", str(caught[0].message).lower())
         self.assertIn(":k1_", did_document["id"])
+
+    def test_default_document_has_no_additional_authentication_methods(self):
+        """Default DID document creation should not add caller extensions."""
+        did_document, _ = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+        )
+
+        method_ids = [
+            method["id"]
+            for method in did_document.get("verificationMethod", [])
+            if isinstance(method, dict)
+        ]
+        self.assertFalse(any(method_id.endswith("#daemon-key-1") for method_id in method_ids))
+        self.assertFalse(
+            any(
+                isinstance(entry, str) and entry.endswith("#daemon-key-1")
+                for entry in did_document.get("authentication", [])
+            )
+        )
+
+    def test_additional_authentication_methods_are_signed_before_proof(self):
+        """Additional authentication methods should be present in the signed document."""
+        delegated_public_key = ed25519.Ed25519PrivateKey.generate().public_key()
+        public_key_multibase = _ed25519_public_key_to_multibase(delegated_public_key)
+
+        did_document, keys = create_did_wba_document(
+            "example.com",
+            path_segments=["user", "alice"],
+            additional_verification_methods=[
+                {
+                    "id": "#daemon-key-1",
+                    "type": "Multikey",
+                    "publicKeyMultibase": public_key_multibase,
+                }
+            ],
+            additional_authentication=["#daemon-key-1"],
+        )
+
+        did = did_document["id"]
+        delegated_method_id = f"{did}#daemon-key-1"
+        delegated_method = next(
+            method
+            for method in did_document["verificationMethod"]
+            if method["id"] == delegated_method_id
+        )
+        self.assertEqual(delegated_method["controller"], did)
+        self.assertEqual(delegated_method["publicKeyMultibase"], public_key_multibase)
+        self.assertIn(delegated_method_id, did_document["authentication"])
+
+        public_key = serialization.load_pem_public_key(keys["key-1"][1])
+        self.assertTrue(
+            verify_w3c_proof(
+                did_document,
+                public_key,
+                expected_purpose="assertionMethod",
+            )
+        )
+
+        tampered = json.loads(json.dumps(did_document))
+        tampered["authentication"] = [f"{did}#key-1"]
+        self.assertFalse(
+            verify_w3c_proof(
+                tampered,
+                public_key,
+                expected_purpose="assertionMethod",
+            )
+        )
+
+    def test_additional_verification_method_rejects_controller_mismatch(self):
+        """Additional methods must be controlled by the generated DID."""
+        delegated_public_key = ed25519.Ed25519PrivateKey.generate().public_key()
+
+        with self.assertRaisesRegex(ValueError, "controller"):
+            create_did_wba_document(
+                "example.com",
+                path_segments=["user", "alice"],
+                additional_verification_methods=[
+                    {
+                        "id": "#daemon-key-1",
+                        "type": "Multikey",
+                        "controller": "did:wba:evil.example",
+                        "publicKeyMultibase": _ed25519_public_key_to_multibase(
+                            delegated_public_key
+                        ),
+                    }
+                ],
+                additional_authentication=["#daemon-key-1"],
+            )
+
+    def test_additional_authentication_rejects_unknown_reference(self):
+        """Additional authentication references must resolve to a method."""
+        with self.assertRaisesRegex(ValueError, "resolve"):
+            create_did_wba_document(
+                "example.com",
+                path_segments=["user", "alice"],
+                additional_authentication=["#daemon-key-1"],
+            )
 
     def test_legacy_secp256k1_authentication_proof_is_detected_for_plain_legacy(self):
         """Legacy plain secp256k1 documents should be recognized by the helper."""

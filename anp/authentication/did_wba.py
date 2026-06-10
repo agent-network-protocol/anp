@@ -168,6 +168,102 @@ def _build_service_entries(
     return all_services
 
 
+def _normalize_did_method_reference(did: str, reference: Any) -> str:
+    """Normalize a DID method reference to an absolute method ID."""
+    if not isinstance(reference, str) or not reference.strip():
+        raise ValueError("Additional authentication reference must be a non-empty string")
+    reference = reference.strip()
+    if reference.startswith("#"):
+        return f"{did}{reference}"
+    if reference.startswith(f"{did}#"):
+        return reference
+    raise ValueError("Additional authentication reference must belong to the DID")
+
+
+def _normalize_additional_verification_methods(
+    did: str,
+    additional_verification_methods: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Normalize caller-provided verification methods for a DID document."""
+    normalized_methods: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for method in additional_verification_methods or []:
+        if not isinstance(method, dict):
+            raise ValueError("Additional verification method must be a dictionary")
+        method_id = _normalize_did_method_reference(did, method.get("id"))
+        if method_id in seen_ids:
+            raise ValueError("Duplicate additional verification method id")
+        seen_ids.add(method_id)
+
+        method_type = method.get("type")
+        if not isinstance(method_type, str) or not method_type.strip():
+            raise ValueError("Additional verification method type is required")
+        if "publicKeyMultibase" not in method and "publicKeyJwk" not in method:
+            raise ValueError("Additional verification method key material is required")
+
+        controller = method.get("controller", did)
+        if controller != did:
+            raise ValueError("Additional verification method controller must match the DID")
+
+        normalized = dict(method)
+        normalized["id"] = method_id
+        normalized["controller"] = did
+        normalized_methods.append(normalized)
+    return normalized_methods
+
+
+def _apply_additional_authentication_methods(
+    did_document: Dict[str, Any],
+    did: str,
+    additional_verification_methods: Optional[List[Dict[str, Any]]],
+    additional_authentication: Optional[List[Union[str, Dict[str, Any]]]],
+) -> None:
+    """Apply optional verification methods and authentication refs before proof."""
+    normalized_methods = _normalize_additional_verification_methods(
+        did,
+        additional_verification_methods,
+    )
+    if not normalized_methods and not additional_authentication:
+        return
+
+    methods = did_document.setdefault("verificationMethod", [])
+    if not isinstance(methods, list):
+        raise ValueError("DID document verificationMethod must be a list")
+    existing_method_ids = {
+        method.get("id")
+        for method in methods
+        if isinstance(method, dict) and isinstance(method.get("id"), str)
+    }
+    for method in normalized_methods:
+        if method["id"] in existing_method_ids:
+            raise ValueError("Additional verification method id already exists")
+        methods.append(method)
+        existing_method_ids.add(method["id"])
+
+    auth_refs: List[str] = []
+    for reference in additional_authentication or []:
+        if isinstance(reference, dict):
+            reference = reference.get("id")
+        auth_ref = _normalize_did_method_reference(did, reference)
+        if auth_ref not in existing_method_ids:
+            raise ValueError("Additional authentication reference must resolve to a verification method")
+        if auth_ref not in auth_refs:
+            auth_refs.append(auth_ref)
+
+    authentication = did_document.setdefault("authentication", [])
+    if not isinstance(authentication, list):
+        raise ValueError("DID document authentication must be a list")
+    existing_auth_ids = {
+        entry if isinstance(entry, str) else entry.get("id")
+        for entry in authentication
+        if isinstance(entry, (str, dict))
+    }
+    for auth_ref in auth_refs:
+        if auth_ref not in existing_auth_ids:
+            authentication.append(auth_ref)
+            existing_auth_ids.add(auth_ref)
+
+
 def build_anp_message_service(
     *,
     did: str,
@@ -416,6 +512,8 @@ def create_did_wba_document(
     # --- E2EE 参数 ---
     enable_e2ee: bool = True,
     did_profile: str = "e1",
+    additional_verification_methods: Optional[List[Dict[str, Any]]] = None,
+    additional_authentication: Optional[List[Union[str, Dict[str, Any]]]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Tuple[bytes, bytes]]]:
     """
     Generate a DID document and corresponding private key dictionary.
@@ -440,6 +538,12 @@ def create_did_wba_document(
             - "e1": Default profile using Ed25519 + Multikey for path binding.
             - "k1": Compatibility profile using secp256k1 + JWK for path binding.
             - "plain_legacy": Legacy compatibility profile without path binding.
+        additional_verification_methods: Optional verificationMethod entries to
+            insert before proof generation. Relative "#fragment" IDs are
+            expanded against the final DID, and controllers must match the DID.
+        additional_authentication: Optional authentication relationship entries
+            referencing existing or additional verification methods. Relative
+            "#fragment" references are expanded against the final DID.
 
     Returns:
         Tuple[Dict, Dict]: Returns a tuple containing two dictionaries:
@@ -574,6 +678,13 @@ def create_did_wba_document(
     all_services = _build_service_entries(did, agent_description_url, services)
     if all_services:
         did_document["service"] = all_services
+
+    _apply_additional_authentication_methods(
+        did_document,
+        did,
+        additional_verification_methods,
+        additional_authentication,
+    )
 
     proof_vm = verification_method or vm_entry["id"]
     did_document = generate_w3c_proof(
