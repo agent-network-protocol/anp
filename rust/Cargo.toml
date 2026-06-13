@@ -1,6 +1,6 @@
 [package]
 name = "anp"
-version = "0.8.7"
+version = "0.8.8"
 edition = "2021"
 rust-version = "1.88.0"
 description = "Rust SDK for Agent Network Protocol (ANP)"
