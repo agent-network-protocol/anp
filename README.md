@@ -58,7 +58,37 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 
 ## SDKs and releases
 
-This section is intentionally structured as the main entry point for package installation. The detailed multi-language version and registry matrix is added in the release-matrix step of this README refresh.
+Registry status checked on **2026-06-27**. Python, Go, and Rust are the coordinated stable release line in this repository. Dart is published separately. TypeScript and Java are usable from source/local builds, but this README does **not** claim public npm or Maven Central publication for them.
+
+| Language | Package / module | Where to get it | Checked version | Install / use | Examples | Status |
+|---|---|---|---|---|---|---|
+| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.8.8` | `pip install anp` or `pip install "anp[api]"` for OpenANP/FastAPI extras | [examples/python/](examples/python/) | Stable published SDK |
+| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.8.8` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | Stable published SDK; tag format is `golang/vX.Y.Z` |
+| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.8.8` | `cargo add anp` | [rust/examples/](rust/examples/) | Stable published SDK |
+| Dart | `anp` | [pub.dev](https://pub.dev/packages/anp) | `0.8.7` | `dart pub add anp` | [dart/example/](dart/example/) | Published SDK; versioned outside the current Python/Go/Rust release helper |
+| TypeScript | `@anp/typescript-sdk` | Source workspace | local `0.1.0` | `cd typescript/ts_sdk && npm install && npm run build` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Preview/local source; npm registry check returned not found |
+| Java | `com.agentconnect:anp4j`, `com.agentconnect:anp-spring-boot-starter` | Local Maven build | local `1.0.0` | `cd java && mvn clean install -DskipTests` | [java/anp-examples/](java/anp-examples/) | Local SDK; Maven Central metadata check returned not found |
+
+### Minimal install snippets
+
+```bash
+# Python core SDK
+pip install anp
+
+# Python agent-building extras: FastAPI + OpenAI dependencies
+pip install "anp[api]"
+
+# Go
+go get github.com/agent-network-protocol/anp/golang@latest
+
+# Rust
+cargo add anp
+
+# Dart
+dart pub add anp
+```
+
+For local repository development, prefer the commands in [Development](#development) instead of installing published packages.
 
 ## Quick start: build a Python agent
 
@@ -160,22 +190,81 @@ Language-specific examples are also available in [golang/examples/](golang/examp
 
 ## Repository map
 
-This section will provide a compact map of the Python package, language SDK directories, docs, examples, test data, and release tooling.
+| Path | Purpose |
+|---|---|
+| [anp/](anp/) | Python package: OpenANP, authentication, proof, WNS, AP2, crawler, E2EE, and meta-protocol modules. |
+| [examples/python/](examples/python/) | Python examples grouped by feature and learning path. |
+| [golang/](golang/) | Pure Go ANP SDK module and examples. |
+| [rust/](rust/) | Rust `anp` crate, examples, tests, and MLS/E2EE operation surfaces. |
+| [dart/](dart/) | Dart SDK package, examples, tests, and Flutter smoke workspace. |
+| [typescript/ts_sdk/](typescript/ts_sdk/) | TypeScript SDK preview workspace for Node 20+. |
+| [java/](java/) | Java SDK modules: core `anp4j`, Spring Boot starter, and examples. |
+| [docs/](docs/) | Protocol-adjacent docs for DID, AP2, E2EE, public fixtures, and PR notes. |
+| [testdata/](testdata/) | Shared cross-language fixtures and vectors. |
+| [skills/anp-multilang-release/](skills/anp-multilang-release/) | Coordinated Python / Go / Rust release helper and policy. |
 
 ## Development
 
-For local Python development, use `uv` from the repository root:
+Use the toolchain for the language you are changing. Common local commands:
 
 ```bash
+# Python
 uv sync
+uv sync --extra api      # OpenANP / FastAPI examples
+uv sync --extra dev      # pytest and development tools
 uv run pytest
+uv build --wheel
+
+# Go
+cd golang
+go test ./...
+
+# Rust
+cd rust
+cargo test
+
+# Dart
+cd dart
+dart pub get
+dart analyze
+dart test
+
+# TypeScript preview workspace
+cd typescript/ts_sdk
+npm install
+npm run typecheck
+npm test
+npm run build
+
+# Java local workspace
+cd java
+mvn test
 ```
 
-Language-specific development commands are documented in the relevant SDK directories and will be summarized later in this README.
+Some examples require network access or `.env` configuration, especially LLM-assisted negotiation examples under [examples/python/negotiation_mode/](examples/python/negotiation_mode/).
 
 ## Release and versioning
 
-Python, Go, and Rust releases are coordinated by the release helper in [skills/anp-multilang-release/](skills/anp-multilang-release/). The detailed user-facing release policy summary is added in the release-matrix step.
+Python, Go, and Rust use one coordinated `X.Y.Z` version managed by [skills/anp-multilang-release/](skills/anp-multilang-release/). The release policy is documented in [skills/anp-multilang-release/references/release-policy.md](skills/anp-multilang-release/references/release-policy.md).
+
+Current coordinated release files include:
+
+- Python package version in [pyproject.toml](pyproject.toml) and runtime version in [anp/__init__.py](anp/__init__.py).
+- Rust crate version in [rust/Cargo.toml](rust/Cargo.toml).
+- Go runtime version in [golang/version.go](golang/version.go).
+
+Tag rules:
+
+- Root release tag: `X.Y.Z`, for example `0.8.8`.
+- Go submodule tag: `golang/vX.Y.Z`, for example `golang/v0.8.8`.
+
+Release planning starts with:
+
+```bash
+uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8.8
+```
+
+The release command validates the working tree, aligned version files, Python build, Rust dry-run publish, and Go tests before publishing and pushing tags.
 
 ## Security and compatibility notes
 

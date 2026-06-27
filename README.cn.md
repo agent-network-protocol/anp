@@ -58,7 +58,37 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 
 ## SDK 与发布
 
-这一节是用户获取 SDK 的主入口。详细的多语言版本、registry 和安装矩阵会在 README 改版的 release-matrix 步骤中补充。
+Registry 状态核对时间：**2026-06-27**。Python、Go 和 Rust 是本仓库当前统一发版的稳定 release line。Dart 单独发布。TypeScript 和 Java 可以从源码或本地构建使用，但本 README **不声称** 它们已经公开发布到 npm 或 Maven Central。
+
+| 语言 | 包 / 模块 | 获取位置 | 已核对版本 | 安装 / 使用 | 示例 | 状态 |
+|---|---|---|---|---|---|---|
+| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.8.8` | `pip install anp`；OpenANP/FastAPI extras 用 `pip install "anp[api]"` | [examples/python/](examples/python/) | 稳定公开发布 SDK |
+| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.8.8` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | 稳定公开发布 SDK；tag 格式是 `golang/vX.Y.Z` |
+| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.8.8` | `cargo add anp` | [rust/examples/](rust/examples/) | 稳定公开发布 SDK |
+| Dart | `anp` | [pub.dev](https://pub.dev/packages/anp) | `0.8.7` | `dart pub add anp` | [dart/example/](dart/example/) | 已发布 SDK；不在当前 Python/Go/Rust 统一 release helper 中 |
+| TypeScript | `@anp/typescript-sdk` | 源码工作区 | 本地 `0.1.0` | `cd typescript/ts_sdk && npm install && npm run build` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Preview/local source；npm registry 核对结果为 not found |
+| Java | `com.agentconnect:anp4j`, `com.agentconnect:anp-spring-boot-starter` | 本地 Maven build | 本地 `1.0.0` | `cd java && mvn clean install -DskipTests` | [java/anp-examples/](java/anp-examples/) | Local SDK；Maven Central metadata 核对结果为 not found |
+
+### 最小安装命令
+
+```bash
+# Python core SDK
+pip install anp
+
+# Python agent-building extras：FastAPI + OpenAI dependencies
+pip install "anp[api]"
+
+# Go
+go get github.com/agent-network-protocol/anp/golang@latest
+
+# Rust
+cargo add anp
+
+# Dart
+dart pub add anp
+```
+
+如果你在本仓库内开发，请优先使用 [开发](#开发) 中的本地命令，而不是安装公开发布包。
 
 ## 快速开始：构建 Python 智能体
 
@@ -160,22 +190,81 @@ uv run python examples/python/openanp_examples/minimal_client.py
 
 ## 仓库地图
 
-这一节会提供 Python 包、各语言 SDK 目录、文档、示例、测试数据和发布工具的紧凑地图。
+| 路径 | 用途 |
+|---|---|
+| [anp/](anp/) | Python package：OpenANP、authentication、proof、WNS、AP2、crawler、E2EE 和 meta-protocol 模块。 |
+| [examples/python/](examples/python/) | 按功能和学习路径组织的 Python 示例。 |
+| [golang/](golang/) | Pure Go ANP SDK module 和示例。 |
+| [rust/](rust/) | Rust `anp` crate、示例、测试和 MLS/E2EE operation surfaces。 |
+| [dart/](dart/) | Dart SDK package、示例、测试和 Flutter smoke workspace。 |
+| [typescript/ts_sdk/](typescript/ts_sdk/) | 面向 Node 20+ 的 TypeScript SDK preview workspace。 |
+| [java/](java/) | Java SDK modules：core `anp4j`、Spring Boot starter 和 examples。 |
+| [docs/](docs/) | DID、AP2、E2EE、public fixtures 和 PR notes 等协议相关文档。 |
+| [testdata/](testdata/) | 跨语言共享 fixtures 和 vectors。 |
+| [skills/anp-multilang-release/](skills/anp-multilang-release/) | Python / Go / Rust 统一发版 helper 和 policy。 |
 
 ## 开发
 
-本地 Python 开发请在仓库根目录使用 `uv`：
+请根据你修改的语言 SDK 使用对应工具链。常用本地命令：
 
 ```bash
+# Python
 uv sync
+uv sync --extra api      # OpenANP / FastAPI examples
+uv sync --extra dev      # pytest and development tools
 uv run pytest
+uv build --wheel
+
+# Go
+cd golang
+go test ./...
+
+# Rust
+cd rust
+cargo test
+
+# Dart
+cd dart
+dart pub get
+dart analyze
+dart test
+
+# TypeScript preview workspace
+cd typescript/ts_sdk
+npm install
+npm run typecheck
+npm test
+npm run build
+
+# Java local workspace
+cd java
+mvn test
 ```
 
-各语言 SDK 的开发命令由对应目录维护，后续也会在本 README 中汇总。
+部分示例需要网络或 `.env` 配置，尤其是 [examples/python/negotiation_mode/](examples/python/negotiation_mode/) 下的 LLM 辅助协议协商示例。
 
 ## 发布和版本规则
 
-Python、Go 和 Rust 使用 [skills/anp-multilang-release/](skills/anp-multilang-release/) 中的 release helper 统一发版。面向用户的版本规则摘要会在 release-matrix 步骤中补充。
+Python、Go 和 Rust 使用 [skills/anp-multilang-release/](skills/anp-multilang-release/) 中的 release helper 维护同一个 `X.Y.Z` 版本。发版规则见 [skills/anp-multilang-release/references/release-policy.md](skills/anp-multilang-release/references/release-policy.md)。
+
+当前统一版本文件包括：
+
+- Python package version：[pyproject.toml](pyproject.toml)，runtime version：[anp/__init__.py](anp/__init__.py)。
+- Rust crate version：[rust/Cargo.toml](rust/Cargo.toml)。
+- Go runtime version：[golang/version.go](golang/version.go)。
+
+Tag 规则：
+
+- 根 release tag：`X.Y.Z`，例如 `0.8.8`。
+- Go 子模块 tag：`golang/vX.Y.Z`，例如 `golang/v0.8.8`。
+
+发版前先查看计划：
+
+```bash
+uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8.8
+```
+
+正式 release 会在发布前检查干净工作区、版本文件一致性、Python build、Rust dry-run publish 和 Go tests，然后发布并推送 tags。
 
 ## 安全和兼容性说明
 
