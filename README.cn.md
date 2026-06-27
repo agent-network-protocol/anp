@@ -4,328 +4,112 @@
 
 </div>
 
-# AgentConnect
+# AgentConnect：ANP 多语言 SDK
 
-## AgentConnect是什么
+AgentConnect 是 [Agent Network Protocol（ANP）](https://github.com/agent-network-protocol/AgentNetworkProtocol) 的多语言 SDK 和参考实现。它帮助智能体完成身份识别、接口发现、标准 RPC 调用、可验证证明、可读 Handle 解析，以及端到端加密通信能力的构建。
 
-AgentConnect是[Agent Network Protocol(ANP)](https://github.com/agent-network-protocol/AgentNetworkProtocol)的开源SDK实现。
-
-AgentNetworkProtocol(ANP)的目标是成为**智能体互联网时代的HTTP**，为数十亿智能体构建一个开放、安全、高效的协作网络。
+Python 包名是 `anp`；本仓库同时包含 Go、Rust、Dart、TypeScript 和 Java 的 SDK 实现或 SDK 工作区。
 
 <p align="center">
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+## ANP 是什么？
 
+ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 
-## 🔐 为你的智能体添加 DID 身份认证
+- **我正在和谁通信？** DID WBA 身份、DID 文档、HTTP Message Signatures 和验证器工具。
+- **这个智能体能做什么？** Agent Description 文档、OpenRPC 接口文档和 JSON-RPC 端点。
+- **这个对象或请求可信吗？** W3C Data Integrity proofs、Appendix-B object proofs、IM/origin proofs 和 DID-WBA binding proofs。
+- **人和智能体如何发现彼此？** WNS Handle 校验、解析和绑定验证。
+- **智能体如何私密通信？** ANP 兼容客户端和服务使用的 Direct / Group E2EE 构建模块。
 
-想让你的智能体支持去中心化身份认证？查看 [DID WBA 身份认证集成指南](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.md)，快速为任何 Python HTTP 服务添加 DID WBA 认证能力。
+## 这个仓库提供什么？
 
-### 当前 DID-WBA 默认行为
+- **Python Agent SDK**：OpenANP 用于快速构建和调用 ANP 智能体，并提供 authentication、proof、WNS、AP2、crawler 和 E2EE 模块。
+- **共享协议 SDK**：Go、Rust 和 Dart SDK 覆盖核心 ANP 身份、证明、WNS 功能和部分 E2EE 能力。
+- **预览 / 本地 SDK 工作区**：TypeScript 和 Java 实现可以从源码使用，公开包发布状态仍需在 README 中明确区分。
+- **示例和 fixtures**：可运行示例、跨语言互通检查和共享测试向量。
+- **发布工具**：Python / Go / Rust 的统一发版流程和版本规则。
 
-- **路径型 DID 默认创建为 `e1_`**：`create_did_wba_document()` 现在默认使用 Ed25519 `Multikey` 绑定密钥创建路径型 DID。
-- **默认请求认证格式为 HTTP Message Signatures**：`DIDWbaAuthHeader` 默认发送 `Signature-Input` / `Signature`，如果有消息体还会带上 `Content-Digest`。
-- **仍保留旧版兼容模式**：如果需要兼容仍在使用旧 Authorization 认证流程的客户端，可以显式指定 `auth_mode="legacy_didwba"`。
-- **Access Token 标准返回头改为 `Authentication-Info`**：在迁移期内，服务端还会额外返回兼容用的 `Authorization: Bearer ...` 响应头。
-- **resolver 现在更严格**：
-  - `resolve_did_wba_document()` 会始终校验 `e1_` / `k1_` 的 DID 绑定关系
-  - 对 `e1_`，proof 已纳入绑定校验，必须是有效的 `DataIntegrityProof + eddsa-jcs-2022`
-  - 对 `k1_`，proof 默认仍然可选；但在 `verify_proof=True` 时，会要求 proof 使用的 key 本身就是绑定 key
+## 选择你的路径
 
----
+| 我想要... | 从这里开始 |
+|---|---|
+| 快速构建一个可运行的 ANP 智能体 | [Python OpenANP 快速开始](#快速开始构建-python-智能体) |
+| 给 HTTP 服务添加 DID WBA 身份认证 | [DID WBA 示例](examples/python/did_wba_examples/) |
+| 使用最新稳定 SDK 版本 | [SDK 与发布](#sdk-与发布) |
+| 调用或爬取另一个 ANP 智能体 | [ANP Crawler 示例](examples/python/anp_crawler_examples/) |
+| 使用 Proof、WNS 或 E2EE | [核心概念](#核心概念) 和 [示例学习路径](#示例学习路径) |
+| 参与仓库开发 | [开发](#开发) |
 
-## 🚀 快速开始 - 30秒构建ANP智能体
+## 目录
 
-OpenANP是构建ANP智能体最简单的方式。只需几行代码即可完成：
+- [SDK 与发布](#sdk-与发布)
+- [快速开始：构建 Python 智能体](#快速开始构建-python-智能体)
+- [示例学习路径](#示例学习路径)
+- [核心概念](#核心概念)
+- [仓库地图](#仓库地图)
+- [开发](#开发)
+- [发布和版本规则](#发布和版本规则)
+- [安全和兼容性说明](#安全和兼容性说明)
+- [联系我们](#联系我们)
+- [许可证](#许可证)
 
-### 服务端（3步搭建）
+## SDK 与发布
 
-```python
-from fastapi import FastAPI
-from anp.openanp import AgentConfig, anp_agent, interface
+这一节是用户获取 SDK 的主入口。详细的多语言版本、registry 和安装矩阵会在 README 改版的 release-matrix 步骤中补充。
 
-@anp_agent(AgentConfig(
-    name="My Agent",
-    did="did:wba:example.com:agent",
-    prefix="/agent",
-))
-class MyAgent:
-    @interface
-    async def hello(self, name: str) -> str:
-        return f"Hello, {name}!"
+## 快速开始：构建 Python 智能体
 
-app = FastAPI()
-app.include_router(MyAgent.router())
-```
+OpenANP 仍然是 Python 中构建 ANP 智能体的推荐第一入口。完整快速开始流程会在下一步 README 改版中展开。当前可以先查看 [examples/python/openanp_examples/](examples/python/openanp_examples/)。
 
-运行：`uvicorn app:app --port 8000`
+## 示例学习路径
 
-### 客户端（3行调用）
+示例列表会在下一步按从入门到高级的路径重新组织。当前示例目录包括 [examples/python/](examples/python/)、[golang/examples/](golang/examples/)、[rust/examples/](rust/examples/)、[dart/example/](dart/example/)、[typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) 和 [java/anp-examples/](java/anp-examples/)。
 
-```python
-from anp.openanp import RemoteAgent
+## 核心概念
 
-agent = await RemoteAgent.discover("http://localhost:8000/agent/ad.json", auth)
-result = await agent.hello(name="World")  # "Hello, World!"
-```
+这一节会保留简短、可导航的概念解释，包括 DID WBA、Agent Description、OpenRPC / JSON-RPC、HTTP Message Signatures、Proof、WNS、Direct E2EE、Group E2EE 和 AP2，并链接到权威文档和示例。
 
-### 自动生成的端点
+## 仓库地图
 
-| 端点 | 说明 |
-|------|------|
-| `GET /agent/ad.json` | Agent Description 文档 |
-| `GET /agent/interface.json` | OpenRPC 接口文档 |
-| `POST /agent/rpc` | JSON-RPC 2.0 端点 |
+这一节会提供 Python 包、各语言 SDK 目录、文档、示例、测试数据和发布工具的紧凑地图。
 
-📖 **完整示例**：[OpenANP 示例](examples/python/openanp_examples/)
+## 开发
 
----
-
-## 两种使用ANP SDK的方式
-
-### 🔧 方式一：OpenANP（推荐 - 构建智能体）
-
-最优雅、最简洁的ANP智能体SDK：
-
-```python
-from anp.openanp import anp_agent, interface, RemoteAgent
-
-# 服务端：构建你的智能体
-@anp_agent(AgentConfig(name="Hotel", did="did:wba:...", prefix="/hotel"))
-class HotelAgent:
-    @interface
-    async def search(self, query: str) -> dict:
-        return {"results": [...]}
-
-# 客户端：调用远程智能体
-agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
-result = await agent.search(query="Tokyo")
-```
-
-**特性：**
-- **装饰器驱动**：`@anp_agent` + `@interface` = 完整智能体
-- **自动生成**：ad.json、interface.json、JSON-RPC 端点
-- **Context 注入**：自动管理会话和 DID
-- **LLM 集成**：内置 OpenAI Tools 格式导出
-
-📖 **完整文档**：[OpenANP README](anp/openanp/README.cn.md)
-
----
-
-### 🔍 方式二：ANP Crawler（文档爬取）
-
-爬虫风格的SDK，用于爬取和解析ANP文档（类似于ANP的网络爬虫）：
-
-```python
-from anp.anp_crawler import ANPCrawler
-
-# 使用DID认证初始化爬虫
-crawler = ANPCrawler(
-    did_document_path="path/to/did.json",
-    private_key_path="path/to/key.pem"
-)
-
-# 爬取智能体描述并获取OpenAI Tools格式
-content, tools = await crawler.fetch_text("https://example.com/ad.json")
-
-# 执行发现的工具
-result = await crawler.execute_tool_call("search_poi", {"query": "北京"})
-
-# 或直接调用JSON-RPC
-result = await crawler.execute_json_rpc(
-    endpoint="https://example.com/rpc",
-    method="search",
-    params={"query": "hotel"}
-)
-```
-
-你可以将crawler的接口封装为LLM的tools，这样可以作为ANP客户端与ANP server进行交互。
-
-**特性：**
-- **爬虫风格**：像网络爬虫一样爬取和解析ANP文档
-- **OpenAI Tools格式**：转换接口用于LLM集成
-- **直接JSON-RPC**：无需接口发现即可调用方法
-- **无需LLM**：确定性的数据收集
-
-📖 **完整文档**：[ANP Crawler README](anp/anp_crawler/README.cn.md)
-
----
-
-### RemoteAgent vs ANPCrawler
-
-| 特性 | RemoteAgent | ANPCrawler |
-|------|-------------|------------|
-| **风格** | 代理对象（像本地方法） | 爬虫（爬取文档） |
-| **用法** | `agent.search(query="Tokyo")` | `crawler.execute_tool_call("search", {...})` |
-| **类型安全** | 完整类型提示，异常驱动 | 基于字典的返回 |
-| **适用场景** | 使用代码访问固定的智能体，构建ANP的Skills | 使用LLM驱动的方式，访问远程的ANP智能体，并且与智能体进行交互 |
-
-```python
-# RemoteAgent：方法调用像本地方法一样
-agent = await RemoteAgent.discover(url, auth)
-result = await agent.search(query="Tokyo")  # 像调用本地方法
-
-# ANPCrawler：爬虫风格的文档爬取
-crawler = ANPCrawler(did_path, key_path)
-content, tools = await crawler.fetch_text(url)  # 爬取和解析文档
-result = await crawler.execute_tool_call("search", {"query": "Tokyo"})
-```
-
----
-
-## 安装
-
-### 方式一：通过pip安装
-```bash
-pip install anp
-```
-
-### 方式二：源码安装（推荐开发者使用）
+本地 Python 开发请在仓库根目录使用 `uv`：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/agent-network-protocol/AgentConnect.git
-cd AgentConnect
-
-# 使用UV配置环境
 uv sync
-
-# 安装可选依赖
-uv sync --extra api      # FastAPI/OpenAI 集成
-uv sync --extra dev      # 开发工具
-
-# 运行示例
-uv run python examples/python/did_wba_examples/create_did_document.py
+uv run pytest
 ```
 
----
+各语言 SDK 的开发命令由对应目录维护，后续也会在本 README 中汇总。
 
-## 所有核心模块
+## 发布和版本规则
 
-| 模块 | 说明 | 文档 |
-|------|------|------|
-| **OpenANP** | 装饰器驱动的智能体开发（推荐） | [README](anp/openanp/README.cn.md) |
-| **ANP Crawler** | 轻量级发现与交互SDK | [README](anp/anp_crawler/README.cn.md) |
-| **FastANP** | FastAPI插件框架 | [README](anp/fastanp/README.cn.md) |
-| **AP2** | 智能体支付协议v2 | [README](anp/ap2/README.cn.md) |
-| **Authentication** | DID-WBA身份认证 | [示例](examples/python/did_wba_examples/) |
-| **Proof** | W3C Data Integrity 与 RFC 9421 origin proof 辅助能力 | [Python包](anp/proof/__init__.py) |
-| **E2EE HPKE** | 基于HPKE的端到端加密（私聊+群聊） | [示例](examples/python/e2e_encryption_hpke_examples/) |
+Python、Go 和 Rust 使用 [skills/anp-multilang-release/](skills/anp-multilang-release/) 中的 release helper 统一发版。面向用户的版本规则摘要会在 release-matrix 步骤中补充。
 
----
+## 安全和兼容性说明
 
-## 按模块分类的示例
-
-### OpenANP示例（推荐入门）
-位置：`examples/python/openanp_examples/`
-
-| 文件 | 说明 | 复杂度 |
-|------|------|--------|
-| `minimal_server.py` | 极简服务端（约30行） | ⭐ |
-| `minimal_client.py` | 极简客户端（约25行） | ⭐ |
-| `advanced_server.py` | 完整功能（Context、Session、Information） | ⭐⭐⭐ |
-| `advanced_client.py` | 完整客户端（发现、LLM集成） | ⭐⭐⭐ |
-
-```bash
-# 终端1：启动服务端
-uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
-
-# 终端2：运行客户端
-uv run python examples/python/openanp_examples/minimal_client.py
-```
-
-### ANP Crawler示例
-位置：`examples/python/anp_crawler_examples/`
-
-```bash
-# 快速入门
-uv run python examples/python/anp_crawler_examples/simple_amap_example.py
-
-# 完整演示
-uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
-```
-
-### DID-WBA身份认证示例
-位置：`examples/python/did_wba_examples/`
-
-```bash
-# 创建DID文档
-uv run python examples/python/did_wba_examples/create_did_document.py
-
-# 身份认证演示
-uv run python examples/python/did_wba_examples/authenticate_and_verify.py
-```
-
-### FastANP示例
-位置：`examples/python/fastanp_examples/`
-
-```bash
-# 简单智能体
-uv run python examples/python/fastanp_examples/simple_agent.py
-
-# 酒店预订智能体（完整示例）
-uv run python examples/python/fastanp_examples/hotel_booking_agent.py
-```
-
-### AP2支付协议示例
-位置：`examples/python/ap2_examples/`
-
-```bash
-# 完整AP2流程（商户+购物者）
-uv run python examples/python/ap2_examples/ap2_complete_flow.py
-```
-
-### E2EE HPKE加密示例
-位置：`examples/python/e2e_encryption_hpke_examples/`
-
-| 文件 | 说明 | 复杂度 |
-|------|------|--------|
-| `basic_private_chat.py` | 一步初始化 + 双向加密通信 + Rekey | ⭐ |
-| `group_chat_example.py` | 三方群聊 Sender Key + Epoch推进 | ⭐⭐⭐ |
-| `key_manager_example.py` | HpkeKeyManager多会话生命周期管理 | ⭐⭐⭐ |
-| `error_handling_example.py` | 异常场景处理（过期、错误密钥、重放） | ⭐⭐⭐ |
-
-```bash
-# 基础私聊示例
-uv run python examples/python/e2e_encryption_hpke_examples/basic_private_chat.py
-
-# 群聊示例
-uv run python examples/python/e2e_encryption_hpke_examples/group_chat_example.py
-
-# KeyManager生命周期管理示例
-uv run python examples/python/e2e_encryption_hpke_examples/key_manager_example.py
-
-# 错误处理示例
-uv run python examples/python/e2e_encryption_hpke_examples/error_handling_example.py
-```
-
----
-
-## 工具
-
-### ANP网络探索器
-使用自然语言探索智能体网络：[ANP网络探索器](https://service.agent-network-protocol.com/anp-explorer/)
-
-### DID文档生成工具
-```bash
-uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
-```
-
----
+- 从 `.env` 或运行时配置加载 secrets；不要硬编码真实私钥或 token。
+- DID 私钥、E2EE 密钥材料和解密后的明文都应视为敏感本地数据。
+- 新集成优先使用当前 DID WBA 和 HTTP Message Signatures 流程；legacy 模块仅用于兼容。
+- 除非 README 明确说明，不要假设 preview/local SDK 工作区已经是公开发布包。
 
 ## 联系我们
 
-- **作者**：常高伟
+- **作者**：GaoWei Chang
 - **邮箱**：chgaowei@gmail.com
-- **官网**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)
+- **网站**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)
 - **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
 - **GitHub**：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
 - **微信**：flow10240
 
 ## 许可证
 
-本项目基于MIT许可证开源。详细信息请参阅[LICENSE](LICENSE)文件。
+本项目基于 MIT License 开源。详见 [LICENSE](LICENSE)。
 
 ---
 

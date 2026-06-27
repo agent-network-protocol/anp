@@ -4,313 +4,101 @@
 
 </div>
 
-# AgentConnect
+# AgentConnect: Multi-language SDK for ANP
 
-## What is AgentConnect
+AgentConnect is the multi-language SDK and reference implementation for the [Agent Network Protocol (ANP)](https://github.com/agent-network-protocol/AgentNetworkProtocol). It helps agents identify each other, publish discoverable interfaces, call each other over standard RPC, attach verifiable proofs, resolve human-readable handles, and build end-to-end encrypted communication flows.
 
-AgentConnect is an open-source SDK implementation of the [Agent Network Protocol (ANP)](https://github.com/agent-network-protocol/AgentNetworkProtocol).
-
-The goal of Agent Network Protocol (ANP) is to become the **HTTP of the Intelligent Agent Internet Era**, building an open, secure, and efficient collaborative network for billions of intelligent agents.
+The Python package name is `anp`; this repository also contains Go, Rust, Dart, TypeScript, and Java SDK implementations or SDK workspaces.
 
 <p align="center">
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
-## 🔐 Add DID Authentication to Your Agent
+## What is ANP?
 
-Want to add decentralized identity authentication to your agent? Check out the [DID WBA Authentication Integration Guide](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.en.md) to quickly add DID WBA authentication to any Python HTTP service.
+ANP is a protocol stack for an open network of interoperable agents. In practice, it answers these questions:
 
-### Current DID-WBA defaults
+- **Who am I talking to?** DID WBA identities, DID documents, HTTP Message Signatures, and verifier helpers.
+- **What can this agent do?** Agent Description documents, OpenRPC interface documents, and JSON-RPC endpoints.
+- **Can I trust this object or request?** W3C Data Integrity proofs, Appendix-B object proofs, IM/origin proofs, and DID-WBA binding proofs.
+- **How do humans and agents find each other?** WNS handle validation, resolution, and binding verification.
+- **How do agents communicate privately?** Direct and group E2EE building blocks used by ANP-compatible clients and services.
 
-- **Path DID creation defaults to `e1_`**: `create_did_wba_document()` now creates path-based DIDs using an Ed25519 `Multikey` binding key by default.
-- **HTTP Message Signatures are the default request auth format**: `DIDWbaAuthHeader` now emits `Signature-Input` / `Signature` (and `Content-Digest` when needed) by default.
-- **Legacy compatibility mode remains supported**: use `auth_mode="legacy_didwba"` when interoperating with older clients that still rely on the previous Authorization-header flow.
-- **Access tokens are returned via `Authentication-Info`**: the server also emits a compatibility `Authorization: Bearer ...` response header during the migration window.
-- **Resolver behavior is stricter now**:
-  - `resolve_did_wba_document()` always validates DID/document key binding for `e1_` and `k1_`
-  - for `e1_`, proof is part of the binding check and must be a valid `DataIntegrityProof` using `eddsa-jcs-2022`
-  - for `k1_`, proof remains optional unless `verify_proof=True`; in strict mode, the proof verification method must also be the binding key
+## What this repository provides
 
----
+- **Python agent SDK**: OpenANP for quickly building and calling ANP agents, plus authentication, proof, WNS, AP2, crawler, and E2EE modules.
+- **Shared protocol SDKs**: Go, Rust, and Dart SDKs for core ANP identity/proof/WNS functionality and selected E2EE surfaces.
+- **Preview/local SDK workspaces**: TypeScript and Java implementations that can be used from source while their public package status matures.
+- **Examples and fixtures**: runnable examples, cross-language interop checks, and shared test vectors.
+- **Release tooling**: coordinated Python / Go / Rust release workflow and version policy.
 
-## 🚀 Quick Start - Build an ANP Agent in 30 Seconds
+## Choose your path
 
-OpenANP is the simplest way to build ANP agents. Here's a complete server in just a few lines:
+| I want to... | Start here |
+|---|---|
+| Build a working ANP agent quickly | [Python OpenANP quick start](#quick-start-build-a-python-agent) |
+| Add DID WBA authentication to an HTTP service | [DID WBA examples](examples/python/did_wba_examples/) |
+| Use the latest stable SDK release | [SDKs and releases](#sdks-and-releases) |
+| Call or crawl another ANP agent | [ANP Crawler examples](examples/python/anp_crawler_examples/) |
+| Work with proofs, WNS, or E2EE | [Core concepts](#core-concepts) and [examples](#examples-by-learning-path) |
+| Contribute to the repository | [Development](#development) |
 
-### Server (3 Steps)
+## Table of contents
 
-```python
-from fastapi import FastAPI
-from anp.openanp import AgentConfig, anp_agent, interface
+- [SDKs and releases](#sdks-and-releases)
+- [Quick start: build a Python agent](#quick-start-build-a-python-agent)
+- [Examples by learning path](#examples-by-learning-path)
+- [Core concepts](#core-concepts)
+- [Repository map](#repository-map)
+- [Development](#development)
+- [Release and versioning](#release-and-versioning)
+- [Security and compatibility notes](#security-and-compatibility-notes)
+- [Contact us](#contact-us)
+- [License](#license)
 
-@anp_agent(AgentConfig(
-    name="My Agent",
-    did="did:wba:example.com:agent",
-    prefix="/agent",
-))
-class MyAgent:
-    @interface
-    async def hello(self, name: str) -> str:
-        return f"Hello, {name}!"
+## SDKs and releases
 
-app = FastAPI()
-app.include_router(MyAgent.router())
-```
+This section is intentionally structured as the main entry point for package installation. The detailed multi-language version and registry matrix is added in the release-matrix step of this README refresh.
 
-Run: `uvicorn app:app --port 8000`
+## Quick start: build a Python agent
 
-### Client (3 Lines)
+OpenANP remains the recommended first experience for building an ANP agent in Python. The full quick-start flow is expanded in the next README step. For now, see [examples/python/openanp_examples/](examples/python/openanp_examples/).
 
-```python
-from anp.openanp import RemoteAgent
+## Examples by learning path
 
-agent = await RemoteAgent.discover("http://localhost:8000/agent/ad.json", auth)
-result = await agent.hello(name="World")  # "Hello, World!"
-```
+The example list will be organized from beginner to advanced paths in the next README step. Current examples are under [examples/python/](examples/python/), [golang/examples/](golang/examples/), [rust/examples/](rust/examples/), [dart/example/](dart/example/), [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/), and [java/anp-examples/](java/anp-examples/).
 
-### Generated Endpoints
+## Core concepts
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /agent/ad.json` | Agent Description document |
-| `GET /agent/interface.json` | OpenRPC interface document |
-| `POST /agent/rpc` | JSON-RPC 2.0 endpoint |
+This section will keep short, navigable explanations for DID WBA, Agent Description, OpenRPC / JSON-RPC, HTTP Message Signatures, Proof, WNS, Direct E2EE, Group E2EE, and AP2, with links to authoritative docs and examples.
 
-📖 **Full examples**: [OpenANP Examples](examples/python/openanp_examples/)
+## Repository map
 
----
+This section will provide a compact map of the Python package, language SDK directories, docs, examples, test data, and release tooling.
 
-## Two Ways to Use ANP SDK
+## Development
 
-### 🔧 Option 1: OpenANP (Recommended - Building Agents)
-
-The most elegant and minimal SDK for building ANP agents:
-
-```python
-from anp.openanp import anp_agent, interface, RemoteAgent
-
-# Server: Build your agent
-@anp_agent(AgentConfig(name="Hotel", did="did:wba:...", prefix="/hotel"))
-class HotelAgent:
-    @interface
-    async def search(self, query: str) -> dict:
-        return {"results": [...]}
-
-# Client: Call remote agents
-agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
-result = await agent.search(query="Tokyo")
-```
-
-**Features:**
-- **Decorator-based**: `@anp_agent` + `@interface` = complete agent
-- **Auto-generated**: ad.json, interface.json, JSON-RPC endpoint
-- **Context Injection**: Automatic session and DID management
-- **LLM Integration**: Built-in OpenAI Tools format export
-
-📖 **Full Documentation**: [OpenANP README](anp/openanp/README.md)
-
----
-
-### 🔍 Option 2: ANP Crawler (Document Fetching)
-
-Crawler-style SDK for fetching and parsing ANP documents (like a web crawler for ANP):
-
-```python
-from anp.anp_crawler import ANPCrawler
-
-# Initialize crawler with DID authentication
-crawler = ANPCrawler(
-    did_document_path="path/to/did.json",
-    private_key_path="path/to/key.pem"
-)
-
-# Crawl agent description and get OpenAI Tools format
-content, tools = await crawler.fetch_text("https://example.com/ad.json")
-
-# Execute discovered tools
-result = await crawler.execute_tool_call("search_poi", {"query": "Beijing"})
-
-# Or call JSON-RPC directly
-result = await crawler.execute_json_rpc(
-    endpoint="https://example.com/rpc",
-    method="search",
-    params={"query": "hotel"}
-)
-```
-
-**Features:**
-- **Crawler Style**: Fetch and parse ANP documents like a web crawler
-- **OpenAI Tools Format**: Converts interfaces for LLM integration
-- **Direct JSON-RPC**: Call methods without interface discovery
-- **No LLM Required**: Deterministic data collection
-
-📖 **Full Documentation**: [ANP Crawler README](anp/anp_crawler/README.md)
-
----
-
-### RemoteAgent vs ANPCrawler
-
-| Feature | RemoteAgent | ANPCrawler |
-|---------|-------------|------------|
-| **Style** | Proxy object (like local methods) | Crawler (fetch documents) |
-| **Usage** | `agent.search(query="Tokyo")` | `crawler.execute_tool_call("search", {...})` |
-| **Type Safety** | Full type hints, exceptions | Dict-based returns |
-| **Best For** | Agent-to-agent calls in code | LLM tool integration, data collection |
-
-```python
-# RemoteAgent: Methods feel like local calls
-agent = await RemoteAgent.discover(url, auth)
-result = await agent.search(query="Tokyo")  # Like calling a local method
-
-# ANPCrawler: Crawler-style document fetching
-crawler = ANPCrawler(did_path, key_path)
-content, tools = await crawler.fetch_text(url)  # Fetch and parse documents
-result = await crawler.execute_tool_call("search", {"query": "Tokyo"})
-```
-
----
-
-## Installation
-
-### Option 1: Install via pip
-```bash
-pip install anp
-```
-
-### Option 2: Source Installation (Recommended for Developers)
+For local Python development, use `uv` from the repository root:
 
 ```bash
-# Clone the repository
-git clone https://github.com/agent-network-protocol/AgentConnect.git
-cd AgentConnect
-
-# Setup environment with UV
 uv sync
-
-# Install with optional dependencies
-uv sync --extra api      # FastAPI/OpenAI integration
-uv sync --extra dev      # Development tools
-
-# Run examples
-uv run python examples/python/did_wba_examples/create_did_document.py
+uv run pytest
 ```
 
----
+Language-specific development commands are documented in the relevant SDK directories and will be summarized later in this README.
 
-## All Core Modules
+## Release and versioning
 
-| Module | Description | Documentation |
-|--------|-------------|---------------|
-| **OpenANP** | Decorator-driven agent development (recommended) | [README](anp/openanp/README.md) |
-| **ANP Crawler** | Lightweight discovery & interaction SDK | [README](anp/anp_crawler/README.md) |
-| **FastANP** | FastAPI plugin framework | [README](anp/fastanp/README.md) |
-| **AP2** | Agent Payment Protocol v2 | [README](anp/ap2/README.md) |
-| **Authentication** | DID-WBA identity authentication | [Examples](examples/python/did_wba_examples/) |
-| **Proof** | W3C Data Integrity + RFC 9421 origin proof helpers | [Python package](anp/proof/__init__.py) |
-| **E2EE HPKE** | HPKE-based end-to-end encryption (private + group chat) | [Examples](examples/python/e2e_encryption_hpke_examples/) |
+Python, Go, and Rust releases are coordinated by the release helper in [skills/anp-multilang-release/](skills/anp-multilang-release/). The detailed user-facing release policy summary is added in the release-matrix step.
 
----
+## Security and compatibility notes
 
-## Examples by Module
+- Load secrets from `.env` or runtime configuration; never hardcode real private keys or tokens.
+- Treat DID private keys, E2EE key material, and decrypted plaintext as sensitive local data.
+- Prefer current DID WBA and HTTP Message Signature flows for new integrations; legacy modules remain documented for compatibility.
+- Do not assume preview/local SDK workspaces are already published packages unless the README explicitly says so.
 
-### OpenANP Examples (Recommended Starting Point)
-Location: `examples/python/openanp_examples/`
-
-| File | Description | Complexity |
-|------|-------------|------------|
-| `minimal_server.py` | Minimal server (~30 lines) | ⭐ |
-| `minimal_client.py` | Minimal client (~25 lines) | ⭐ |
-| `advanced_server.py` | Full features (Context, Session, Information) | ⭐⭐⭐ |
-| `advanced_client.py` | Full client (discovery, LLM integration) | ⭐⭐⭐ |
-
-```bash
-# Terminal 1: Start server
-uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
-
-# Terminal 2: Run client
-uv run python examples/python/openanp_examples/minimal_client.py
-```
-
-### ANP Crawler Examples
-Location: `examples/python/anp_crawler_examples/`
-
-```bash
-# Quick start
-uv run python examples/python/anp_crawler_examples/simple_amap_example.py
-
-# Complete demonstration
-uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
-```
-
-### DID-WBA Authentication Examples
-Location: `examples/python/did_wba_examples/`
-
-```bash
-# Create DID document
-uv run python examples/python/did_wba_examples/create_did_document.py
-
-# Authentication demonstration
-uv run python examples/python/did_wba_examples/authenticate_and_verify.py
-```
-
-### FastANP Examples
-Location: `examples/python/fastanp_examples/`
-
-```bash
-# Simple agent
-uv run python examples/python/fastanp_examples/simple_agent.py
-
-# Hotel booking agent (full example)
-uv run python examples/python/fastanp_examples/hotel_booking_agent.py
-```
-
-### AP2 Payment Protocol Examples
-Location: `examples/python/ap2_examples/`
-
-```bash
-# Complete AP2 flow (merchant + shopper)
-uv run python examples/python/ap2_examples/ap2_complete_flow.py
-```
-
-### E2EE HPKE Encryption Examples
-Location: `examples/python/e2e_encryption_hpke_examples/`
-
-| File | Description | Complexity |
-|------|-------------|------------|
-| `basic_private_chat.py` | One-step init + bidirectional encrypted messaging + rekey | ⭐ |
-| `group_chat_example.py` | Three-party group chat with Sender Key + epoch advance | ⭐⭐⭐ |
-| `key_manager_example.py` | Multi-session lifecycle management with HpkeKeyManager | ⭐⭐⭐ |
-| `error_handling_example.py` | Error scenarios (expired sessions, wrong keys, replay) | ⭐⭐⭐ |
-
-```bash
-# Basic private chat demo
-uv run python examples/python/e2e_encryption_hpke_examples/basic_private_chat.py
-
-# Group chat with Sender Key
-uv run python examples/python/e2e_encryption_hpke_examples/group_chat_example.py
-
-# Key manager and session lifecycle
-uv run python examples/python/e2e_encryption_hpke_examples/key_manager_example.py
-
-# Error handling and edge cases
-uv run python examples/python/e2e_encryption_hpke_examples/error_handling_example.py
-```
-
----
-
-## Tools
-
-### ANP Network Explorer
-Explore the agent network using natural language: [ANP Network Explorer](https://service.agent-network-protocol.com/anp-explorer/)
-
-### DID Document Generator
-```bash
-uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description-url URL]
-```
-
----
-
-## Contact Us
+## Contact us
 
 - **Author**: GaoWei Chang
 - **Email**: chgaowei@gmail.com
@@ -321,7 +109,7 @@ uv run python tools/did_generater/generate_did_doc.py <did> [--agent-description
 
 ## License
 
-This project is open-sourced under the MIT License. See [LICENSE](LICENSE) file for details.
+This project is open-sourced under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
