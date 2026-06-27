@@ -27,7 +27,7 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 ## 这个仓库提供什么？
 
 - **Python Agent SDK**：OpenANP 用于快速构建和调用 ANP 智能体，并提供 authentication、proof、WNS、AP2、crawler 和 E2EE 模块。
-- **共享协议 SDK**：Go、Rust 和 Dart SDK 覆盖核心 ANP 身份、证明、WNS 功能和部分 E2EE 能力。
+- **共享协议 SDK**：Go 和 Rust 覆盖核心 ANP 身份、证明、WNS 功能和部分 E2EE 能力；Dart 聚焦核心身份、proof 和 WNS helpers。
 - **预览 / 本地 SDK 工作区**：TypeScript 和 Java 实现可以从源码使用，公开包发布状态仍需在 README 中明确区分。
 - **示例和 fixtures**：可运行示例、跨语言互通检查和共享测试向量。
 - **发布工具**：Python / Go / Rust 的统一发版流程和版本规则。

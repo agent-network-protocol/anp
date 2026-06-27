@@ -27,7 +27,7 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 ## What this repository provides
 
 - **Python agent SDK**: OpenANP for quickly building and calling ANP agents, plus authentication, proof, WNS, AP2, crawler, and E2EE modules.
-- **Shared protocol SDKs**: Go, Rust, and Dart SDKs for core ANP identity/proof/WNS functionality and selected E2EE surfaces.
+- **Shared protocol SDKs**: Go and Rust cover core ANP identity/proof/WNS functionality plus selected E2EE surfaces; Dart focuses on core identity, proof, and WNS helpers.
 - **Preview/local SDK workspaces**: TypeScript and Java implementations that can be used from source while their public package status matures.
 - **Examples and fixtures**: runnable examples, cross-language interop checks, and shared test vectors.
 - **Release tooling**: coordinated Python / Go / Rust release workflow and version policy.
