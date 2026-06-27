@@ -62,15 +62,101 @@ This section is intentionally structured as the main entry point for package ins
 
 ## Quick start: build a Python agent
 
-OpenANP remains the recommended first experience for building an ANP agent in Python. The full quick-start flow is expanded in the next README step. For now, see [examples/python/openanp_examples/](examples/python/openanp_examples/).
+OpenANP is the fastest way to see ANP in action. It turns ordinary Python methods into discoverable ANP interfaces and exposes the standard agent documents and JSON-RPC endpoint.
+
+Install the API extras if you are using the published package:
+
+```bash
+pip install "anp[api]"
+```
+
+When developing from this repository, use:
+
+```bash
+uv sync --extra api
+```
+
+Create `app.py`:
+
+```python
+from fastapi import FastAPI
+from anp.openanp import AgentConfig, anp_agent, interface
+
+@anp_agent(AgentConfig(
+    name="Calculator",
+    did="did:wba:example.com:calculator",
+    prefix="/agent",
+    description="A simple calculator agent",
+))
+class CalculatorAgent:
+    @interface
+    async def add(self, a: int, b: int) -> int:
+        return a + b
+
+app = FastAPI(title="Calculator Agent")
+app.include_router(CalculatorAgent.router())
+```
+
+Run the server:
+
+```bash
+uvicorn app:app --port 8000
+```
+
+OpenANP generates these ANP endpoints automatically:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /agent/ad.json` | Agent Description document for discovery |
+| `GET /agent/interface.json` | OpenRPC interface document generated from Python type hints |
+| `POST /agent/rpc` | JSON-RPC 2.0 endpoint for method calls |
+
+Call it with the repository example client:
+
+```bash
+uv run python examples/python/openanp_examples/minimal_client.py
+```
+
+Full runnable pair:
+
+```bash
+# Terminal 1
+uvicorn examples.python.openanp_examples.minimal_server:app --port 8000
+
+# Terminal 2
+uv run python examples/python/openanp_examples/minimal_client.py
+```
 
 ## Examples by learning path
 
-The example list will be organized from beginner to advanced paths in the next README step. Current examples are under [examples/python/](examples/python/), [golang/examples/](golang/examples/), [rust/examples/](rust/examples/), [dart/example/](dart/example/), [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/), and [java/anp-examples/](java/anp-examples/).
+| Level | Goal | Start here | Notes |
+|---|---|---|---|
+| Beginner | Build and call an ANP agent | [examples/python/openanp_examples/](examples/python/openanp_examples/) | Requires the `api` optional dependencies. |
+| Beginner | Create and verify DID WBA identity | [examples/python/did_wba_examples/](examples/python/did_wba_examples/) | Offline examples are a good first auth smoke test. |
+| Beginner | Generate and verify proofs | [examples/python/proof_examples/](examples/python/proof_examples/) | Covers W3C/Data Integrity and ANP proof helpers. |
+| Beginner | Validate and resolve WNS handles | [examples/python/wns_examples/](examples/python/wns_examples/) | Some resolution flows require network access or a local resolver. |
+| Intermediate | Discover ANP documents and execute tools | [examples/python/anp_crawler_examples/](examples/python/anp_crawler_examples/) | Crawler-style interface discovery and JSON-RPC execution. |
+| Intermediate | Run AP2 payment protocol flow | [examples/python/ap2_examples/](examples/python/ap2_examples/) | Merchant/shopper mandate examples. |
+| Intermediate | Check Python ↔ Rust interoperability | [examples/python/rust_interop_examples/](examples/python/rust_interop_examples/) | Useful when touching auth or wire fixtures. |
+| Advanced | Explore Direct E2EE examples | [examples/python/e2e_encryption_hpke_examples/](examples/python/e2e_encryption_hpke_examples/) and [docs/e2e/direct-e2ee-p5-sdk.md](docs/e2e/direct-e2ee-p5-sdk.md) | Use current P5 docs for product-facing direct E2EE behavior. |
+| Advanced | Explore Group E2EE / MLS | [docs/e2e/group-e2ee-p6-anp-mls.md](docs/e2e/group-e2ee-p6-anp-mls.md) | Group E2EE is security-sensitive; follow the documented boundaries. |
+| Advanced | Try LLM-assisted protocol negotiation | [examples/python/negotiation_mode/](examples/python/negotiation_mode/) | Requires `.env` LLM provider configuration. |
+
+Language-specific examples are also available in [golang/examples/](golang/examples/), [rust/examples/](rust/examples/), [dart/example/](dart/example/), [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/), and [java/anp-examples/](java/anp-examples/).
 
 ## Core concepts
 
-This section will keep short, navigable explanations for DID WBA, Agent Description, OpenRPC / JSON-RPC, HTTP Message Signatures, Proof, WNS, Direct E2EE, Group E2EE, and AP2, with links to authoritative docs and examples.
+| Concept | What it means in this repository | Learn more |
+|---|---|---|
+| DID WBA | Web-based decentralized identifiers, DID documents, verification methods, HTTP Message Signatures, and auth verifier helpers. | [examples/python/did_wba_examples/](examples/python/did_wba_examples/) |
+| Agent Description | The `ad.json` document that lets another agent discover who you are and where your interfaces live. | [examples/python/openanp_examples/](examples/python/openanp_examples/) |
+| OpenRPC / JSON-RPC | Interface schema and method-call transport generated from Python type hints by OpenANP. | [anp/openanp/](anp/openanp/) |
+| Proof | W3C Data Integrity, Appendix-B object proof, group receipt, DID-WBA binding, IM, and RFC 9421 origin proof helpers. | [examples/python/proof_examples/](examples/python/proof_examples/) |
+| WNS | WBA Name Space helpers for human-readable handles, `wba://` URIs, resolution, and DID binding verification. | [examples/python/wns_examples/](examples/python/wns_examples/) |
+| Direct E2EE | ANP-P5 private-chat E2EE models, session state, prekey handling, and shared vectors across SDKs. | [docs/e2e/direct-e2ee-p5-sdk.md](docs/e2e/direct-e2ee-p5-sdk.md) |
+| Group E2EE | ANP-P6 group E2EE / MLS operation surfaces and local-state boundaries. | [docs/e2e/group-e2ee-p6-anp-mls.md](docs/e2e/group-e2ee-p6-anp-mls.md) |
+| AP2 | Agent Payment Protocol v2 mandate models and validation helpers. | [examples/python/ap2_examples/](examples/python/ap2_examples/) |
+| Legacy / specialized modules | FastANP, older E2EE examples, and meta-protocol negotiation remain available for compatibility or advanced experiments. | [examples/python/fastanp_examples/](examples/python/fastanp_examples/), [examples/python/e2e_encryption_v2_examples/](examples/python/e2e_encryption_v2_examples/), [examples/python/negotiation_mode/](examples/python/negotiation_mode/) |
 
 ## Repository map
 
