@@ -40,6 +40,7 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 | 给 HTTP 服务添加 DID WBA 身份认证 | [DID WBA 示例](examples/python/did_wba_examples/) |
 | 使用最新稳定 SDK 版本 | [SDK 与发布](#sdk-与发布) |
 | 调用或爬取另一个 ANP 智能体 | [ANP Crawler 示例](examples/python/anp_crawler_examples/) |
+| 查找多语言可运行示例 | [示例总览](docs/examples.cn.md) |
 | 使用 Proof、WNS 或 E2EE | [核心概念](#核心概念) 和 [示例学习路径](#示例学习路径) |
 | 参与仓库开发 | [开发](#开发) |
 
@@ -48,6 +49,7 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 - [SDK 与发布](#sdk-与发布)
 - [快速开始：构建 Python 智能体](#快速开始构建-python-智能体)
 - [示例学习路径](#示例学习路径)
+- [示例总览](docs/examples.cn.md)
 - [核心概念](#核心概念)
 - [仓库地图](#仓库地图)
 - [开发](#开发)
@@ -159,6 +161,8 @@ uv run python examples/python/openanp_examples/minimal_client.py
 
 ## 示例学习路径
 
+如果需要 Python、Go、Rust、Dart、TypeScript 和 Java 的示例文件路径及可直接复制的运行命令，请看 [示例总览](docs/examples.cn.md)。
+
 | 难度 | 目标 | 从这里开始 | 说明 |
 |---|---|---|---|
 | 入门 | 构建并调用 ANP 智能体 | [examples/python/openanp_examples/](examples/python/openanp_examples/) | 需要 `api` optional dependencies。 |
@@ -172,7 +176,7 @@ uv run python examples/python/openanp_examples/minimal_client.py
 | 高级 | 了解 Group E2EE / MLS | [docs/e2e/group-e2ee-p6-anp-mls.md](docs/e2e/group-e2ee-p6-anp-mls.md) | Group E2EE 属于安全敏感能力，请遵守文档边界。 |
 | 高级 | 尝试 LLM 辅助协议协商 | [examples/python/negotiation_mode/](examples/python/negotiation_mode/) | 需要 `.env` 中的 LLM provider 配置。 |
 
-各语言 SDK 也提供了自己的示例：[golang/examples/](golang/examples/)、[rust/examples/](rust/examples/)、[dart/example/](dart/example/)、[typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) 和 [java/anp-examples/](java/anp-examples/)。
+各语言 SDK 也提供了自己的示例：[golang/examples/](golang/examples/)、[rust/examples/](rust/examples/)、[dart/example/](dart/example/)、[typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) 和 [java/anp-examples/](java/anp-examples/)。集中入口 [示例总览](docs/examples.cn.md) 列出了每种语言的常用运行命令。
 
 ## 核心概念
 

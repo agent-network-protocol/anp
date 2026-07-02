@@ -1,9 +1,4 @@
-import {
-  SignJWT,
-  importPKCS8,
-  importSPKI,
-  jwtVerify,
-} from 'jose';
+import { SignJWT, importPKCS8, importSPKI, jwtVerify } from 'jose';
 import {
   extractAuthHeaderParts,
   isAuthenticationAuthorized,
@@ -12,7 +7,7 @@ import {
   verifyAuthHeaderSignature,
 } from './did-wba.js';
 import { extractSignatureMetadata, verifyHttpMessageSignature } from './http-signatures.js';
-import type { DidDocument, DidResolutionOptions } from './types.js';
+import type { DidDocument, DidResolutionOptions, DidResolver } from './types.js';
 
 export interface DidWbaVerifierConfig {
   jwtPrivateKey?: string;
@@ -28,6 +23,7 @@ export interface DidWbaVerifierConfig {
   emitLegacyAuthorizationHeader?: boolean;
   requireNonceForHttpSignatures?: boolean;
   didResolutionOptions?: DidResolutionOptions;
+  didResolver?: DidResolver;
   externalNonceValidator?: (did: string, nonce: string) => boolean | Promise<boolean>;
 }
 
@@ -50,7 +46,17 @@ export class DidWbaVerifierError extends Error {
   }
 }
 
-const DEFAULT_CONFIG: Required<Omit<DidWbaVerifierConfig, 'jwtPrivateKey' | 'jwtPublicKey' | 'allowedDomains' | 'externalNonceValidator' | 'didResolutionOptions'>> = {
+const DEFAULT_CONFIG: Required<
+  Omit<
+    DidWbaVerifierConfig,
+    | 'jwtPrivateKey'
+    | 'jwtPublicKey'
+    | 'allowedDomains'
+    | 'externalNonceValidator'
+    | 'didResolutionOptions'
+    | 'didResolver'
+  >
+> = {
   jwtAlgorithm: 'RS256',
   accessTokenExpireMinutes: 60,
   nonceExpirationMinutes: 6,
@@ -92,7 +98,14 @@ export class DidWbaVerifier {
     body?: Uint8Array | string | null,
     domain?: string
   ): Promise<VerificationSuccess> {
-    return this.verifyRequestWithOptionalDidDocument(method, url, headers, body, domain, didDocument);
+    return this.verifyRequestWithOptionalDidDocument(
+      method,
+      url,
+      headers,
+      body,
+      domain,
+      didDocument
+    );
   }
 
   private async verifyRequestWithOptionalDidDocument(
@@ -138,7 +151,12 @@ export class DidWbaVerifier {
       return this.handleLegacyDidAuth(authHeader, requestDomain, didDocument);
     }
 
-    throw new DidWbaVerifierError('Missing authentication headers', 401);
+    throw this.challengeError(
+      'Missing authentication headers',
+      401,
+      requestDomain,
+      'invalid_request'
+    );
   }
 
   private async handleHttpSignatureAuth(
@@ -149,7 +167,17 @@ export class DidWbaVerifier {
     domain: string,
     providedDidDocument?: DidDocument
   ): Promise<VerificationSuccess> {
-    const metadata = extractSignatureMetadata(headers);
+    let metadata: ReturnType<typeof extractSignatureMetadata>;
+    try {
+      metadata = extractSignatureMetadata(headers);
+    } catch (error) {
+      throw this.challengeError(
+        `Invalid signature metadata: ${(error as Error).message}`,
+        401,
+        domain,
+        'invalid_request'
+      );
+    }
     if (!metadata.keyid.includes('#')) {
       throw this.challengeError(
         'Invalid Signature-Input keyid',
@@ -160,9 +188,7 @@ export class DidWbaVerifier {
     }
 
     const did = metadata.keyid.split('#', 1)[0];
-    const didDocument =
-      providedDidDocument ??
-      (await resolveDidWbaDocument(did, false, this.config.didResolutionOptions));
+    const didDocument = providedDidDocument ?? (await this.resolveDidDocument(did, domain));
 
     if (!validateDidDocumentBinding(didDocument, true)) {
       throw this.challengeError('DID binding verification failed', 401, domain, 'invalid_did');
@@ -174,7 +200,18 @@ export class DidWbaVerifier {
       );
     }
 
-    const verification = verifyHttpMessageSignature(didDocument, method, url, headers, body ?? undefined);
+    let verification: ReturnType<typeof verifyHttpMessageSignature>;
+    try {
+      verification = verifyHttpMessageSignature(
+        didDocument,
+        method,
+        url,
+        headers,
+        body ?? undefined
+      );
+    } catch (error) {
+      throw this.challengeError((error as Error).message, 401, domain, 'invalid_signature');
+    }
     if (!this.verifyHttpSignatureTimeWindow(verification.created, verification.expires)) {
       throw this.challengeError(
         'HTTP signature timestamp is expired or invalid',
@@ -199,7 +236,17 @@ export class DidWbaVerifier {
     domain: string,
     providedDidDocument?: DidDocument
   ): Promise<VerificationSuccess> {
-    const parsed = extractAuthHeaderParts(authorization);
+    let parsed: ReturnType<typeof extractAuthHeaderParts>;
+    try {
+      parsed = extractAuthHeaderParts(authorization);
+    } catch (error) {
+      throw this.challengeError(
+        `Invalid authorization header format: ${(error as Error).message}`,
+        401,
+        domain,
+        'invalid_request'
+      );
+    }
     if (!this.verifyLegacyTimestamp(parsed.timestamp)) {
       throw this.challengeError('Timestamp expired or invalid', 401, domain, 'invalid_timestamp');
     }
@@ -207,9 +254,7 @@ export class DidWbaVerifier {
       throw this.challengeError('Invalid or expired nonce', 401, domain, 'invalid_nonce');
     }
 
-    const didDocument =
-      providedDidDocument ??
-      (await resolveDidWbaDocument(parsed.did, false, this.config.didResolutionOptions));
+    const didDocument = providedDidDocument ?? (await this.resolveDidDocument(parsed.did, domain));
 
     if (!validateDidDocumentBinding(didDocument, true)) {
       throw this.challengeError('DID binding verification failed', 401, domain, 'invalid_did');
@@ -240,14 +285,14 @@ export class DidWbaVerifier {
 
   private async handleBearerAuth(authorization: string): Promise<VerificationSuccess> {
     if (!this.config.jwtPublicKey) {
-      throw new DidWbaVerifierError(
-        'Internal server error during token verification',
-        500
-      );
+      throw new DidWbaVerifierError('Internal server error during token verification', 500);
     }
 
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : authorization;
-    const verifyKey = await importVerifyKey(this.config.jwtPublicKey, this.config.jwtAlgorithm ?? 'RS256');
+    const verifyKey = await importVerifyKey(
+      this.config.jwtPublicKey,
+      this.config.jwtAlgorithm ?? 'RS256'
+    );
     const result = await jwtVerify(token, verifyKey, {
       algorithms: [this.config.jwtAlgorithm ?? 'RS256'],
     }).catch(() => {
@@ -353,6 +398,28 @@ export class DidWbaVerifier {
     return true;
   }
 
+  private async resolveDidDocument(did: string, domain: string): Promise<DidDocument> {
+    try {
+      const resolved = this.config.didResolver
+        ? await this.config.didResolver(did)
+        : await resolveDidWbaDocument(did, false, this.config.didResolutionOptions);
+      if (!resolved) {
+        throw this.challengeError('Failed to resolve DID document', 401, domain, 'invalid_did');
+      }
+      return resolved;
+    } catch (error) {
+      if (error instanceof DidWbaVerifierError) {
+        throw error;
+      }
+      throw this.challengeError(
+        `Failed to resolve DID document: ${(error as Error).message}`,
+        401,
+        domain,
+        'invalid_did'
+      );
+    }
+  }
+
   private validateAllowedDomain(domain: string): void {
     if (this.config.allowedDomains && !this.config.allowedDomains.includes(domain)) {
       throw new DidWbaVerifierError('Domain is not allowed', 403);
@@ -376,7 +443,10 @@ export class DidWbaVerifier {
   }
 }
 
-function getHeaderCaseInsensitive(headers: Record<string, string>, name: string): string | undefined {
+function getHeaderCaseInsensitive(
+  headers: Record<string, string>,
+  name: string
+): string | undefined {
   const target = name.toLowerCase();
   return Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
 }

@@ -56,8 +56,13 @@ const verifier = new DidWbaVerifier({
   timestampExpirationMinutes: 5,
   allowHttpSignatures: true,
   allowLegacyDidwba: true,
+  didResolver: async (did) => localDidDocuments.get(did),
 });
 ```
+
+When `didResolver` is present, `verifyRequest()` uses it to load the client DID
+document. This is useful for servers that keep partner DID documents in a local
+registry or for offline interoperability examples.
 
 ## WNS resolution
 

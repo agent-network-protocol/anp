@@ -106,6 +106,10 @@ export interface DidResolutionOptions {
   headers?: Record<string, string>;
 }
 
+export type DidResolver = (
+  did: string
+) => DidDocument | null | undefined | Promise<DidDocument | null | undefined>;
+
 export interface HttpSignatureOptions {
   keyid?: string;
   nonce?: string;

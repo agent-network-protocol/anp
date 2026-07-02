@@ -19,6 +19,11 @@ import {
   verifyFederatedHttpRequest,
   verifyHttpMessageSignature,
 } from '../src/index.js';
+import type { DidDocument } from '../src/index.js';
+
+function readDidDocument(path: string): DidDocument {
+  return JSON.parse(readFileSync(path, 'utf8')) as DidDocument;
+}
 
 describe('authentication', () => {
   test('creates DID documents for e1 and k1 profiles', () => {
@@ -105,9 +110,7 @@ describe('authentication', () => {
     );
 
     expect(extractAuthHeaderParts(header).did).toBe(bundle.didDocument.id);
-    expect(
-      verifyAuthHeaderSignature(header, bundle.didDocument, 'api.example.com')
-    ).toBe(true);
+    expect(verifyAuthHeaderSignature(header, bundle.didDocument, 'api.example.com')).toBe(true);
   });
 
   test('generates and verifies HTTP signatures', () => {
@@ -186,6 +189,49 @@ describe('authentication', () => {
     expect(httpResult.accessToken).toBeDefined();
   });
 
+  test('verifier resolves DID documents through injected resolver', async () => {
+    const bundle = createDidWbaDocument('example.com', {
+      pathSegments: ['agents', 'demo'],
+      didProfile: DidProfile.K1,
+    });
+    const url = 'https://api.example.com/orders';
+    const headers = generateHttpSignatureHeaders(
+      bundle.didDocument,
+      url,
+      'GET',
+      bundle.keys['key-1'].privateKeyPem,
+      {},
+      undefined,
+      { nonce: 'resolver-nonce' }
+    );
+    const verifier = new DidWbaVerifier({
+      jwtPrivateKey: 'test-secret',
+      jwtPublicKey: 'test-secret',
+      jwtAlgorithm: 'HS256',
+      didResolver: (did) => (did === bundle.didDocument.id ? bundle.didDocument : undefined),
+    });
+
+    const result = await verifier.verifyRequest('GET', url, headers);
+
+    expect(result.did).toBe(bundle.didDocument.id);
+    expect(result.authScheme).toBe('http_signatures');
+    expect(result.responseHeaders['Authentication-Info']).toContain('access_token=');
+  });
+
+  test('verifier emits challenge headers when authentication is missing', async () => {
+    const verifier = new DidWbaVerifier();
+
+    try {
+      await verifier.verifyRequest('GET', 'https://api.example.com/orders', {});
+      throw new Error('Expected verifier to reject missing authentication headers');
+    } catch (error) {
+      const verifierError = error as { statusCode: number; headers: Record<string, string> };
+      expect(verifierError.statusCode).toBe(401);
+      expect(verifierError.headers['WWW-Authenticate']).toContain('DIDWba realm="api.example.com"');
+      expect(verifierError.headers['Accept-Signature']).toContain('"@method"');
+    }
+  });
+
   test('file-based authenticator reuses bearer token', async () => {
     const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/k1');
     const authHelper = new DIDWbaAuthHeader(
@@ -202,6 +248,24 @@ describe('authentication', () => {
     });
     const cachedHeaders = await authHelper.getAuthHeaders('https://api.example.com/orders');
     expect(cachedHeaders.Authorization).toBe('Bearer cached-token');
+  });
+
+  test('file-based authenticator ignores non-Bearer Authentication-Info tokens', async () => {
+    const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/k1');
+    const authHelper = new DIDWbaAuthHeader(
+      join(fixtureDir, 'did.json'),
+      join(fixtureDir, 'key-1_private.pem'),
+      AuthMode.HttpSignatures
+    );
+
+    const token = authHelper.updateToken('https://api.example.com/orders', {
+      'Authentication-Info': 'access_token="opaque-token", token_type="DPoP", expires_in=3600',
+    });
+    const headers = await authHelper.getAuthHeaders('https://api.example.com/orders');
+
+    expect(token).toBeUndefined();
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers['Signature-Input']).toBeDefined();
   });
 
   test('file-based authenticator reuses server nonce for challenge headers', async () => {
@@ -231,7 +295,7 @@ describe('authentication', () => {
     expect(headers['Content-Digest']).toBeDefined();
   });
 
-  test('file-based authenticator skips retry for invalid DID challenge', async () => {
+  test('file-based authenticator skips retry for invalid DID challenge', () => {
     const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/k1');
     const authHelper = new DIDWbaAuthHeader(
       join(fixtureDir, 'did.json'),
@@ -249,8 +313,18 @@ describe('authentication', () => {
 
   test('verifies Rust-generated fixtures', () => {
     const fixtureDir = join(process.cwd(), 'tests/fixtures/rust/e1');
-    const didDocument = JSON.parse(readFileSync(join(fixtureDir, 'did.json'), 'utf8'));
+    const didDocument = readDidDocument(join(fixtureDir, 'did.json'));
     expect(validateDidDocumentBinding(didDocument, true)).toBe(true);
+  });
+
+  test('verifies Python legacy DIDWba header with short EC JWK coordinate', () => {
+    const didDocument = readDidDocument(
+      join(process.cwd(), '..', '..', 'docs/did_public/public-did-doc.json')
+    );
+    const header =
+      'DIDWba v="1.1", did="did:wba:didhost.cc:public", nonce="python-legacy-nonce", timestamp="2026-07-02T02:00:00Z", verification_method="key-1", signature="9Bk7_f65XRge-5lruGRzT6OqyW_gU4oqjLuZ1BLus-SoJ3d5Jko-xT803YA6AfCYFfKbkZGOtLxvpy9KAfPOWg"';
+
+    expect(verifyAuthHeaderSignature(header, didDocument, '127.0.0.1')).toBe(true);
   });
 
   test('verifies federated HTTP requests with did:wba serviceDid', async () => {

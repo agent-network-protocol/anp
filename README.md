@@ -40,6 +40,7 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 | Add DID WBA authentication to an HTTP service | [DID WBA examples](examples/python/did_wba_examples/) |
 | Use the latest stable SDK release | [SDKs and releases](#sdks-and-releases) |
 | Call or crawl another ANP agent | [ANP Crawler examples](examples/python/anp_crawler_examples/) |
+| Find runnable examples across languages | [Examples guide](docs/examples.md) |
 | Work with proofs, WNS, or E2EE | [Core concepts](#core-concepts) and [examples](#examples-by-learning-path) |
 | Contribute to the repository | [Development](#development) |
 
@@ -48,6 +49,7 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 - [SDKs and releases](#sdks-and-releases)
 - [Quick start: build a Python agent](#quick-start-build-a-python-agent)
 - [Examples by learning path](#examples-by-learning-path)
+- [Examples guide](docs/examples.md)
 - [Core concepts](#core-concepts)
 - [Repository map](#repository-map)
 - [Development](#development)
@@ -159,6 +161,8 @@ uv run python examples/python/openanp_examples/minimal_client.py
 
 ## Examples by learning path
 
+For file paths and copy-paste commands across Python, Go, Rust, Dart, TypeScript, and Java, see the [Examples guide](docs/examples.md).
+
 | Level | Goal | Start here | Notes |
 |---|---|---|---|
 | Beginner | Build and call an ANP agent | [examples/python/openanp_examples/](examples/python/openanp_examples/) | Requires the `api` optional dependencies. |
@@ -172,7 +176,7 @@ uv run python examples/python/openanp_examples/minimal_client.py
 | Advanced | Explore Group E2EE / MLS | [docs/e2e/group-e2ee-p6-anp-mls.md](docs/e2e/group-e2ee-p6-anp-mls.md) | Group E2EE is security-sensitive; follow the documented boundaries. |
 | Advanced | Try LLM-assisted protocol negotiation | [examples/python/negotiation_mode/](examples/python/negotiation_mode/) | Requires `.env` LLM provider configuration. |
 
-Language-specific examples are also available in [golang/examples/](golang/examples/), [rust/examples/](rust/examples/), [dart/example/](dart/example/), [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/), and [java/anp-examples/](java/anp-examples/).
+Language-specific examples are also available in [golang/examples/](golang/examples/), [rust/examples/](rust/examples/), [dart/example/](dart/example/), [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/), and [java/anp-examples/](java/anp-examples/). The central [Examples guide](docs/examples.md) lists the common run commands for each language.
 
 ## Core concepts
 

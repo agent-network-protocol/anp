@@ -156,6 +156,7 @@ Key fields:
 - `emitLegacyAuthorizationHeader?`
 - `requireNonceForHttpSignatures?`
 - `didResolutionOptions?`
+- `didResolver?`
 - `externalNonceValidator?`
 
 ### `ResolveHandleOptions`
@@ -186,6 +187,10 @@ Primary methods:
 
 - `verifyRequest(method, url, headers, body?, domain?)`
 - `verifyRequestWithDidDocument(method, url, headers, didDocument, body?, domain?)`
+
+`didResolver` can be supplied in the constructor config to resolve DID documents from
+local storage, tests, or an application registry before falling back to network DID
+resolution.
 
 ### `DidAuthHeaders`
 

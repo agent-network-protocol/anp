@@ -35,3 +35,6 @@ yarn-error.log*
 # Temporary files
 *.tmp
 .cache/
+
+# Example-generated DID documents, keys, and tokens
+examples/.generated/

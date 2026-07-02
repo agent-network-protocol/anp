@@ -41,7 +41,14 @@ export class DIDWbaAuthHeader {
       };
     }
 
-    return generateHttpSignatureHeaders(didDocument, serverUrl, method, privateKeyPem, headers, body);
+    return generateHttpSignatureHeaders(
+      didDocument,
+      serverUrl,
+      method,
+      privateKeyPem,
+      headers,
+      body
+    );
   }
 
   async getAuthHeader(
@@ -60,7 +67,8 @@ export class DIDWbaAuthHeader {
     if (authenticationInfo) {
       const parsed = parseAuthenticationInfo(authenticationInfo);
       const accessToken = parsed.access_token;
-      if (accessToken) {
+      const tokenType = parsed.token_type ?? 'Bearer';
+      if (accessToken && tokenType.toLowerCase() === 'bearer') {
         this.tokens.set(domain, accessToken);
         return accessToken;
       }
@@ -119,16 +127,30 @@ export class DIDWbaAuthHeader {
 
     if (this.authMode === AuthMode.LegacyDidWba) {
       return {
-        Authorization: generateAuthHeader(didDocument, extractDomain(serverUrl), privateKeyPem, '1.1', {
-          nonce: challenge.nonce,
-        }),
+        Authorization: generateAuthHeader(
+          didDocument,
+          extractDomain(serverUrl),
+          privateKeyPem,
+          '1.1',
+          {
+            nonce: challenge.nonce,
+          }
+        ),
       };
     }
 
-    return generateHttpSignatureHeaders(didDocument, serverUrl, method, privateKeyPem, headers, body, {
-      nonce: challenge.nonce,
-      coveredComponents,
-    });
+    return generateHttpSignatureHeaders(
+      didDocument,
+      serverUrl,
+      method,
+      privateKeyPem,
+      headers,
+      body,
+      {
+        nonce: challenge.nonce,
+        coveredComponents,
+      }
+    );
   }
 
   async getChallengeAuthHeader(
@@ -143,7 +165,9 @@ export class DIDWbaAuthHeader {
 
   private async loadDidDocument(): Promise<DidDocument> {
     if (!this.didDocumentCache) {
-      this.didDocumentCache = JSON.parse(await readFile(this.didDocumentPath, 'utf8')) as DidDocument;
+      this.didDocumentCache = JSON.parse(
+        await readFile(this.didDocumentPath, 'utf8')
+      ) as DidDocument;
     }
     return this.didDocumentCache;
   }
@@ -157,7 +181,10 @@ function extractDomain(serverUrl: string): string {
   }
 }
 
-function getHeaderCaseInsensitive(headers: Record<string, string>, name: string): string | undefined {
+function getHeaderCaseInsensitive(
+  headers: Record<string, string>,
+  name: string
+): string | undefined {
   const target = name.toLowerCase();
   return Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
 }
@@ -212,7 +239,11 @@ function normalizeCoveredComponents(
     if (normalized === 'content-digest' && !bodyPresent) {
       return false;
     }
-    if (normalized === 'content-length' && !bodyPresent && !('content-length' in normalizedHeaders)) {
+    if (
+      normalized === 'content-length' &&
+      !bodyPresent &&
+      !('content-length' in normalizedHeaders)
+    ) {
       return false;
     }
     if (normalized === 'content-type' && !('content-type' in normalizedHeaders)) {

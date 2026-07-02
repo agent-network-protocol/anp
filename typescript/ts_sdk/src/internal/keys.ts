@@ -1,4 +1,14 @@
-import { ECDH, createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify, type KeyObject } from 'node:crypto';
+import {
+  ECDH,
+  createECDH,
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+  type KeyObject,
+} from 'node:crypto';
 
 import bs58 from 'bs58';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
@@ -159,7 +169,11 @@ export function signMessage(privateKey: PrivateKeyMaterial, message: Uint8Array)
   }
 }
 
-export function verifyMessage(publicKey: PublicKeyMaterial, message: Uint8Array, signature: Uint8Array): boolean {
+export function verifyMessage(
+  publicKey: PublicKeyMaterial,
+  message: Uint8Array,
+  signature: Uint8Array
+): boolean {
   const keyObject = toPublicKeyObject(publicKey);
   switch (publicKey.type) {
     case 'secp256k1':
@@ -234,7 +248,8 @@ export function x25519PublicKeyToMultibase(publicKey: Uint8Array): string {
 
 export function parseEd25519Multibase(value: string): PublicKeyMaterial {
   const bytes = bs58.decode(stripMultibasePrefix(value));
-  const normalized = bytes.length === 34 && bytes[0] === 0xed && bytes[1] === 0x01 ? bytes.slice(2) : bytes;
+  const normalized =
+    bytes.length === 34 && bytes[0] === 0xed && bytes[1] === 0x01 ? bytes.slice(2) : bytes;
   if (normalized.length !== 32) {
     throw new AuthenticationError('Invalid Ed25519 multibase value');
   }
@@ -243,7 +258,8 @@ export function parseEd25519Multibase(value: string): PublicKeyMaterial {
 
 export function parseX25519Multibase(value: string): PublicKeyMaterial {
   const bytes = bs58.decode(stripMultibasePrefix(value));
-  const normalized = bytes.length === 34 && bytes[0] === 0xec && bytes[1] === 0x01 ? bytes.slice(2) : bytes;
+  const normalized =
+    bytes.length === 34 && bytes[0] === 0xec && bytes[1] === 0x01 ? bytes.slice(2) : bytes;
   if (normalized.length !== 32) {
     throw new AuthenticationError('Invalid X25519 multibase value');
   }
@@ -256,10 +272,11 @@ export function publicKeyFromJwk(jwk: JsonWebKey): PublicKeyMaterial {
     if (curve !== 'secp256k1' && curve !== 'P-256') {
       throw new AuthenticationError(`Unsupported EC curve: ${curve}`);
     }
+    const keySize = 32;
     const uncompressed = Buffer.concat([
       Buffer.from([0x04]),
-      Buffer.from(decodeBase64Url(jwk.x)),
-      Buffer.from(decodeBase64Url(jwk.y)),
+      leftPadCoordinate(decodeBase64Url(jwk.x), keySize),
+      leftPadCoordinate(decodeBase64Url(jwk.y), keySize),
     ]);
     const bytes = new Uint8Array(
       ECDH.convertKey(
@@ -281,6 +298,16 @@ export function publicKeyFromJwk(jwk: JsonWebKey): PublicKeyMaterial {
     }
   }
   throw new AuthenticationError('Unsupported JWK key material');
+}
+
+function leftPadCoordinate(value: Uint8Array, size: number): Buffer {
+  if (value.length > size) {
+    throw new AuthenticationError('Invalid EC public key coordinate length');
+  }
+  if (value.length === size) {
+    return Buffer.from(value);
+  }
+  return Buffer.concat([Buffer.alloc(size - value.length), Buffer.from(value)]);
 }
 
 export function toPrivateKeyObject(privateKey: PrivateKeyMaterial): KeyObject {
