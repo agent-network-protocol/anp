@@ -35,6 +35,7 @@ def _build_release_paths(release_module, repo_root: Path):
         python_init=repo_root / "anp" / "__init__.py",
         uv_lock=repo_root / "uv.lock",
         cargo_toml=repo_root / "rust" / "Cargo.toml",
+        rust_lib=repo_root / "rust" / "src" / "lib.rs",
         cargo_lock=repo_root / "rust" / "Cargo.lock",
         go_version=repo_root / "golang" / "version.go",
         go_mod=repo_root / "golang" / "go.mod",
@@ -46,7 +47,7 @@ def test_update_version_files_keeps_runtime_versions_aligned(tmp_path):
     """The release helper must update Python and Go runtime version constants."""
     release = _load_release_module()
     (tmp_path / "anp").mkdir()
-    (tmp_path / "rust").mkdir()
+    (tmp_path / "rust" / "src").mkdir(parents=True)
     (tmp_path / "golang").mkdir()
     paths = _build_release_paths(release, tmp_path)
     paths.pyproject_toml.write_text(
@@ -60,6 +61,10 @@ def test_update_version_files_keeps_runtime_versions_aligned(tmp_path):
     )
     paths.cargo_toml.write_text(
         '[package]\nname = "anp"\nversion = "0.8.5"\n',
+        encoding="utf-8",
+    )
+    paths.rust_lib.write_text(
+        'pub const VERSION: &str = "0.8.5";\n',
         encoding="utf-8",
     )
     paths.cargo_lock.write_text(
@@ -77,11 +82,15 @@ def test_update_version_files_keeps_runtime_versions_aligned(tmp_path):
     )
 
     assert paths.python_init in changed_paths
+    assert paths.rust_lib in changed_paths
     assert paths.go_version in changed_paths
     assert '__version__ = "0.8.6"' in paths.python_init.read_text(
         encoding="utf-8",
     )
     assert 'const Version = "0.8.6"' in paths.go_version.read_text(
+        encoding="utf-8",
+    )
+    assert 'pub const VERSION: &str = "0.8.6";' in paths.rust_lib.read_text(
         encoding="utf-8",
     )
 

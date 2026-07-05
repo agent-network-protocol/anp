@@ -75,6 +75,7 @@ class ReleasePaths:
     python_init: Path
     uv_lock: Path
     cargo_toml: Path
+    rust_lib: Path
     cargo_lock: Path
     go_version: Path
     go_mod: Path
@@ -174,6 +175,7 @@ def get_release_paths(repo_root: Path) -> ReleasePaths:
         python_init=repo_root / "anp" / "__init__.py",
         uv_lock=repo_root / "uv.lock",
         cargo_toml=repo_root / "rust" / "Cargo.toml",
+        rust_lib=repo_root / "rust" / "src" / "lib.rs",
         cargo_lock=repo_root / "rust" / "Cargo.lock",
         go_version=repo_root / "golang" / "version.go",
         go_mod=repo_root / "golang" / "go.mod",
@@ -184,6 +186,7 @@ def get_release_paths(repo_root: Path) -> ReleasePaths:
         paths.python_init,
         paths.uv_lock,
         paths.cargo_toml,
+        paths.rust_lib,
         paths.go_version,
         paths.go_mod,
     ]
@@ -210,6 +213,7 @@ def extract_current_version(paths: ReleasePaths) -> SemVer:
     python_version = extract_project_version(paths.pyproject_toml)
     python_runtime_version = extract_python_init_version(paths.python_init)
     rust_version = extract_cargo_package_version(paths.cargo_toml)
+    rust_runtime_version = extract_rust_runtime_version(paths.rust_lib)
     uv_lock_version = extract_uv_lock_version(paths.uv_lock)
     go_runtime_version = extract_go_runtime_version(paths.go_version)
 
@@ -217,6 +221,7 @@ def extract_current_version(paths: ReleasePaths) -> SemVer:
         "pyproject.toml": python_version,
         "anp/__init__.py": python_runtime_version,
         "rust/Cargo.toml": rust_version,
+        "rust/src/lib.rs": rust_runtime_version,
         "uv.lock": uv_lock_version,
         "golang/version.go": go_runtime_version,
     }
@@ -265,6 +270,18 @@ def extract_cargo_package_version(path: Path) -> SemVer:
     )
     if not match:
         raise ValueError(f"Could not find [package] version in {path}.")
+    return SemVer.parse(match.group(1))
+
+
+def extract_rust_runtime_version(path: Path) -> SemVer:
+    """Extract the runtime SDK version from rust/src/lib.rs."""
+    text = read_text(path)
+    match = re.search(
+        r'(?m)^pub const VERSION: &str = "(\d+\.\d+\.\d+)";$',
+        text,
+    )
+    if not match:
+        raise ValueError(f"Could not find VERSION const in {path}.")
     return SemVer.parse(match.group(1))
 
 
@@ -329,6 +346,10 @@ def update_version_files(paths: ReleasePaths, target_version: SemVer) -> list[Pa
         (
             paths.cargo_toml,
             r'(?ms)(^\[package\]\s+.*?^version = ")(\d+\.\d+\.\d+)(".*$)',
+        ),
+        (
+            paths.rust_lib,
+            r'(?m)^(pub const VERSION: &str = ")(\d+\.\d+\.\d+)(";)$',
         ),
         (
             paths.go_version,
@@ -572,6 +593,7 @@ def print_release_plan(
     print(f"- {paths.python_init.relative_to(paths.repo_root)}")
     print(f"- {paths.uv_lock.relative_to(paths.repo_root)}")
     print(f"- {paths.cargo_toml.relative_to(paths.repo_root)}")
+    print(f"- {paths.rust_lib.relative_to(paths.repo_root)}")
     print(f"- {paths.go_version.relative_to(paths.repo_root)}")
     if paths.cargo_lock.exists():
         print(f"- {paths.cargo_lock.relative_to(paths.repo_root)}")

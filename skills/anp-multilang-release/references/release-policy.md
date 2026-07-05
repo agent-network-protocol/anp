@@ -7,6 +7,7 @@ This release skill manages one shared version for:
 - Python package in `pyproject.toml`
 - Python runtime version in `anp/__init__.py`
 - Rust crate in `rust/Cargo.toml`
+- Rust runtime version in `rust/src/lib.rs`
 - Go runtime version in `golang/version.go`
 - Go module tag for `golang/`
 
