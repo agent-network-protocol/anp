@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::authentication::{resolve_did_wba_document_with_options, DidResolutionOptions};
 
-use super::models::{HandleStatus, ANP_HANDLE_SERVICE_TYPE};
+use super::models::{BindingGeneration, HandleStatus, ANP_HANDLE_SERVICE_TYPE};
 use super::resolver::{resolve_handle_with_options, ResolveHandleOptions};
 use super::validator::{build_resolution_url, validate_handle};
 
@@ -14,6 +14,7 @@ pub struct BindingVerificationResult {
     pub is_valid: bool,
     pub handle: String,
     pub did: String,
+    pub binding_generation: Option<BindingGeneration>,
     pub forward_verified: bool,
     pub reverse_verified: bool,
     pub error_message: Option<String>,
@@ -52,6 +53,7 @@ pub async fn verify_handle_binding_with_options(
                 is_valid: false,
                 handle: bare_handle.to_string(),
                 did: String::new(),
+                binding_generation: None,
                 forward_verified: false,
                 reverse_verified: false,
                 error_message: Some(err.message),
@@ -68,6 +70,7 @@ pub async fn verify_handle_binding_with_options(
                     is_valid: false,
                     handle: normalized_handle,
                     did: String::new(),
+                    binding_generation: None,
                     forward_verified: false,
                     reverse_verified: false,
                     error_message: Some(format!("Forward resolution failed: {}", err.message)),
@@ -79,6 +82,7 @@ pub async fn verify_handle_binding_with_options(
             is_valid: false,
             handle: normalized_handle,
             did: resolution.did.clone(),
+            binding_generation: None,
             forward_verified: false,
             reverse_verified: false,
             error_message: Some(
@@ -96,6 +100,7 @@ pub async fn verify_handle_binding_with_options(
             is_valid: false,
             handle: normalized_handle,
             did: did_value.clone(),
+            binding_generation: None,
             forward_verified: true,
             reverse_verified: false,
             error_message: Some("DID does not use did:wba method".to_string()),
@@ -107,6 +112,7 @@ pub async fn verify_handle_binding_with_options(
             is_valid: false,
             handle: normalized_handle,
             did: resolution.did,
+            binding_generation: None,
             forward_verified: true,
             reverse_verified: false,
             error_message: Some(format!(
@@ -132,6 +138,7 @@ pub async fn verify_handle_binding_with_options(
                     is_valid: false,
                     handle: normalized_handle,
                     did: resolution.did,
+                    binding_generation: None,
                     forward_verified: true,
                     reverse_verified: false,
                     error_message: Some(format!("Failed to resolve DID Document: {}", err)),
@@ -153,6 +160,7 @@ pub async fn verify_handle_binding_with_options(
             is_valid: false,
             handle: normalized_handle,
             did: resolution.did,
+            binding_generation: None,
             forward_verified: true,
             reverse_verified: false,
             error_message: Some(format!(
@@ -166,6 +174,7 @@ pub async fn verify_handle_binding_with_options(
         is_valid: true,
         handle: normalized_handle,
         did: resolution.did,
+        binding_generation: Some(resolution.binding_generation),
         forward_verified: true,
         reverse_verified: true,
         error_message: None,

@@ -30,6 +30,11 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     let alice_store = CompatDataDirStore::new(alice_dir.path());
     let bob_store = CompatDataDirStore::new(bob_dir.path());
     let group_did = "did:wba:example.com:groups:typed-ops:e1";
+    let p4_group_state_ref = GroupStateRef {
+        group_did: group_did.to_owned(),
+        group_state_version: "1".to_owned(),
+        policy_hash: None,
+    };
 
     let bob_kp = generate_key_package(
         &bob_store,
@@ -86,6 +91,27 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     assert_eq!(create_finalized.status, "finalized");
     assert_eq!(create_finalized.epoch, "0");
 
+    let mismatched_add = add_member_prepare(
+        &alice_store,
+        AddMemberInput {
+            actor_did: alice().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            member_did: bob().to_owned(),
+            group_key_package: bob_kp.group_key_package.clone(),
+            group_state_ref: Some(GroupStateRef {
+                group_did: "did:wba:example.com:groups:other:e1".to_owned(),
+                group_state_version: "1".to_owned(),
+                policy_hash: None,
+            }),
+            operation_id: "op-typed-add-wrong-ref".to_owned(),
+            request_id: "req-typed-add-wrong-ref".to_owned(),
+            pending_commit_id: Some("pc-typed-add-wrong-ref".to_owned()),
+        },
+    )
+    .expect_err("add must reject a state reference for another group");
+    assert_eq!(mismatched_add.code, "group_binding_mismatch");
+
     let add = add_member_prepare(
         &alice_store,
         AddMemberInput {
@@ -94,6 +120,7 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
             group_did: group_did.to_owned(),
             member_did: bob().to_owned(),
             group_key_package: bob_kp.group_key_package,
+            group_state_ref: Some(p4_group_state_ref.clone()),
             operation_id: "op-typed-add".to_owned(),
             request_id: "req-typed-add".to_owned(),
             pending_commit_id: Some("pc-typed-add".to_owned()),
@@ -297,11 +324,7 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
             device_id: "phone".to_owned(),
             group_did: group_did.to_owned(),
             member_did: bob().to_owned(),
-            group_state_ref: Some(GroupStateRef {
-                group_did: group_did.to_owned(),
-                group_state_version: "1".to_owned(),
-                policy_hash: None,
-            }),
+            group_state_ref: Some(p4_group_state_ref),
             operation_id: "op-typed-remove".to_owned(),
             request_id: "req-typed-remove".to_owned(),
             pending_commit_id: Some("pc-typed-remove".to_owned()),
@@ -359,7 +382,19 @@ fn typed_operations_im_core_store_uses_owner_device_scoped_group_mls_tables() {
         "phone",
     )
     .expect("bob im-core store");
+    let recovered_alice_store = ImCoreSqliteGroupMlsStore::from_local_state_sqlite_path(
+        &local_state,
+        "identity-alice",
+        "did:wba:example.com:users:alice:e1-recovered",
+        "phone",
+    )
+    .expect("recovered alice im-core store");
     assert_ne!(alice_store.state_db_path(), bob_store.state_db_path());
+    assert_eq!(
+        alice_store.state_db_path(),
+        recovered_alice_store.state_db_path(),
+        "a DID snapshot change must not move stable owner MLS state"
+    );
     assert!(alice_store.state_db_path().ends_with("mls_state.sqlite"));
     let group_did = "did:wba:example.com:groups:typed-im-core-store:e1";
 
@@ -421,6 +456,7 @@ fn typed_operations_im_core_store_uses_owner_device_scoped_group_mls_tables() {
             group_did: group_did.to_owned(),
             member_did: bob().to_owned(),
             group_key_package: bob_kp.group_key_package,
+            group_state_ref: None,
             operation_id: "op-im-core-add".to_owned(),
             request_id: "req-im-core-add".to_owned(),
             pending_commit_id: Some("pc-im-core-add".to_owned()),

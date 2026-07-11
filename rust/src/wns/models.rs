@@ -1,7 +1,99 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 pub const ANP_HANDLE_SERVICE_TYPE: &str = "ANPHandleService";
+
+/// Canonical, positive decimal generation of a Handle binding.
+///
+/// The wire representation is a string and comparisons do not use a
+/// fixed-width integer, so providers can increase the generation indefinitely.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BindingGeneration(String);
+
+impl BindingGeneration {
+    pub fn new(value: impl Into<String>) -> Result<Self, BindingGenerationError> {
+        let value = value.into();
+        if value.is_empty()
+            || value == "0"
+            || value.starts_with('0')
+            || !value.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(BindingGenerationError);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_newer_than(&self, previous: &Self) -> bool {
+        self > previous
+    }
+}
+
+impl fmt::Display for BindingGeneration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl FromStr for BindingGeneration {
+    type Err = BindingGenerationError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl Ord for BindingGeneration {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.cmp(&other.0))
+    }
+}
+
+impl PartialOrd for BindingGeneration {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Serialize for BindingGeneration {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for BindingGeneration {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BindingGenerationError;
+
+impl fmt::Display for BindingGenerationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("binding_generation must be a canonical positive decimal string")
+    }
+}
+
+impl std::error::Error for BindingGenerationError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -67,6 +159,7 @@ pub struct HandleResolutionDocument {
     pub handle: String,
     pub did: String,
     pub status: HandleStatus,
+    pub binding_generation: BindingGeneration,
     pub updated: Option<String>,
     #[serde(rename = "versionId")]
     pub version_id: Option<String>,
@@ -75,11 +168,17 @@ pub struct HandleResolutionDocument {
 }
 
 impl HandleResolutionDocument {
-    pub fn new(handle: impl Into<String>, did: impl Into<String>, status: HandleStatus) -> Self {
+    pub fn new(
+        handle: impl Into<String>,
+        did: impl Into<String>,
+        status: HandleStatus,
+        binding_generation: BindingGeneration,
+    ) -> Self {
         Self {
             handle: handle.into(),
             did: did.into(),
             status,
+            binding_generation,
             updated: None,
             version_id: None,
             ttl: None,

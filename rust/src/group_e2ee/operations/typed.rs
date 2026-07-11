@@ -55,6 +55,8 @@ pub struct AddMemberInput {
     pub group_did: String,
     pub member_did: String,
     pub group_key_package: GroupKeyPackage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_state_ref: Option<GroupStateRef>,
     pub operation_id: String,
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,6 +440,7 @@ pub fn add_member_prepare<S: GroupMlsStore>(
         "member_did": input.member_did,
         "group_key_package": input.group_key_package,
     });
+    insert_optional_value(&mut params, "group_state_ref", input.group_state_ref);
     insert_optional_string(&mut params, "pending_commit_id", input.pending_commit_id);
     let result = real_group_add_member(
         &mut scope.provider,

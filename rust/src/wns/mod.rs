@@ -13,8 +13,8 @@ pub use errors::{
     HandleResolutionError, HandleValidationError, WbaUriParseError, WnsError,
 };
 pub use models::{
-    DidSubjectProfile, HandleResolutionDocument, HandleServiceEntry, HandleStatus, ParsedWbaUri,
-    SubjectType, ANP_HANDLE_SERVICE_TYPE,
+    BindingGeneration, BindingGenerationError, DidSubjectProfile, HandleResolutionDocument,
+    HandleServiceEntry, HandleStatus, ParsedWbaUri, SubjectType, ANP_HANDLE_SERVICE_TYPE,
 };
 pub use resolver::{
     resolve_handle, resolve_handle_from_uri, resolve_handle_sync, resolve_handle_with_options,

@@ -212,6 +212,9 @@ pub(crate) fn real_group_add_member(
     let device_id = device_id(params);
     let binding = binding(conn, actor, device_id, group_did, request_id)?;
     let mut group = load_group(provider, &binding.openmls_group_id, request_id)?;
+    if let Some(group_state_ref) = params.get("group_state_ref") {
+        validate_group_binding_claims(&binding, group_state_ref, request_id)?;
+    }
     validate_loaded_group_matches_binding(&binding, &group, request_id)?;
     let signer = load_signer(provider, conn, actor, device_id, request_id)?;
     let kp_b64u = params
@@ -1606,6 +1609,7 @@ fn pending_commits_for_status(
 }
 
 struct Binding {
+    group_did: String,
     openmls_group_id: GroupId,
     epoch: u64,
     role: String,
@@ -1930,6 +1934,7 @@ fn active_binding(
         return Ok(None);
     };
     Ok(Some(Binding {
+        group_did: group_did.to_owned(),
         openmls_group_id: GroupId::from_slice(&decode_b64u(&group_id_b64u, request_id)?),
         epoch: epoch as u64,
         role,
@@ -2123,6 +2128,15 @@ fn validate_group_binding_claims(
     claims: &Value,
     request_id: &str,
 ) -> Result<(), Value> {
+    if let Some(actual_group_did) = claims.get("group_did").and_then(Value::as_str) {
+        if actual_group_did != binding.group_did {
+            return Err(error(
+                "group_binding_mismatch",
+                "group_did does not match the local MLS group binding",
+                Some(request_id.to_owned()),
+            ));
+        }
+    }
     let expected_group_id = encode_b64u(binding.openmls_group_id.as_slice());
     for key in ["crypto_group_id_b64u", "openmls_group_id_b64u"] {
         if let Some(actual) = claims.get(key).and_then(Value::as_str) {
