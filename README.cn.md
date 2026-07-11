@@ -32,6 +32,21 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 - **示例和 fixtures**：可运行示例、跨语言互通检查和共享测试向量。
 - **发布工具**：Python / Go / Rust 的统一发版流程和版本规则。
 
+### Handle 连续性能力状态
+
+ANP-04 WNS 1.1 将 `binding_generation` 定义为必填安全字段。该收紧合同按语言逐步实现，不能因为仓库使用统一包版本就推断所有语言已经支持。
+
+| SDK | 必填 canonical `binding_generation` | Handle 换绑 P6 primitives | 状态 |
+|---|---|---|---|
+| Python | 已实现 | 不适用；Python 当前没有 OpenMLS surface | 本次变更已支持 |
+| Rust | 已实现 | 现有 `group.e2ee.add` / `group.e2ee.remove` typed primitives 可接收同一 `GroupStateRef` | 本次变更已支持 |
+| Go | 暂缓 | 暂缓 | 尚不声明符合 WNS 1.1 continuity |
+| Dart | 暂缓 | 暂缓 | 尚不声明符合 WNS 1.1 continuity |
+| Java | 暂缓 | 暂缓 | 尚不声明符合 WNS 1.1 continuity |
+| TypeScript | 暂缓 | 暂缓 | 尚不声明符合 WNS 1.1 continuity |
+
+当前 release helper 会统一处理 Python、Rust 和 Go。在延期语言完成明确的 conformance 决策前，不得发布一个宣称支持本能力的统一版本。
+
 ## 选择你的路径
 
 | 我想要... | 从这里开始 |

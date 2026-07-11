@@ -38,9 +38,10 @@ async def main():
     print(f"\nResolving handle '{normalized}' ...")
     try:
         doc = await resolve_handle(normalized)
-        print(f"  DID:     {doc.did}")
-        print(f"  Status:  {doc.status.value}")
-        print(f"  Updated: {doc.updated}")
+        print(f"  DID:                {doc.did}")
+        print(f"  Status:             {doc.status.value}")
+        print(f"  Binding generation: {doc.binding_generation}")
+        print(f"  Updated:            {doc.updated}")
     except HandleNotFoundError:
         print("  Handle not found (expected if no real provider is running)")
     except HandleResolutionError as exc:
@@ -50,7 +51,8 @@ async def main():
     print(f"\nResolving URI '{uri}' ...")
     try:
         doc = await resolve_handle_from_uri(uri)
-        print(f"  DID: {doc.did}")
+        print(f"  DID:                {doc.did}")
+        print(f"  Binding generation: {doc.binding_generation}")
     except (HandleNotFoundError, HandleResolutionError) as exc:
         print(f"  Could not resolve: {exc}")
 

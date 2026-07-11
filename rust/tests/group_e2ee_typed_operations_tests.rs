@@ -316,6 +316,7 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     assert_eq!(active_status.status, "active");
     assert_eq!(active_status.local_epoch.as_deref(), Some("1"));
     assert!(active_status.pending_commits.is_empty());
+    assert_eq!(active_status.member_dids, vec![alice(), bob()]);
 
     let remove = remove_member_prepare(
         &alice_store,
@@ -345,6 +346,18 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     .expect("typed remove finalize");
     assert_eq!(remove_finalized.epoch, "2");
 
+    let removed_status = status(
+        &alice_store,
+        StatusInput {
+            request_id: "req-typed-status-after-remove".to_owned(),
+            device_id: "phone".to_owned(),
+            agent_did: Some(alice().to_owned()),
+            group_did: Some(group_did.to_owned()),
+        },
+    )
+    .expect("status after remove");
+    assert_eq!(removed_status.member_dids, vec![alice()]);
+
     let bob_notice = process_notice(
         &bob_store,
         ProcessNoticeInput {
@@ -362,6 +375,48 @@ fn typed_operations_create_finalize_add_finalize_without_binary_exec() {
     assert_eq!(bob_notice.status, "inactive");
     assert!(bob_notice.self_removed);
     assert_eq!(bob_notice.subject_status, "removed");
+
+    let post_remove = encrypt(
+        &alice_store,
+        EncryptInput {
+            sender_did: alice().to_owned(),
+            device_id: "phone".to_owned(),
+            group_state_ref: GroupStateRef {
+                group_did: group_did.to_owned(),
+                group_state_version: "1".to_owned(),
+                policy_hash: None,
+            },
+            message_id: "msg-after-remove".to_owned(),
+            operation_id: "op-after-remove".to_owned(),
+            application_plaintext: GroupApplicationPlaintext {
+                application_content_type: "text/plain".to_owned(),
+                thread_id: None,
+                reply_to_message_id: None,
+                annotations: Default::default(),
+                text: Some("future epoch".to_owned()),
+                payload: None,
+                payload_b64u: None,
+            },
+            request_id: "req-after-remove-encrypt".to_owned(),
+        },
+    )
+    .expect("remaining member encrypts after remove");
+    assert_eq!(post_remove.group_cipher_object.epoch, "2");
+    let removed_member_error = decrypt(
+        &bob_store,
+        DecryptInput {
+            recipient_did: bob().to_owned(),
+            device_id: "phone".to_owned(),
+            group_did: group_did.to_owned(),
+            sender_did: alice().to_owned(),
+            message_id: "msg-after-remove".to_owned(),
+            operation_id: "op-after-remove".to_owned(),
+            group_cipher_object: post_remove.group_cipher_object,
+            request_id: "req-after-remove-bob-decrypt".to_owned(),
+        },
+    )
+    .expect_err("removed leaf cannot decrypt future epoch messages");
+    assert_eq!(removed_member_error.code, "group_not_found");
 }
 
 #[test]

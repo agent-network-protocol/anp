@@ -29,6 +29,7 @@ async def main():
     print(f"  is_valid:          {result.is_valid}")
     print(f"  forward_verified:  {result.forward_verified}")
     print(f"  reverse_verified:  {result.reverse_verified}")
+    print(f"  binding_generation: {result.binding_generation}")
     if result.error_message:
         print(f"  error:             {result.error_message}")
 
@@ -46,6 +47,7 @@ async def main():
     }
     result = await verify_handle_binding(handle, did_document=did_document)
     print(f"  is_valid:          {result.is_valid}")
+    print(f"  binding_generation: {result.binding_generation}")
     if result.error_message:
         print(f"  error:             {result.error_message}")
 

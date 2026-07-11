@@ -7,6 +7,17 @@ use anp::wns::{
 };
 use common::JsonTestServer;
 use serde_json::json;
+use std::fs;
+use std::path::PathBuf;
+
+fn binding_generation_vectors() -> serde_json::Value {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../testdata/wns/binding_generation_vectors.json");
+    serde_json::from_str(
+        &fs::read_to_string(path).expect("read shared WNS binding generation vectors"),
+    )
+    .expect("parse shared WNS binding generation vectors")
+}
 
 #[test]
 fn test_validate_handle_and_parse_wba_uri() {
@@ -148,6 +159,55 @@ fn test_binding_generation_compares_arbitrary_precision_without_rollback() {
     assert!(!previous.is_newer_than(&current));
     assert!(!replay.is_newer_than(&previous));
     assert_eq!(serde_json::to_value(current).unwrap(), json!(current_value));
+}
+
+#[test]
+fn test_shared_binding_generation_vectors() {
+    let vectors = binding_generation_vectors();
+
+    for case in vectors["validation"]
+        .as_array()
+        .expect("validation vectors")
+    {
+        let parsed = serde_json::from_value::<BindingGeneration>(
+            case.get("value")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+        assert_eq!(
+            parsed.is_ok(),
+            case["valid"].as_bool().expect("valid flag"),
+            "validation vector {}",
+            case["name"]
+        );
+        if let Ok(generation) = parsed {
+            assert_eq!(
+                generation.as_str(),
+                case["canonical"].as_str().expect("canonical generation")
+            );
+        }
+    }
+
+    for transition in vectors["transitions"]
+        .as_array()
+        .expect("transition vectors")
+    {
+        let previous = BindingGeneration::new(
+            transition["previous"]
+                .as_str()
+                .expect("previous generation"),
+        )
+        .expect("valid previous generation");
+        let current =
+            BindingGeneration::new(transition["current"].as_str().expect("current generation"))
+                .expect("valid current generation");
+        assert_eq!(
+            current.is_newer_than(&previous),
+            transition["accepted"].as_bool().expect("accepted flag"),
+            "transition vector {}",
+            transition["name"]
+        );
+    }
 }
 
 #[tokio::test]

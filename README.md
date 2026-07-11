@@ -32,6 +32,25 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 - **Examples and fixtures**: runnable examples, cross-language interop checks, and shared test vectors.
 - **Release tooling**: coordinated Python / Go / Rust release workflow and version policy.
 
+### Handle continuity capability status
+
+ANP-04 WNS 1.1 makes `binding_generation` a required security field. Support for
+that stricter contract is intentionally being introduced per language rather
+than implied by the repository's shared package version.
+
+| SDK | Required canonical `binding_generation` | Handle-rebind P6 primitives | Status |
+|---|---|---|---|
+| Python | Implemented | Not applicable; Python has no OpenMLS surface | Supported for this change |
+| Rust | Implemented | Existing `group.e2ee.add` / `group.e2ee.remove` typed primitives accept the same `GroupStateRef` | Supported for this change |
+| Go | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
+| Dart | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
+| Java | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
+| TypeScript | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
+
+The release helper coordinates Python, Rust, and Go under one version. Do not
+publish a shared release claiming this capability until the deferred language
+surfaces have an explicit conformance decision.
+
 ## Choose your path
 
 | I want to... | Start here |

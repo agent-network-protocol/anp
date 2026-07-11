@@ -1,0 +1,94 @@
+{
+  "version": "anp-wns-binding-generation-v1",
+  "normative_source": "ANP-04 WNS 1.1 binding_generation",
+  "validation": [
+    {
+      "name": "initial_generation",
+      "value": "1",
+      "valid": true,
+      "canonical": "1"
+    },
+    {
+      "name": "large_generation",
+      "value": "10000000000000000000000000000000000000000",
+      "valid": true,
+      "canonical": "10000000000000000000000000000000000000000"
+    },
+    {
+      "name": "missing_generation",
+      "valid": false
+    },
+    {
+      "name": "json_number",
+      "value": 8,
+      "valid": false
+    },
+    {
+      "name": "zero",
+      "value": "0",
+      "valid": false
+    },
+    {
+      "name": "leading_zero",
+      "value": "08",
+      "valid": false
+    },
+    {
+      "name": "negative",
+      "value": "-1",
+      "valid": false
+    },
+    {
+      "name": "positive_sign",
+      "value": "+1",
+      "valid": false
+    },
+    {
+      "name": "whitespace",
+      "value": " 8",
+      "valid": false
+    },
+    {
+      "name": "non_digit",
+      "value": "8a",
+      "valid": false
+    },
+    {
+      "name": "unicode_digit",
+      "value": "\u0661",
+      "valid": false
+    }
+  ],
+  "transitions": [
+    {
+      "name": "did_change",
+      "previous": "8",
+      "current": "9",
+      "accepted": true
+    },
+    {
+      "name": "status_change",
+      "previous": "9",
+      "current": "10",
+      "accepted": true
+    },
+    {
+      "name": "equal_replay",
+      "previous": "10",
+      "current": "10",
+      "accepted": false
+    },
+    {
+      "name": "rollback",
+      "previous": "10",
+      "current": "9",
+      "accepted": false
+    },
+    {
+      "name": "arbitrary_precision_increment",
+      "previous": "9999999999999999999999999999999999999999",
+      "current": "10000000000000000000000000000000000000000",
+      "accepted": true
+    }
+  ]
+}

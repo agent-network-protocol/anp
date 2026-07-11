@@ -60,6 +60,17 @@ Contract-test artifacts remain explicit test fixtures only. They must stay marke
 - KeyPackage trust boundary: real product flows must feed `anp-mls` only KeyPackages obtained through `message-service` `group.e2ee.publish_key_package` / `get_key_package`, because the service is the authoritative DID WBA proof verifier and lease/consume gate. `anp-mls` still validates owner/agent DID, device ID, MLS BasicCredential identity, leaf signature key, validity window, and group/device context as a local defense-in-depth check, but it does not resolve DID documents or independently verify remote object proofs for arbitrary direct inputs.
 - Hidden update-member uses OpenMLS `swap_members` with a `purpose=update` KeyPackage and finalizes only after service acceptance.
 - Recover-member is only for active P4 members; removed/left rejoin uses add/welcome with a fresh normal KeyPackage.
+- A Handle-backed DID rebind does not add a P6 method. After P4 accepts
+  `group.rebind_member`, the current owner uses the existing typed
+  `group.e2ee.add` primitive for the new DID and then the existing
+  `group.e2ee.remove` primitive for the old DID. Both operations carry the
+  same P4 `GroupStateRef`.
+- The SDK validates and transports that state reference, but it does not decide
+  whether a P4 rebind is authorized and it does not own the rebind phase. The
+  Group Host serializes the two operations and pauses application messages
+  between them; the owner/client persists retry and repair state.
+- `group.e2ee.recover_member` remains a same-DID/device MLS recovery primitive
+  and must not be used as a DID-rebind shortcut.
 
 ## Non-goals
 

@@ -263,6 +263,8 @@ pub struct StatusOutput {
     pub local_epoch: Option<String>,
     #[serde(default)]
     pub pending_commits: Vec<PendingCommitStatus>,
+    #[serde(default)]
+    pub member_dids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub epoch_authenticator: Option<String>,
 }
@@ -846,6 +848,17 @@ fn status_output_from_value(value: Value) -> GroupMlsOperationResult<StatusOutpu
         epoch: output_string(&value, "epoch"),
         local_epoch: output_string(&value, "local_epoch"),
         pending_commits,
+        member_dids: value
+            .get("member_dids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
         epoch_authenticator: output_string(&value, "epoch_authenticator"),
     })
 }

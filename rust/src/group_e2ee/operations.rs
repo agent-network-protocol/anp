@@ -1520,11 +1520,17 @@ pub(crate) fn real_group_status(
             if let Some(group) = MlsGroup::load(provider.storage(), &binding.openmls_group_id)
                 .map_err(|e| mls_error("group_load_failed", e, request_id))?
             {
+                let member_dids = group
+                    .members()
+                    .filter_map(|member| BasicCredential::try_from(member.credential).ok())
+                    .filter_map(|credential| String::from_utf8(credential.identity().to_vec()).ok())
+                    .collect::<Vec<_>>();
                 return Ok(json!({
                     "data_dir": data_dir.to_string_lossy(),
                     "state_db": data_dir.join("state.db").to_string_lossy(),
                     "bindings": bindings,
                     "pending_commits": pending_commits,
+                    "member_dids": member_dids,
                     "status": "active",
                     "epoch": group.epoch().as_u64().to_string(),
                     "local_epoch": group.epoch().as_u64().to_string(),
@@ -1544,6 +1550,7 @@ pub(crate) fn real_group_status(
         "state_db": data_dir.join("state.db").to_string_lossy(),
         "bindings": bindings,
         "pending_commits": pending_commits,
+        "member_dids": [],
         "status": derived_status,
         "epoch": derived_epoch.clone(),
         "local_epoch": derived_epoch,

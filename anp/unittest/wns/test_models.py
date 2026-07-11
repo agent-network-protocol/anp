@@ -1,6 +1,8 @@
 """Tests for anp.wns.models — Pydantic model serialization and validation."""
 
+import json
 import unittest
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -12,6 +14,14 @@ from anp.wns.models import (
     HandleStatus,
     ParsedWbaUri,
     SubjectType,
+)
+
+
+_GENERATION_VECTORS = (
+    Path(__file__).resolve().parents[3]
+    / "testdata"
+    / "wns"
+    / "binding_generation_vectors.json"
 )
 
 
@@ -213,6 +223,32 @@ class TestHandleResolutionDocument(unittest.TestCase):
                     },
                 }
             )
+
+    def test_shared_binding_generation_vectors(self):
+        vectors = json.loads(_GENERATION_VECTORS.read_text(encoding="utf-8"))
+
+        for case in vectors["validation"]:
+            value = case.get("value")
+            if case["valid"]:
+                with self.subTest(case=case["name"]):
+                    self.assertEqual(
+                        canonicalize_binding_generation(value), case["canonical"]
+                    )
+            else:
+                with self.subTest(case=case["name"]), self.assertRaises(
+                    ValueError
+                ):
+                    canonicalize_binding_generation(value)
+
+        for transition in vectors["transitions"]:
+            with self.subTest(transition=transition["name"]):
+                accepted = (
+                    compare_binding_generations(
+                        transition["current"], transition["previous"]
+                    )
+                    > 0
+                )
+                self.assertEqual(accepted, transition["accepted"])
 
 
 class TestDIDSubjectProfile(unittest.TestCase):
