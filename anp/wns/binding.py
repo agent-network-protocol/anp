@@ -12,6 +12,7 @@ from .models import (
     ANP_HANDLE_SERVICE_TYPE,
     HandleResolutionDocument,
     HandleStatus,
+    canonicalize_binding_generation,
 )
 from .resolver import resolve_handle
 from .validator import build_resolution_url, validate_handle
@@ -27,6 +28,23 @@ class BindingVerificationResult:
     forward_verified: bool
     reverse_verified: bool
     error_message: Optional[str] = None
+    binding_generation: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Enforce the generation invariant for verification results."""
+        if self.is_valid and self.binding_generation is None:
+            raise ValueError(
+                "a valid binding verification result requires binding_generation"
+            )
+        if not self.is_valid and self.binding_generation is not None:
+            raise ValueError(
+                "an invalid binding verification result must not expose "
+                "binding_generation"
+            )
+        if self.binding_generation is not None:
+            self.binding_generation = canonicalize_binding_generation(
+                self.binding_generation
+            )
 
 
 async def verify_handle_binding(
@@ -63,7 +81,6 @@ async def verify_handle_binding(
     normalized_handle = f"{local_part}.{domain}"
 
     # -- Step 1: Forward resolution ----------------------------------------
-    forward_verified = False
     did = ""
     try:
         doc: HandleResolutionDocument = await resolve_handle(
@@ -77,11 +94,11 @@ async def verify_handle_binding(
                 did=did,
                 forward_verified=False,
                 reverse_verified=False,
+                binding_generation=None,
                 error_message=(
                     f"Handle status is '{doc.status.value}', expected 'active'"
                 ),
             )
-        forward_verified = True
     except Exception as exc:
         return BindingVerificationResult(
             is_valid=False,
@@ -175,6 +192,7 @@ async def verify_handle_binding(
         did=did,
         forward_verified=True,
         reverse_verified=True,
+        binding_generation=doc.binding_generation,
     )
 
 

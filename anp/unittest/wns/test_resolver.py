@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -13,7 +14,11 @@ from anp.wns.exceptions import (
     HandleResolutionError,
 )
 from anp.wns.models import HandleResolutionDocument, HandleStatus
-from anp.wns.resolver import resolve_handle, resolve_handle_from_uri
+from anp.wns.resolver import (
+    resolve_handle,
+    resolve_handle_from_uri,
+    resolve_handle_sync,
+)
 
 
 def _make_app():
@@ -25,6 +30,7 @@ def _make_app():
                 "handle": "alice.example.com",
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
+                "binding_generation": "8",
                 "updated": "2025-01-01T00:00:00Z",
                 "profile": {
                     "type": "DIDSubjectProfile",
@@ -43,6 +49,7 @@ def _make_app():
                 "handle": "suspended.example.com",
                 "did": "did:wba:example.com:user:suspended",
                 "status": "suspended",
+                "binding_generation": "9",
             }
         )
 
@@ -69,6 +76,7 @@ def _make_app():
                 "handle": "wrong.example.com",
                 "did": "did:wba:example.com:user:wrong",
                 "status": "active",
+                "binding_generation": "8",
             }
         )
 
@@ -78,6 +86,7 @@ def _make_app():
                 "handle": "profile-mismatch.example.com",
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
+                "binding_generation": "8",
                 "profile": {
                     "subject_did": "did:wba:example.com:user:bob",
                     "display_name": "Bob",
@@ -91,11 +100,35 @@ def _make_app():
                 "handle": "profile-handle-mismatch.example.com",
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
+                "binding_generation": "8",
                 "profile": {
                     "subject_did": "did:wba:example.com:user:alice",
                     "handle": "alice.example.com",
                     "display_name": "Alice",
                 },
+            }
+        )
+
+    async def handle_invalid_generation(request):
+        return web.json_response(
+            {
+                "handle": "invalid-generation.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
+                "binding_generation": "08",
+                "profile": {
+                    "subject_did": "did:wba:example.com:user:bob",
+                    "display_name": "Bob",
+                },
+            }
+        )
+
+    async def handle_missing_generation(request):
+        return web.json_response(
+            {
+                "handle": "missing-generation.example.com",
+                "did": "did:wba:example.com:user:alice",
+                "status": "active",
             }
         )
 
@@ -112,6 +145,12 @@ def _make_app():
     app.router.add_get(
         "/.well-known/handle/profile-handle-mismatch",
         handle_profile_mismatched_handle,
+    )
+    app.router.add_get(
+        "/.well-known/handle/invalid-generation", handle_invalid_generation
+    )
+    app.router.add_get(
+        "/.well-known/handle/missing-generation", handle_missing_generation
     )
     return app
 
@@ -151,6 +190,7 @@ class TestResolveHandle(AioHTTPTestCase):
         self.assertIsInstance(doc, HandleResolutionDocument)
         self.assertEqual(doc.did, "did:wba:example.com:user:alice")
         self.assertEqual(doc.status, HandleStatus.ACTIVE)
+        self.assertEqual(doc.binding_generation, "8")
         self.assertEqual(doc.updated, "2025-01-01T00:00:00Z")
         self.assertIsNotNone(doc.profile)
         self.assertEqual(doc.profile.display_name, "Alice")
@@ -209,6 +249,35 @@ class TestResolveHandle(AioHTTPTestCase):
         doc = await self._resolve("profile-handle-mismatch")
         self.assertEqual(doc.did, "did:wba:example.com:user:alice")
         self.assertIsNone(doc.profile)
+
+    async def test_resolve_rejects_invalid_top_level_generation(self):
+        with self.assertRaises(HandleResolutionError) as ctx:
+            await self._resolve("invalid-generation")
+
+        self.assertIn("binding_generation", str(ctx.exception))
+
+    async def test_resolve_rejects_missing_top_level_generation(self):
+        with self.assertRaises(HandleResolutionError) as ctx:
+            await self._resolve("missing-generation")
+
+        self.assertIn("binding_generation", str(ctx.exception))
+
+
+class TestResolveHandleSync(unittest.TestCase):
+
+    def test_sync_wrapper_preserves_binding_generation(self):
+        document = HandleResolutionDocument(
+            handle="alice.example.com",
+            did="did:wba:example.com:user:alice",
+            status="active",
+            binding_generation="12345678901234567890",
+        )
+        with patch(
+            "anp.wns.resolver.resolve_handle", new=AsyncMock(return_value=document)
+        ):
+            result = resolve_handle_sync("alice.example.com")
+
+        self.assertEqual(result.binding_generation, "12345678901234567890")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,55 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 ANP_HANDLE_SERVICE_TYPE = "ANPHandleService"
 
 
+def canonicalize_binding_generation(value: Any) -> str:
+    """Validate and return a canonical WNS binding generation.
+
+    A binding generation is a positive decimal string with no sign,
+    whitespace, or leading zeroes. Keeping the wire value as a string avoids
+    fixed-width integer limits and preserves the provider's exact value.
+
+    Args:
+        value: Candidate wire value.
+
+    Returns:
+        The unchanged canonical decimal string.
+
+    Raises:
+        ValueError: If the value is not a canonical positive decimal string.
+    """
+    if not isinstance(value, str):
+        raise ValueError("binding_generation must be a decimal string")
+    if not value or not value.isascii() or not value.isdecimal():
+        raise ValueError("binding_generation must contain only ASCII decimal digits")
+    if value[0] == "0":
+        raise ValueError(
+            "binding_generation must be positive and must not contain leading zeroes"
+        )
+    return value
+
+
+def compare_binding_generations(left: Any, right: Any) -> int:
+    """Compare two canonical binding generations without integer size limits.
+
+    Args:
+        left: First canonical positive decimal string.
+        right: Second canonical positive decimal string.
+
+    Returns:
+        ``-1`` when ``left < right``, ``0`` when equal, and ``1`` otherwise.
+
+    Raises:
+        ValueError: If either value is not canonical.
+    """
+    left_value = canonicalize_binding_generation(left)
+    right_value = canonicalize_binding_generation(right)
+    if len(left_value) != len(right_value):
+        return -1 if len(left_value) < len(right_value) else 1
+    if left_value == right_value:
+        return 0
+    return -1 if left_value < right_value else 1
+
+
 class HandleStatus(str, Enum):
     """Handle lifecycle status as defined in WNS spec section 4.7."""
 
@@ -94,6 +143,9 @@ class HandleResolutionDocument(BaseModel):
     handle: str = Field(description="Full handle identifier, e.g. alice.example.com")
     did: str = Field(description="The did:wba DID bound to this handle")
     status: HandleStatus = Field(description="Current handle status")
+    binding_generation: str = Field(
+        description="Canonical positive decimal binding generation"
+    )
     updated: Optional[str] = Field(
         default=None, description="Last update time in ISO 8601 format"
     )
@@ -107,6 +159,12 @@ class HandleResolutionDocument(BaseModel):
         default=None,
         description="Optional public DID Subject Profile for display only",
     )
+
+    @field_validator("binding_generation", mode="before")
+    @classmethod
+    def validate_binding_generation(cls, value: Any) -> str:
+        """Reject missing or non-canonical security generations."""
+        return canonicalize_binding_generation(value)
 
     @model_validator(mode="before")
     @classmethod

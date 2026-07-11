@@ -4,6 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
+from anp.wns import canonicalize_binding_generation, compare_binding_generations
 from anp.wns.models import (
     DIDSubjectProfile,
     HandleResolutionDocument,
@@ -32,6 +33,7 @@ class TestHandleResolutionDocument(unittest.TestCase):
             handle="alice.example.com",
             did="did:wba:example.com:user:alice",
             status=HandleStatus.ACTIVE,
+            binding_generation="8",
             updated="2025-01-01T00:00:00Z",
             versionId="42",
             ttl=300,
@@ -39,6 +41,7 @@ class TestHandleResolutionDocument(unittest.TestCase):
         self.assertEqual(doc.handle, "alice.example.com")
         self.assertEqual(doc.did, "did:wba:example.com:user:alice")
         self.assertEqual(doc.status, HandleStatus.ACTIVE)
+        self.assertEqual(doc.binding_generation, "8")
         self.assertEqual(doc.updated, "2025-01-01T00:00:00Z")
         self.assertEqual(doc.versionId, "42")
         self.assertEqual(doc.ttl, 300)
@@ -48,6 +51,7 @@ class TestHandleResolutionDocument(unittest.TestCase):
             handle="alice.example.com",
             did="did:wba:example.com:user:alice",
             status=HandleStatus.ACTIVE,
+            binding_generation="8",
         )
         self.assertIsNone(doc.updated)
 
@@ -56,16 +60,19 @@ class TestHandleResolutionDocument(unittest.TestCase):
             handle="alice.example.com",
             did="did:wba:example.com:user:alice",
             status=HandleStatus.ACTIVE,
+            binding_generation="8",
         )
         d = doc.model_dump()
         self.assertEqual(d["handle"], "alice.example.com")
         self.assertEqual(d["status"], "active")
+        self.assertEqual(d["binding_generation"], "8")
 
     def test_model_validate(self):
         data = {
             "handle": "alice.example.com",
             "did": "did:wba:example.com:user:alice",
             "status": "active",
+            "binding_generation": "8",
             "updated": "2025-01-01T00:00:00Z",
             "profile": {
                 "type": "DIDSubjectProfile",
@@ -91,6 +98,7 @@ class TestHandleResolutionDocument(unittest.TestCase):
                 "handle": "alice.example.com",
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
+                "binding_generation": "8",
                 "profile": {
                     "subject_did": "did:wba:example.com:user:bob",
                     "display_name": "Bob",
@@ -106,6 +114,7 @@ class TestHandleResolutionDocument(unittest.TestCase):
                 "handle": "alice.example.com",
                 "did": "did:wba:example.com:user:alice",
                 "status": "active",
+                "binding_generation": "8",
                 "profile": {
                     "subject_did": "did:wba:example.com:user:alice",
                     "handle": "bob.example.com",
@@ -129,6 +138,80 @@ class TestHandleResolutionDocument(unittest.TestCase):
                 handle="alice.example.com",
                 did="did:wba:example.com:user:alice",
                 status="unknown",
+                binding_generation="8",
+            )
+
+    def test_missing_binding_generation_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            HandleResolutionDocument(
+                handle="alice.example.com",
+                did="did:wba:example.com:user:alice",
+                status="active",
+            )
+
+    def test_non_canonical_binding_generations_are_rejected(self):
+        invalid_values = [
+            0,
+            1,
+            "",
+            "0",
+            "00",
+            "01",
+            "-1",
+            "+1",
+            " 1",
+            "1 ",
+            "1.0",
+            "a",
+            "\u0661",
+        ]
+        for value in invalid_values:
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                HandleResolutionDocument(
+                    handle="alice.example.com",
+                    did="did:wba:example.com:user:alice",
+                    status="active",
+                    binding_generation=value,
+                )
+
+    def test_large_binding_generation_is_preserved_and_compared(self):
+        generation = "9" * 10_000
+        doc = HandleResolutionDocument(
+            handle="alice.example.com",
+            did="did:wba:example.com:user:alice",
+            status="active",
+            binding_generation=generation,
+        )
+
+        self.assertEqual(doc.binding_generation, generation)
+        self.assertEqual(canonicalize_binding_generation(generation), generation)
+        self.assertEqual(
+            compare_binding_generations(generation, "1" + "0" * 10_000), -1
+        )
+        self.assertEqual(compare_binding_generations(generation, generation), 0)
+        self.assertEqual(compare_binding_generations("10", "9"), 1)
+
+    def test_generation_helpers_reject_non_canonical_values(self):
+        for value in (None, 8, "08", "0", " 8"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                canonicalize_binding_generation(value)
+
+        with self.assertRaises(ValueError):
+            compare_binding_generations("8", "09")
+
+    def test_invalid_generation_is_not_hidden_by_profile_tolerance(self):
+        with self.assertRaises(ValidationError):
+            HandleResolutionDocument.model_validate(
+                {
+                    "handle": "alice.example.com",
+                    "did": "did:wba:example.com:user:alice",
+                    "status": "active",
+                    "binding_generation": "08",
+                    "profile": {
+                        "subject_did": "did:wba:example.com:user:bob",
+                        "display_name": "Bob",
+                    },
+                }
             )
 
 

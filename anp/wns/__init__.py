@@ -24,6 +24,8 @@ from .models import (
     HandleStatus,
     ParsedWbaUri,
     SubjectType,
+    canonicalize_binding_generation,
+    compare_binding_generations,
 )
 
 # Validation (pure functions, no I/O)
@@ -69,6 +71,8 @@ __all__ = [
     "HandleServiceEntry",
     "ANP_HANDLE_SERVICE_TYPE",
     "ParsedWbaUri",
+    "canonicalize_binding_generation",
+    "compare_binding_generations",
     # Validation
     "validate_local_part",
     "validate_handle",

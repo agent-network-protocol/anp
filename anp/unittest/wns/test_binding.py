@@ -6,6 +6,7 @@ resolution, avoiding any mocks in production code.
 
 import json
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -68,6 +69,7 @@ def _make_app():
                 "handle": ALICE_HANDLE,
                 "did": ALICE_DID,
                 "status": "active",
+                "binding_generation": "8",
                 "updated": "2025-01-01T00:00:00Z",
             }
         )
@@ -78,6 +80,47 @@ def _make_app():
                 "handle": "revoked.example.com",
                 "did": "did:wba:example.com:user:revoked",
                 "status": "revoked",
+                "binding_generation": "9",
+            }
+        )
+
+    async def handle_suspended(request):
+        return web.json_response(
+            {
+                "handle": "suspended.example.com",
+                "did": "did:wba:example.com:user:suspended",
+                "status": "suspended",
+                "binding_generation": "10",
+            }
+        )
+
+    async def handle_did_domain_mismatch(request):
+        return web.json_response(
+            {
+                "handle": "domain-mismatch.example.com",
+                "did": "did:wba:other.example:user:domain-mismatch",
+                "status": "active",
+                "binding_generation": "11",
+            }
+        )
+
+    async def handle_non_wba_did(request):
+        return web.json_response(
+            {
+                "handle": "non-wba.example.com",
+                "did": "did:key:z6MkExample",
+                "status": "active",
+                "binding_generation": "12",
+            }
+        )
+
+    async def handle_invalid_generation(request):
+        return web.json_response(
+            {
+                "handle": "invalid-generation.example.com",
+                "did": "did:wba:example.com:user:invalid-generation",
+                "status": "active",
+                "binding_generation": "01",
             }
         )
 
@@ -87,6 +130,14 @@ def _make_app():
     app = web.Application()
     app.router.add_get("/.well-known/handle/alice", handle_alice)
     app.router.add_get("/.well-known/handle/revoked", handle_revoked)
+    app.router.add_get("/.well-known/handle/suspended", handle_suspended)
+    app.router.add_get(
+        "/.well-known/handle/domain-mismatch", handle_did_domain_mismatch
+    )
+    app.router.add_get("/.well-known/handle/non-wba", handle_non_wba_did)
+    app.router.add_get(
+        "/.well-known/handle/invalid-generation", handle_invalid_generation
+    )
     app.router.add_get("/user/alice/did.json", did_doc_alice)
     return app
 
@@ -132,6 +183,7 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             self.assertTrue(result.forward_verified)
             self.assertTrue(result.reverse_verified)
             self.assertEqual(result.did, ALICE_DID)
+            self.assertEqual(result.binding_generation, "8")
             self.assertIsNone(result.error_message)
         finally:
             self._unpatch_urls(original)
@@ -163,7 +215,25 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             self.assertFalse(result.is_valid)
             self.assertTrue(result.forward_verified)
             self.assertFalse(result.reverse_verified)
+            self.assertIsNone(result.binding_generation)
             self.assertIn("ANPHandleService", result.error_message)
+        finally:
+            self._unpatch_urls(original)
+
+    async def test_invalid_generation_fails_forward_verification(self):
+        original = self._patch_urls()
+        try:
+            result = await verify_handle_binding(
+                "invalid-generation.example.com",
+                did_document=ALICE_DID_DOCUMENT,
+                verify_ssl=False,
+            )
+
+            self.assertFalse(result.is_valid)
+            self.assertFalse(result.forward_verified)
+            self.assertFalse(result.reverse_verified)
+            self.assertIsNone(result.binding_generation)
+            self.assertIn("binding_generation", result.error_message)
         finally:
             self._unpatch_urls(original)
 
@@ -177,7 +247,78 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             )
             self.assertFalse(result.is_valid)
             self.assertFalse(result.forward_verified)
+            self.assertIsNone(result.binding_generation)
             self.assertIn("revoked", result.error_message)
+        finally:
+            self._unpatch_urls(original)
+
+    async def test_binding_fails_for_suspended_handle(self):
+        original = self._patch_urls()
+        try:
+            result = await verify_handle_binding(
+                "suspended.example.com",
+                did_document=ALICE_DID_DOCUMENT,
+                verify_ssl=False,
+            )
+
+            self.assertFalse(result.is_valid)
+            self.assertFalse(result.forward_verified)
+            self.assertIsNone(result.binding_generation)
+            self.assertIn("suspended", result.error_message)
+        finally:
+            self._unpatch_urls(original)
+
+    async def test_domain_mismatch_cannot_be_bypassed_by_generation(self):
+        original = self._patch_urls()
+        try:
+            result = await verify_handle_binding(
+                "domain-mismatch.example.com",
+                did_document=ALICE_DID_DOCUMENT,
+                verify_ssl=False,
+            )
+
+            self.assertFalse(result.is_valid)
+            self.assertTrue(result.forward_verified)
+            self.assertFalse(result.reverse_verified)
+            self.assertIsNone(result.binding_generation)
+            self.assertIn("Domain mismatch", result.error_message)
+        finally:
+            self._unpatch_urls(original)
+
+    async def test_did_method_failure_does_not_expose_generation(self):
+        original = self._patch_urls()
+        try:
+            result = await verify_handle_binding(
+                "non-wba.example.com",
+                did_document=ALICE_DID_DOCUMENT,
+                verify_ssl=False,
+            )
+
+            self.assertFalse(result.is_valid)
+            self.assertTrue(result.forward_verified)
+            self.assertFalse(result.reverse_verified)
+            self.assertIsNone(result.binding_generation)
+            self.assertIn("did:wba", result.error_message)
+        finally:
+            self._unpatch_urls(original)
+
+    async def test_did_document_failure_does_not_expose_generation(self):
+        original = self._patch_urls()
+        try:
+            with patch(
+                "anp.authentication.did_wba.resolve_did_wba_document",
+                new=AsyncMock(return_value=None),
+            ):
+                result = await verify_handle_binding(
+                    ALICE_HANDLE,
+                    verify_ssl=False,
+                )
+
+            self.assertFalse(result.is_valid)
+            self.assertTrue(result.forward_verified)
+            self.assertFalse(result.reverse_verified)
+            self.assertIsNone(result.binding_generation)
+            self.assertIn("resolved to None", result.error_message)
         finally:
             self._unpatch_urls(original)
 
@@ -202,8 +343,44 @@ class TestVerifyHandleBinding(AioHTTPTestCase):
             )
             self.assertTrue(result.is_valid)
             self.assertTrue(result.reverse_verified)
+            self.assertEqual(result.binding_generation, "8")
         finally:
             self._unpatch_urls(original)
+
+
+class TestBindingVerificationResult(unittest.TestCase):
+
+    def test_valid_result_requires_binding_generation(self):
+        with self.assertRaises(ValueError):
+            BindingVerificationResult(
+                is_valid=True,
+                handle=ALICE_HANDLE,
+                did=ALICE_DID,
+                forward_verified=True,
+                reverse_verified=True,
+            )
+
+    def test_invalid_result_rejects_binding_generation(self):
+        with self.assertRaises(ValueError):
+            BindingVerificationResult(
+                is_valid=False,
+                handle=ALICE_HANDLE,
+                did=ALICE_DID,
+                forward_verified=True,
+                reverse_verified=False,
+                binding_generation="8",
+            )
+
+    def test_valid_result_rejects_non_canonical_binding_generation(self):
+        with self.assertRaises(ValueError):
+            BindingVerificationResult(
+                is_valid=True,
+                handle=ALICE_HANDLE,
+                did=ALICE_DID,
+                forward_verified=True,
+                reverse_verified=True,
+                binding_generation="08",
+            )
 
 
 class TestBuildHandleServiceEntry(unittest.TestCase):
