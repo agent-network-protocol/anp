@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -33,11 +34,12 @@ func TestResolveHandleWithOverride(t *testing.T) {
 		}
 		ttl := 300
 		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{
-			Handle:    "alice.example.com",
-			DID:       "did:wba:example.com:user:alice",
-			Status:    HandleStatusActive,
-			VersionID: "42",
-			TTL:       &ttl,
+			Handle:            "alice.example.com",
+			DID:               "did:wba:example.com:user:alice",
+			Status:            HandleStatusActive,
+			BindingGeneration: "1",
+			VersionID:         "42",
+			TTL:               &ttl,
 			Profile: &DIDSubjectProfile{
 				Type:        "DIDSubjectProfile",
 				SubjectDID:  "did:wba:example.com:user:alice",
@@ -71,9 +73,10 @@ func TestResolveHandleWithOverride(t *testing.T) {
 func TestResolveHandleIgnoresProfileSubjectDIDMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{
-			Handle: "alice.example.com",
-			DID:    "did:wba:example.com:user:alice",
-			Status: HandleStatusActive,
+			Handle:            "alice.example.com",
+			DID:               "did:wba:example.com:user:alice",
+			Status:            HandleStatusActive,
+			BindingGeneration: "1",
 			Profile: &DIDSubjectProfile{
 				SubjectDID:  "did:wba:example.com:user:bob",
 				DisplayName: "Bob",
@@ -94,9 +97,10 @@ func TestResolveHandleIgnoresProfileSubjectDIDMismatch(t *testing.T) {
 func TestResolveHandleIgnoresProfileHandleMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{
-			Handle: "alice.example.com",
-			DID:    "did:wba:example.com:user:alice",
-			Status: HandleStatusActive,
+			Handle:            "alice.example.com",
+			DID:               "did:wba:example.com:user:alice",
+			Status:            HandleStatusActive,
+			BindingGeneration: "1",
 			Profile: &DIDSubjectProfile{
 				SubjectDID:  "did:wba:example.com:user:alice",
 				Handle:      "bob.example.com",
@@ -118,9 +122,10 @@ func TestResolveHandleIgnoresProfileHandleMismatch(t *testing.T) {
 func TestResolveHandleNormalizesUnknownProfileSubjectType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{
-			Handle: "alice.example.com",
-			DID:    "did:wba:example.com:user:alice",
-			Status: HandleStatusActive,
+			Handle:            "alice.example.com",
+			DID:               "did:wba:example.com:user:alice",
+			Status:            HandleStatusActive,
+			BindingGeneration: "1",
 			Profile: &DIDSubjectProfile{
 				SubjectDID:  "did:wba:example.com:user:alice",
 				SubjectType: SubjectType("custom-private-type"),
@@ -140,3 +145,55 @@ func TestResolveHandleNormalizesUnknownProfileSubjectType(t *testing.T) {
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+func TestSharedBindingGenerationVectors(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/wns/binding_generation_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Validation []struct {
+			Name      string          `json:"name"`
+			Value     json.RawMessage `json:"value"`
+			Valid     bool            `json:"valid"`
+			Canonical string          `json:"canonical"`
+		} `json:"validation"`
+		Transitions []struct {
+			Name, Previous, Current string
+			Accepted                bool
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range vectors.Validation {
+		t.Run(testCase.Name, func(t *testing.T) {
+			var generation BindingGeneration
+			err := json.Unmarshal(testCase.Value, &generation)
+			if (err == nil) != testCase.Valid {
+				t.Fatalf("valid=%v, error=%v", testCase.Valid, err)
+			}
+			if err == nil && string(generation) != testCase.Canonical {
+				t.Fatalf("got %q, want %q", generation, testCase.Canonical)
+			}
+		})
+	}
+	for _, transition := range vectors.Transitions {
+		current, _ := ParseBindingGeneration(transition.Current)
+		previous, _ := ParseBindingGeneration(transition.Previous)
+		if current.IsNewerThan(previous) != transition.Accepted {
+			t.Errorf("transition %s: accepted mismatch", transition.Name)
+		}
+	}
+}
+
+func TestResolveHandleRejectsMissingBindingGeneration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"handle":"alice.example.com","did":"did:wba:example.com:user:alice","status":"active"}`))
+	}))
+	defer server.Close()
+	_, err := ResolveHandleWithOptions(context.Background(), "alice.example.com", ResolveHandleOptions{BaseURLOverride: server.URL})
+	if err == nil {
+		t.Fatal("expected missing binding_generation to fail")
+	}
+}

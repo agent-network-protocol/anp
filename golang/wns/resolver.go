@@ -56,6 +56,9 @@ func ResolveHandleWithOptions(ctx context.Context, handle string, options Resolv
 	if err := authenticationDecodeJSON(response.Body, &document); err != nil {
 		return HandleResolutionDocument{}, err
 	}
+	if document.BindingGeneration == "" {
+		return HandleResolutionDocument{}, fmt.Errorf("binding_generation is required")
+	}
 	if strings.ToLower(document.Handle) != normalized {
 		return HandleResolutionDocument{}, fmt.Errorf("handle mismatch: requested '%s', got '%s'", normalized, document.Handle)
 	}

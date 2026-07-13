@@ -7,6 +7,7 @@ import {
 import type { DIDSubjectProfile, HandleResolutionDocument, ResolveHandleOptions } from './types.js';
 import { HandleStatus, SubjectType } from './types.js';
 import { buildResolutionUrl, parseWbaUri, validateHandle } from './validator.js';
+import { canonicalizeBindingGeneration } from './generation.js';
 
 export async function resolveHandle(
   handle: string,
@@ -58,6 +59,7 @@ export async function resolveHandle(
     handle: String(payload.handle ?? ''),
     did: String(payload.did ?? ''),
     status: normalizeStatus(String(payload.status ?? '')),
+    binding_generation: canonicalizeBindingGeneration(payload.binding_generation),
     updated: payload.updated ? String(payload.updated) : undefined,
     versionId: payload.versionId ? String(payload.versionId) : undefined,
     ttl: typeof payload.ttl === 'number' ? payload.ttl : undefined,

@@ -42,14 +42,14 @@ than implied by the repository's shared package version.
 |---|---|---|---|
 | Python | Implemented | Not applicable; Python has no OpenMLS surface | Supported for this change |
 | Rust | Implemented | Existing `group.e2ee.add` / `group.e2ee.remove` typed primitives accept the same `GroupStateRef` | Supported for this change |
-| Go | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
-| Dart | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
-| Java | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
-| TypeScript | Deferred | Deferred | Does not claim WNS 1.1 continuity conformance yet |
+| Go | Implemented | Contract/provider surface only; no in-process OpenMLS status API | Shared conformance vectors pass |
+| Dart | Implemented | Not applicable; Dart has no Group E2EE/OpenMLS surface | Shared conformance vectors pass |
+| Java | Not applicable; Java has no WNS surface | Not applicable; Java has no Group E2EE/OpenMLS surface | No corresponding API to synchronize |
+| TypeScript | Implemented | Not applicable; TypeScript has no Group E2EE/OpenMLS surface | Shared conformance vectors pass |
 
-The release helper coordinates Python, Rust, and Go under one version. Do not
-publish a shared release claiming this capability until the deferred language
-surfaces have an explicit conformance decision.
+The release helper coordinates Python, Rust, and Go under one version. Release
+claims must still distinguish WNS generation conformance from Rust's in-process
+OpenMLS rebind and status capabilities.
 
 ## Choose your path
 

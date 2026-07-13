@@ -67,6 +67,9 @@ Future<HandleResolutionDocument> resolveHandle(
       handle: responseHandle,
       did: did,
       status: _parseHandleStatus(map['status']),
+      bindingGeneration: canonicalizeBindingGeneration(
+        map['binding_generation'],
+      ),
       updated: map['updated']?.toString(),
       versionId: map['versionId']?.toString(),
       ttl: map['ttl'] is int ? map['ttl'] as int : null,

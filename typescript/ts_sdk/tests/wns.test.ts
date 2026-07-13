@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
@@ -11,6 +12,8 @@ import {
   resolveHandle,
   validateHandle,
   verifyHandleBinding,
+  canonicalizeBindingGeneration,
+  compareBindingGenerations,
 } from '../src/index.js';
 
 describe('wns', () => {
@@ -40,6 +43,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
             updated: '2025-01-01T00:00:00Z',
             versionId: '42',
             ttl: 300,
@@ -66,6 +70,7 @@ describe('wns', () => {
     const result = await resolveHandle('alice.example.com', { baseUrlOverride: baseUrl });
     expect(result.did).toBe('did:wba:example.com:user:alice');
     expect(result.status).toBe(HandleStatus.Active);
+    expect(result.binding_generation).toBe('1');
     expect(result.versionId).toBe('42');
     expect(result.ttl).toBe(300);
     expect(result.profile?.subject_type).toBe(SubjectType.Person);
@@ -82,6 +87,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
             profile: {
               subject_did: 'did:wba:example.com:user:bob',
               display_name: 'Bob',
@@ -111,6 +117,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
             profile: {
               subject_did: 'did:wba:example.com:user:alice',
               handle: 'bob.example.com',
@@ -141,6 +148,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
             profile: {
               subject_did: 'did:wba:example.com:user:alice',
               subject_type: 'custom-private-type',
@@ -170,6 +178,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
           })
         );
         return;
@@ -207,6 +216,7 @@ describe('wns', () => {
             handle: 'alice.example.com',
             did: 'did:wba:example.com:user:alice',
             status: 'active',
+            binding_generation: '1',
           })
         );
         return;
@@ -238,5 +248,45 @@ describe('wns', () => {
     });
     expect(result.isValid).toBe(true);
     expect(result.reverseVerified).toBe(true);
+  });
+
+  test('uses shared binding generation vectors', () => {
+    const vectors = JSON.parse(
+      readFileSync(new URL('../../../testdata/wns/binding_generation_vectors.json', import.meta.url), 'utf8')
+    ) as {
+      validation: Array<{ name: string; value?: unknown; valid: boolean; canonical?: string }>;
+      transitions: Array<{ previous: string; current: string; accepted: boolean }>;
+    };
+    for (const item of vectors.validation) {
+      if (item.valid) {
+        expect(canonicalizeBindingGeneration(item.value), item.name).toBe(item.canonical);
+      } else {
+        expect(() => canonicalizeBindingGeneration(item.value), item.name).toThrow();
+      }
+    }
+    for (const item of vectors.transitions) {
+      expect(compareBindingGenerations(item.current, item.previous) > 0).toBe(item.accepted);
+    }
+  });
+
+  test('rejects a resolution without binding_generation', async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          handle: 'alice.example.com',
+          did: 'did:wba:example.com:user:alice',
+          status: 'active',
+        })
+      );
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl =
+      typeof address === 'object' && address ? `http://127.0.0.1:${address.port}` : '';
+
+    await expect(
+      resolveHandle('alice.example.com', { baseUrlOverride: baseUrl })
+    ).rejects.toThrow('binding_generation');
   });
 });

@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './validator.js';
 export * from './resolver.js';
 export * from './binding.js';
+export * from './generation.js';
 
 export {
   parseWbaUri as parseUri,
@@ -28,6 +29,10 @@ import {
   buildHandleServiceEntry,
   extractHandleServiceFromDidDocument,
 } from './binding.js';
+import {
+  canonicalizeBindingGeneration,
+  compareBindingGenerations,
+} from './generation.js';
 
 export const wns = {
   validateLocalPart,
@@ -41,4 +46,6 @@ export const wns = {
   verifyBinding: verifyHandleBinding,
   createHandleServiceEntry: buildHandleServiceEntry,
   extractHandleServices: extractHandleServiceFromDidDocument,
+  canonicalizeBindingGeneration,
+  compareBindingGenerations,
 };

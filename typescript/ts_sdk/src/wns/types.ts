@@ -1,5 +1,6 @@
 import type { DidResolutionOptions } from '../authentication/types.js';
 import type { DidDocument } from '../authentication/types.js';
+import type { BindingGeneration } from './generation.js';
 
 export const ANP_HANDLE_SERVICE_TYPE = 'ANPHandleService';
 
@@ -40,6 +41,7 @@ export interface HandleResolutionDocument {
   handle: string;
   did: string;
   status: HandleStatus;
+  binding_generation: BindingGeneration;
   updated?: string;
   versionId?: string;
   ttl?: number;

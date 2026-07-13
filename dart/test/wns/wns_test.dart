@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:anp/anp.dart';
 import 'package:http/http.dart' as http;
@@ -35,6 +36,7 @@ void main() {
           'handle': 'alice.example.com',
           'did': 'did:wba:example.com:user:alice',
           'status': 'active',
+          'binding_generation': '1',
           'updated': '2025-01-01T00:00:00Z',
           'versionId': '42',
           'ttl': 300,
@@ -63,6 +65,7 @@ void main() {
 
     expect(document.did, 'did:wba:example.com:user:alice');
     expect(document.status, HandleStatus.active);
+    expect(document.bindingGeneration, '1');
     expect(document.versionId, '42');
     expect(document.ttl, 300);
     expect(document.profile?.subjectType, SubjectType.person);
@@ -77,6 +80,7 @@ void main() {
           'handle': 'alice.example.com',
           'did': 'did:wba:example.com:user:alice',
           'status': 'active',
+          'binding_generation': '1',
           'profile': {
             'subject_did': 'did:wba:example.com:user:bob',
             'display_name': 'Bob',
@@ -106,6 +110,7 @@ void main() {
           'handle': 'alice.example.com',
           'did': 'did:wba:example.com:user:alice',
           'status': 'active',
+          'binding_generation': '1',
           'profile': {
             'subject_did': 'did:wba:example.com:user:alice',
             'handle': 'bob.example.com',
@@ -136,6 +141,7 @@ void main() {
           'handle': 'alice.example.com',
           'did': 'did:wba:example.com:user:alice',
           'status': 'active',
+          'binding_generation': '1',
           'profile': {
             'subject_did': 'did:wba:example.com:user:alice',
             'subject_type': 'custom-private-type',
@@ -156,5 +162,65 @@ void main() {
     );
 
     expect(document.profile?.subjectType, SubjectType.unknown);
+  });
+
+  test('uses shared binding generation vectors', () {
+    final vectors =
+        jsonDecode(
+              File(
+                '../testdata/wns/binding_generation_vectors.json',
+              ).readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+    for (final item in vectors['validation'] as List<dynamic>) {
+      final entry = item as Map<String, dynamic>;
+      if (entry['valid'] as bool) {
+        expect(
+          canonicalizeBindingGeneration(entry['value']),
+          entry['canonical'],
+        );
+      } else {
+        expect(
+          () => canonicalizeBindingGeneration(entry['value']),
+          throwsFormatException,
+          reason: entry['name'] as String,
+        );
+      }
+    }
+    for (final item in vectors['transitions'] as List<dynamic>) {
+      final entry = item as Map<String, dynamic>;
+      expect(
+        compareBindingGenerations(
+              entry['current'] as String,
+              entry['previous'] as String,
+            ) >
+            0,
+        entry['accepted'],
+      );
+    }
+  });
+
+  test('rejects a resolution without binding_generation', () async {
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'handle': 'alice.example.com',
+          'did': 'did:wba:example.com:user:alice',
+          'status': 'active',
+        }),
+        200,
+      ),
+    );
+
+    await expectLater(
+      resolveHandle(
+        'alice.example.com',
+        options: const ResolveHandleOptions(
+          baseUrlOverride: 'https://example.com',
+        ),
+        client: client,
+      ),
+      throwsA(isA<FormatException>()),
+    );
   });
 }

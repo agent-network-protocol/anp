@@ -2,6 +2,22 @@ import '../authentication/types.dart';
 
 const String anpHandleServiceType = 'ANPHandleService';
 
+String canonicalizeBindingGeneration(Object? value) {
+  if (value is! String || !RegExp(r'^[1-9][0-9]*$').hasMatch(value)) {
+    throw const FormatException(
+      'binding_generation must be a canonical positive decimal string',
+    );
+  }
+  return value;
+}
+
+int compareBindingGenerations(String current, String previous) {
+  final left = canonicalizeBindingGeneration(current);
+  final right = canonicalizeBindingGeneration(previous);
+  if (left.length != right.length) return left.length.compareTo(right.length);
+  return left.compareTo(right);
+}
+
 enum HandleStatus { active, suspended, revoked, moved, gone }
 
 enum SubjectType {
@@ -49,6 +65,7 @@ class HandleResolutionDocument {
     required this.handle,
     required this.did,
     required this.status,
+    required this.bindingGeneration,
     this.updated,
     this.versionId,
     this.ttl,
@@ -58,6 +75,7 @@ class HandleResolutionDocument {
   final String handle;
   final String did;
   final HandleStatus status;
+  final String bindingGeneration;
   final String? updated;
   final String? versionId;
   final int? ttl;
@@ -68,6 +86,7 @@ class HandleResolutionDocument {
     'handle': handle,
     'did': did,
     'status': status.name,
+    'binding_generation': bindingGeneration,
     if (updated != null) 'updated': updated,
     if (versionId != null) 'versionId': versionId,
     if (ttl != null) 'ttl': ttl,
