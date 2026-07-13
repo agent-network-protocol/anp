@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.9
+
+- Add WNS binding generation support and verified generation metadata.
+- Align the Dart SDK with the ANP 0.8.9 release.
+
 ## 0.8.7
 
 - Align Dart SDK version with the coordinated ANP SDK release.
