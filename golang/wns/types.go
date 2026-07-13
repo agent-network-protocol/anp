@@ -138,10 +138,11 @@ type BindingVerificationOptions struct {
 
 // BindingVerificationResult reports forward and reverse verification status.
 type BindingVerificationResult struct {
-	IsValid         bool   `json:"is_valid"`
-	Handle          string `json:"handle"`
-	DID             string `json:"did"`
-	ForwardVerified bool   `json:"forward_verified"`
-	ReverseVerified bool   `json:"reverse_verified"`
-	ErrorMessage    string `json:"error_message,omitempty"`
+	IsValid           bool               `json:"is_valid"`
+	Handle            string             `json:"handle"`
+	DID               string             `json:"did"`
+	BindingGeneration *BindingGeneration `json:"binding_generation,omitempty"`
+	ForwardVerified   bool               `json:"forward_verified"`
+	ReverseVerified   bool               `json:"reverse_verified"`
+	ErrorMessage      string             `json:"error_message,omitempty"`
 }

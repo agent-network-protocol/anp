@@ -197,3 +197,36 @@ func TestResolveHandleRejectsMissingBindingGeneration(t *testing.T) {
 		t.Fatal("expected missing binding_generation to fail")
 	}
 }
+
+func TestVerifyHandleBindingReturnsGenerationOnlyOnSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{
+			Handle:            "alice.example.com",
+			DID:               "did:wba:example.com:user:alice",
+			Status:            HandleStatusActive,
+			BindingGeneration: "8",
+		})
+	}))
+	defer server.Close()
+	didDocument := map[string]any{"service": []any{map[string]any{
+		"id": "did:wba:example.com:user:alice#handle", "type": ANPHandleServiceType,
+		"serviceEndpoint": "https://example.com/providers/wns",
+	}}}
+
+	result := VerifyHandleBindingWithOptions(context.Background(), "alice.example.com", BindingVerificationOptions{
+		DidDocument:       didDocument,
+		ResolutionOptions: ResolveHandleOptions{BaseURLOverride: server.URL},
+	})
+	if !result.IsValid || result.BindingGeneration == nil || *result.BindingGeneration != "8" {
+		t.Fatalf("expected verified generation 8, got %#v", result)
+	}
+
+	didDocument["service"] = []any{}
+	result = VerifyHandleBindingWithOptions(context.Background(), "alice.example.com", BindingVerificationOptions{
+		DidDocument:       didDocument,
+		ResolutionOptions: ResolveHandleOptions{BaseURLOverride: server.URL},
+	})
+	if result.IsValid || result.BindingGeneration != nil {
+		t.Fatalf("invalid verification exposed generation: %#v", result)
+	}
+}

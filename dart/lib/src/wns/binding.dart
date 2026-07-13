@@ -99,6 +99,7 @@ Future<BindingVerificationResult> verifyHandleBinding(
     isValid: true,
     handle: normalized,
     did: resolution.did,
+    bindingGeneration: resolution.bindingGeneration,
     forwardVerified: true,
     reverseVerified: true,
   );

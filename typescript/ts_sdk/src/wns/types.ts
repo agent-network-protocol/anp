@@ -77,6 +77,7 @@ export interface BindingVerificationResult {
   isValid: boolean;
   handle: string;
   did: string;
+  bindingGeneration?: BindingGeneration;
   forwardVerified: boolean;
   reverseVerified: boolean;
   errorMessage?: string;

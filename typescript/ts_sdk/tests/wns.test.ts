@@ -205,6 +205,7 @@ describe('wns', () => {
     expect(result.isValid).toBe(true);
     expect(result.forwardVerified).toBe(true);
     expect(result.reverseVerified).toBe(true);
+    expect(result.bindingGeneration).toBe('1');
   });
 
   test('accepts ANPHandleService entries that only match by HTTPS domain', async () => {
@@ -248,6 +249,36 @@ describe('wns', () => {
     });
     expect(result.isValid).toBe(true);
     expect(result.reverseVerified).toBe(true);
+    expect(result.bindingGeneration).toBe('1');
+  });
+
+  test('does not expose binding generation when reverse verification fails', async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        handle: 'alice.example.com',
+        did: 'did:wba:example.com:user:alice',
+        status: 'active',
+        binding_generation: '8',
+      }));
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl = typeof address === 'object' && address
+      ? `http://127.0.0.1:${address.port}`
+      : '';
+    const result = await verifyHandleBinding('alice.example.com', {
+      didDocument: {
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        id: 'did:wba:example.com:user:alice',
+        verificationMethod: [],
+        authentication: [],
+        service: [],
+      },
+      resolutionOptions: { baseUrlOverride: baseUrl },
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.bindingGeneration).toBeUndefined();
   });
 
   test('uses shared binding generation vectors', () => {

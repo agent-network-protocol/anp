@@ -58,7 +58,7 @@ func VerifyHandleBindingWithOptions(ctx context.Context, handle string, options 
 	if !reverseVerified {
 		return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ErrorMessage: fmt.Sprintf("DID Document does not contain an %s entry whose HTTPS domain matches '%s'", ANPHandleServiceType, domain)}
 	}
-	return BindingVerificationResult{IsValid: true, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ReverseVerified: true}
+	return BindingVerificationResult{IsValid: true, Handle: normalized, DID: resolution.DID, BindingGeneration: &resolution.BindingGeneration, ForwardVerified: true, ReverseVerified: true}
 }
 
 // BuildHandleServiceEntry builds the reverse binding service entry.

@@ -1,6 +1,6 @@
 # Step 01：同步 WNS binding generation
 
-主 Plan：[../plan.md](../plan.md)；Step index：01；Status：done；Branch：`master`；Baseline：`0967358`；Commit：随任务聚焦提交记录；Review evidence：任意精度、解析边界、公开导出和 resolver 已检查；Verification evidence：Go WNS、TypeScript WNS/typecheck/build、Dart format/analyze/test 均通过；Next action：无。
+主 Plan：[../plan.md](../plan.md)；Step index：01；Status：done；Branch：`master`；Baseline：`0967358`；Commit：初始 `aca5981`，DID recovery 补丁随下一聚焦提交记录；Review evidence：任意精度、解析边界、公开导出、resolver 与 verification result generation 已检查；Verification evidence：Go 非 Python-integration 全套、TypeScript 43 tests/typecheck/build、Dart 21 tests/format/analyze 均通过；Next action：无。
 
 ## 目标
 

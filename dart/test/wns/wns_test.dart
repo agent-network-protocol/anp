@@ -223,4 +223,58 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('binding verification returns generation only on success', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) {
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({
+            'handle': 'alice.example.com',
+            'did': 'did:wba:example.com:user:alice',
+            'status': 'active',
+            'binding_generation': '8',
+          }),
+        )
+        ..close();
+    });
+    final resolutionOptions = ResolveHandleOptions(
+      baseUrlOverride: 'http://${server.address.address}:${server.port}',
+    );
+    final didDocument = <String, Object?>{
+      'service': [
+        {
+          'id': 'did:wba:example.com:user:alice#handle',
+          'type': anpHandleServiceType,
+          'serviceEndpoint': 'https://example.com/providers/wns',
+        },
+      ],
+    };
+
+    try {
+      final validResult = await verifyHandleBinding(
+        'alice.example.com',
+        options: BindingVerificationOptions(
+          resolutionOptions: resolutionOptions,
+          didDocument: didDocument,
+        ),
+      );
+      expect(validResult.isValid, isTrue);
+      expect(validResult.bindingGeneration, '8');
+
+      final invalidResult = await verifyHandleBinding(
+        'alice.example.com',
+        options: BindingVerificationOptions(
+          resolutionOptions: resolutionOptions,
+          didDocument: const {'service': <Object?>[]},
+        ),
+      );
+      expect(invalidResult.isValid, isFalse);
+      expect(invalidResult.bindingGeneration, isNull);
+    } finally {
+      await server.close(force: true);
+    }
+  });
 }

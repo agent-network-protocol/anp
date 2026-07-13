@@ -27,3 +27,5 @@
 全局检查正确性、回归、兼容性、安全、文档漂移、未提交文件和步骤证据。回填最终状态、剩余风险与 commit。
 
 结果：组合 diff 无 whitespace error；中英文能力矩阵已同步。Go/Python interop 与 Python pytest 受 PyPI TLS/缺少本地 pytest 阻塞，其他适用验证通过，详见主 Plan 第 9 节。
+
+补充 Review 发现与修复：首次同步遗漏了 `verify_handle_binding` 成功结果中的 generation。现已对齐 Python/Rust：仅完整验证成功时返回，任何失败均不暴露；补丁后的三语言全套验证通过。

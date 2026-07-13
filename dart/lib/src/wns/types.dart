@@ -196,6 +196,7 @@ class BindingVerificationResult {
     required this.isValid,
     required this.handle,
     this.did,
+    this.bindingGeneration,
     this.forwardVerified = false,
     this.reverseVerified = false,
     this.errorMessage,
@@ -204,6 +205,7 @@ class BindingVerificationResult {
   final bool isValid;
   final String handle;
   final String? did;
+  final String? bindingGeneration;
   final bool forwardVerified;
   final bool reverseVerified;
   final String? errorMessage;

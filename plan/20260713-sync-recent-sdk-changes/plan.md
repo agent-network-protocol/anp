@@ -70,6 +70,7 @@ Harness：`awiki-harness/`
 | 日期 | 变更 | 原因 | 影响步骤 |
 |---|---|---|---|
 | 2026-07-13 | 初始计划 | 同步最近一周 Python/Rust 契约 | 全部 |
+| 2026-07-13 | 补齐 verification result generation | Review 发现首次实现只同步 resolution model，遗漏 DID recovery 调用方需要的已验证 generation | Step 01、03 |
 
 ## 9. 最终全局 Review 与整体验证
 
@@ -80,6 +81,7 @@ Harness：`awiki-harness/`
 - Python 来源基线：未能运行；`uv run pytest anp/unittest/wns` 因 PyPI TLS 获取 `hatchling` 失败，本地 `.venv` 未安装 pytest。
 - Group status 审计：Go、Dart、TypeScript、Java 均无 Rust typed `StatusOutput`/本地 OpenMLS status 对应 API；Go 仅有 contract/provider surface，因此未新增无数据源的 `member_dids`。
 - Review：已检查任意精度、严格正整数字符串、缺失字段、JSON number、零、前导零、回滚、公开导出和文档声明，未发现未解决代码问题。
+- 补充 Review：逐行对照 Python `BindingVerificationResult` 与 Rust `BindingVerificationResult` 后，已让 Go、Dart、TypeScript 仅在正反向验证均成功时返回 generation；失败结果不暴露 generation。补丁后 Go 非 Python-integration 全套通过，TypeScript 43 tests 通过，Dart 21 tests 通过。
 - 文档：已更新中英文 README 能力矩阵；Group E2EE 和 Harness 架构边界未改变，无需修改 Harness。
 
 ## 10. Codex Goal 提示词

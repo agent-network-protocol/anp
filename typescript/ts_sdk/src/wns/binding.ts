@@ -93,6 +93,7 @@ export async function verifyHandleBinding(
       isValid: true,
       handle: normalizedHandle,
       did: resolution.did,
+      bindingGeneration: resolution.binding_generation,
       forwardVerified: true,
       reverseVerified: true,
     };
