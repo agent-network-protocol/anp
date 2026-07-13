@@ -200,6 +200,13 @@ void main() {
     }
   });
 
+  test('preserves and compares ten-thousand-digit generations', () {
+    final generation = List.filled(10000, '9').join();
+    expect(canonicalizeBindingGeneration(generation), generation);
+    final larger = '1${List.filled(10000, '0').join()}';
+    expect(compareBindingGenerations(larger, generation), greaterThan(0));
+  });
+
   test('rejects a resolution without binding_generation', () async {
     final client = MockClient(
       (_) async => http.Response(

@@ -300,6 +300,12 @@ describe('wns', () => {
     }
   });
 
+  test('preserves and compares ten-thousand-digit generations', () => {
+    const generation = '9'.repeat(10_000);
+    expect(canonicalizeBindingGeneration(generation)).toBe(generation);
+    expect(compareBindingGenerations(`1${'0'.repeat(10_000)}`, generation)).toBeGreaterThan(0);
+  });
+
   test('rejects a resolution without binding_generation', async () => {
     server = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });

@@ -1,5 +1,7 @@
 import {
   buildResolutionUrl,
+  canonicalizeBindingGeneration,
+  compareBindingGenerations,
   createHandleServiceEntry,
   parseUri,
   validateHandle,
@@ -14,4 +16,11 @@ console.log('Parsed URI:', parseUri('wba://alice.example.com'));
 console.log(
   'ANPHandleService entry:',
   createHandleServiceEntry('did:wba:example.com:user:alice', localPart, domain)
+);
+const generation = canonicalizeBindingGeneration('9');
+console.log(
+  'Binding generation:',
+  generation,
+  'newer than 8:',
+  compareBindingGenerations(generation, '8') > 0
 );

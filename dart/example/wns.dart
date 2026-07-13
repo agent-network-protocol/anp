@@ -9,4 +9,9 @@ void main() {
     parsed.domain,
   );
   print('$uri -> ${service.serviceEndpoint}');
+  final generation = canonicalizeBindingGeneration('9');
+  print(
+    'binding generation: $generation newer than 8: '
+    '${compareBindingGenerations(generation, '8') > 0}',
+  );
 }

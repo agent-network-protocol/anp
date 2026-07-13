@@ -71,6 +71,7 @@ Harness：`awiki-harness/`
 |---|---|---|---|
 | 2026-07-13 | 初始计划 | 同步最近一周 Python/Rust 契约 | 全部 |
 | 2026-07-13 | 补齐 verification result generation | Review 发现首次实现只同步 resolution model，遗漏 DID recovery 调用方需要的已验证 generation | Step 01、03 |
+| 2026-07-13 | 补齐示例与超大 generation 测试 | 提交级复核发现 Python 示例和 10,000 位任意精度测试尚未映射到其他 WNS SDK | Step 01、03 |
 
 ## 9. 最终全局 Review 与整体验证
 
@@ -82,6 +83,7 @@ Harness：`awiki-harness/`
 - Group status 审计：Go、Dart、TypeScript、Java 均无 Rust typed `StatusOutput`/本地 OpenMLS status 对应 API；Go 仅有 contract/provider surface，因此未新增无数据源的 `member_dids`。
 - Review：已检查任意精度、严格正整数字符串、缺失字段、JSON number、零、前导零、回滚、公开导出和文档声明，未发现未解决代码问题。
 - 补充 Review：逐行对照 Python `BindingVerificationResult` 与 Rust `BindingVerificationResult` 后，已让 Go、Dart、TypeScript 仅在正反向验证均成功时返回 generation；失败结果不暴露 generation。补丁后 Go 非 Python-integration 全套通过，TypeScript 43 tests 通过，Dart 21 tests 通过。
+- 最终提交级审计：Go、Dart、TypeScript 示例已展示 generation 规范化/比较，并补充 10,000 位 generation 保真与递增测试；Rust OpenMLS typed add/status 行为仍由 Rust runtime 独占，其他语言没有可独立同步的执行层。
 - 文档：已更新中英文 README 能力矩阵；Group E2EE 和 Harness 架构边界未改变，无需修改 Harness。
 
 ## 10. Codex Goal 提示词

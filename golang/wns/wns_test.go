@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -184,6 +185,24 @@ func TestSharedBindingGenerationVectors(t *testing.T) {
 		if current.IsNewerThan(previous) != transition.Accepted {
 			t.Errorf("transition %s: accepted mismatch", transition.Name)
 		}
+	}
+}
+
+func TestBindingGenerationPreservesTenThousandDigits(t *testing.T) {
+	value := strings.Repeat("9", 10_000)
+	generation, err := ParseBindingGeneration(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(generation) != value {
+		t.Fatal("binding generation was not preserved")
+	}
+	larger, err := ParseBindingGeneration("1" + strings.Repeat("0", 10_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !larger.IsNewerThan(generation) {
+		t.Fatal("arbitrary-precision comparison rejected a larger generation")
 	}
 }
 
