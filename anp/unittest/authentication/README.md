@@ -159,13 +159,13 @@ def test_new_authentication_scenario(self):
 
 身份认证相关示例位于 `examples/python/did_wba_examples/`:
 - `create_did_document.py` - 创建 DID 文档
-- `authenticate_and_verify.py` - 认证和验证示例
+- `e1_authenticate_and_verify.py` - 认证和验证示例
 - `validate_did_document.py` - 验证 DID 文档
 
 运行示例验证功能:
 ```bash
 uv run python examples/python/did_wba_examples/create_did_document.py
-uv run python examples/python/did_wba_examples/authenticate_and_verify.py
+uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py
 uv run python examples/python/did_wba_examples/validate_did_document.py
 ```
 

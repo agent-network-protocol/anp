@@ -12,13 +12,7 @@ from anp.authentication import create_did_wba_document
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Create a DID WBA document and save generated artifacts.",
-    )
-    parser.add_argument(
-        "--profile",
-        choices=("e1", "k1", "plain_legacy"),
-        default="e1",
-        help="DID profile to generate.",
+        description="Create an e1 DID WBA document and save generated artifacts.",
     )
     parser.add_argument(
         "--hostname",
@@ -35,10 +29,10 @@ def main() -> None:
         hostname=args.hostname,
         path_segments=["agents", "demo"],
         agent_description_url=f"https://{args.hostname}/agents/demo",
-        did_profile=args.profile,
+        did_profile="e1",
     )
 
-    output_dir = Path(__file__).resolve().parent / "generated" / args.profile
+    output_dir = Path(__file__).resolve().parent / "generated" / "e1"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     did_path = output_dir / "did.json"

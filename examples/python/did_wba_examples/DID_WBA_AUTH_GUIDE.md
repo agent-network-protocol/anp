@@ -419,19 +419,13 @@ did:wba:example.com%3A3000       → https://example.com:3000/.well-known/did.js
 
 本目录下提供了可运行的完整示例：
 
-- `http_server.py` — FastAPI 服务端，集成 DID WBA 认证中间件
-- `http_client.py` — HTTP 客户端，演示完整的认证和 Token 复用流程
-- `authenticate_and_verify.py` — 离线演示，不需要启动服务器，演示认证+验证完整流程
+- `e1_authenticate_and_verify.py` — 自包含的最新 e1 DID 创建、HTTP Message Signatures 认证和 Token 复用流程
 - `create_did_document.py` — 生成 DID 文档示例
 
 运行方式：
 
 ```bash
-# 终端 1：启动服务端
-uv run python examples/python/did_wba_examples/http_server.py
-
-# 终端 2：运行客户端
-uv run python examples/python/did_wba_examples/http_client.py
+uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py
 ```
 
 ## 7. 自定义 DID 文档解析

@@ -29,8 +29,7 @@ uv sync --extra api
 | 构建并调用 ANP 智能体 | [examples/python/openanp_examples/](../examples/python/openanp_examples/) | 终端 1：`uvicorn examples.python.openanp_examples.minimal_server:app --port 8000` |
 | 调用 OpenANP 智能体 | [examples/python/openanp_examples/minimal_client.py](../examples/python/openanp_examples/minimal_client.py) | 终端 2：`uv run python examples/python/openanp_examples/minimal_client.py` |
 | 创建和校验 DID WBA 材料 | [examples/python/did_wba_examples/](../examples/python/did_wba_examples/) | `uv run python examples/python/did_wba_examples/create_did_document.py` |
-| 启动 DID WBA HTTP auth 服务端 | [examples/python/did_wba_examples/http_server.py](../examples/python/did_wba_examples/http_server.py) | 终端 1：`uv run python examples/python/did_wba_examples/http_server.py` |
-| 运行 DID WBA HTTP auth 客户端 | [examples/python/did_wba_examples/http_client.py](../examples/python/did_wba_examples/http_client.py) | 终端 2：`uv run python examples/python/did_wba_examples/http_client.py` |
+| 运行完整 e1 DID 身份认证流程 | [examples/python/did_wba_examples/e1_authenticate_and_verify.py](../examples/python/did_wba_examples/e1_authenticate_and_verify.py) | `uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py` |
 | 生成和验证 proof 数据 | [examples/python/proof_examples/proof_example.py](../examples/python/proof_examples/proof_example.py) | `uv run python examples/python/proof_examples/proof_example.py` |
 | 校验和解析 WNS Handle | [examples/python/wns_examples/](../examples/python/wns_examples/) | `uv run python examples/python/wns_examples/verify_binding.py` |
 | 爬取远程 ANP 服务 | [examples/python/anp_crawler_examples/](../examples/python/anp_crawler_examples/) | `uv run python examples/python/anp_crawler_examples/simple_amap_example.py` |

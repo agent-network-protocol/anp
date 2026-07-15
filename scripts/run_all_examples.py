@@ -62,7 +62,7 @@ class ConfigurableExample:
 STANDALONE_EXAMPLES = [
     # DID WBA 示例（离线）
     "examples/python/did_wba_examples/create_did_document.py",
-    "examples/python/did_wba_examples/authenticate_and_verify.py",
+    "examples/python/did_wba_examples/e1_authenticate_and_verify.py",
     "examples/python/did_wba_examples/validate_did_document.py",
     # AP2 支付协议示例（自包含，启动临时服务器）
     "examples/python/ap2_examples/ap2_complete_flow.py",

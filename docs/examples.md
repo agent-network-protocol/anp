@@ -29,8 +29,7 @@ Common entry points:
 | Build and call an ANP agent | [examples/python/openanp_examples/](../examples/python/openanp_examples/) | Terminal 1: `uvicorn examples.python.openanp_examples.minimal_server:app --port 8000` |
 | Call the OpenANP agent | [examples/python/openanp_examples/minimal_client.py](../examples/python/openanp_examples/minimal_client.py) | Terminal 2: `uv run python examples/python/openanp_examples/minimal_client.py` |
 | Create and validate DID WBA material | [examples/python/did_wba_examples/](../examples/python/did_wba_examples/) | `uv run python examples/python/did_wba_examples/create_did_document.py` |
-| Run DID WBA HTTP auth server | [examples/python/did_wba_examples/http_server.py](../examples/python/did_wba_examples/http_server.py) | Terminal 1: `uv run python examples/python/did_wba_examples/http_server.py` |
-| Run DID WBA HTTP auth client | [examples/python/did_wba_examples/http_client.py](../examples/python/did_wba_examples/http_client.py) | Terminal 2: `uv run python examples/python/did_wba_examples/http_client.py` |
+| Run the complete e1 DID authentication flow | [examples/python/did_wba_examples/e1_authenticate_and_verify.py](../examples/python/did_wba_examples/e1_authenticate_and_verify.py) | `uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py` |
 | Generate and verify proof data | [examples/python/proof_examples/proof_example.py](../examples/python/proof_examples/proof_example.py) | `uv run python examples/python/proof_examples/proof_example.py` |
 | Validate and resolve WNS handles | [examples/python/wns_examples/](../examples/python/wns_examples/) | `uv run python examples/python/wns_examples/verify_binding.py` |
 | Crawl a remote ANP service | [examples/python/anp_crawler_examples/](../examples/python/anp_crawler_examples/) | `uv run python examples/python/anp_crawler_examples/simple_amap_example.py` |

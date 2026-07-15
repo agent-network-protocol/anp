@@ -38,7 +38,7 @@ uv run python examples/python/openanp_examples/minimal_client.py         # Termi
 
 # DID WBA authentication examples (offline, no extra deps)
 uv run python examples/python/did_wba_examples/create_did_document.py
-uv run python examples/python/did_wba_examples/authenticate_and_verify.py
+uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py
 
 # FastANP examples (requires --extra api)
 uv run python examples/python/fastanp_examples/simple_agent.py

@@ -417,19 +417,13 @@ During verification, the server automatically resolves the corresponding URL bas
 
 This directory provides complete runnable examples:
 
-- `http_server.py` — FastAPI server with DID WBA authentication middleware
-- `http_client.py` — HTTP client demonstrating the full authentication and token reuse flow
-- `authenticate_and_verify.py` — Offline demo, no server needed, shows the complete auth + verification flow
+- `e1_authenticate_and_verify.py` — Self-contained current e1 DID creation, HTTP Message Signatures authentication, and token reuse flow
 - `create_did_document.py` — DID document generation example
 
 To run:
 
 ```bash
-# Terminal 1: Start the server
-uv run python examples/python/did_wba_examples/http_server.py
-
-# Terminal 2: Run the client
-uv run python examples/python/did_wba_examples/http_client.py
+uv run python examples/python/did_wba_examples/e1_authenticate_and_verify.py
 ```
 
 ## 7. Custom DID Document Resolution

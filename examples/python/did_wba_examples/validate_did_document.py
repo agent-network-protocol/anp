@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -14,23 +13,9 @@ COMMON_REQUIRED_CONTEXTS = {
 }
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Validate a generated DID WBA document.",
-    )
-    parser.add_argument(
-        "--profile",
-        choices=("e1", "k1", "plain_legacy"),
-        default="e1",
-        help="Profile directory to load from generated/<profile>/did.json.",
-    )
-    return parser.parse_args()
-
-
-def load_or_create_document(profile: str) -> Dict[str, Any]:
-    """Load the document produced by the create example or rebuild it."""
-    generated_dir = Path(__file__).resolve().parent / "generated" / profile
+def load_or_create_document() -> Dict[str, Any]:
+    """Load the e1 document produced by the create example or rebuild it."""
+    generated_dir = Path(__file__).resolve().parent / "generated" / "e1"
     did_path = generated_dir / "did.json"
 
     if did_path.exists():
@@ -40,7 +25,7 @@ def load_or_create_document(profile: str) -> Dict[str, Any]:
         hostname="demo.agent-network",
         path_segments=["agents", "demo"],
         agent_description_url="https://demo.agent-network/agents/demo",
-        did_profile=profile,
+        did_profile="e1",
     )
     generated_dir.mkdir(parents=True, exist_ok=True)
     did_path.write_text(json.dumps(did_document, indent=2), encoding="utf-8")
@@ -108,40 +93,8 @@ def validate_did_document(did_document: Dict[str, Any]) -> None:
             raise ValueError("e1 profile requires eddsa-jcs-2022")
         if proof.get("verificationMethod") != expected_method_id:
             raise ValueError("e1 proof must use the binding key as verificationMethod")
-    elif last_segment.startswith("k1_"):
-        assert_contains_all(
-            contexts,
-            {
-                "https://w3id.org/security/suites/jws-2020/v1",
-                "https://w3id.org/security/suites/secp256k1-2019/v1",
-            },
-            "Missing k1 @context entries",
-        )
-        jwk = primary_method.get("publicKeyJwk", {})
-        assert_contains_all(
-            jwk.keys(),
-            {"kty", "crv", "x", "y", "kid"},
-            "Incomplete publicKeyJwk",
-        )
-        if jwk.get("crv") != "secp256k1":
-            raise ValueError("k1 profile requires secp256k1")
     else:
-        jwk = primary_method.get("publicKeyJwk", {})
-        assert_contains_all(
-            contexts,
-            {
-                "https://w3id.org/security/suites/jws-2020/v1",
-                "https://w3id.org/security/suites/secp256k1-2019/v1",
-            },
-            "Missing legacy @context entries",
-        )
-        assert_contains_all(
-            jwk.keys(),
-            {"kty", "crv", "x", "y", "kid"},
-            "Incomplete publicKeyJwk",
-        )
-        if proof and proof.get("type") != "EcdsaSecp256k1Signature2019":
-            raise ValueError("Legacy profile uses EcdsaSecp256k1Signature2019 proof")
+        raise ValueError("Current example requires an e1 DID identifier")
 
     services = did_document.get("service", [])
     if services:
@@ -152,8 +105,7 @@ def validate_did_document(did_document: Dict[str, Any]) -> None:
 
 def main() -> None:
     """Run validation and report the result."""
-    args = parse_args()
-    did_document = load_or_create_document(args.profile)
+    did_document = load_or_create_document()
 
     try:
         validate_did_document(did_document)
