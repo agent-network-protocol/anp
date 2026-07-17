@@ -191,7 +191,7 @@ def example_dispatch_incoming_message() -> None:
     # Alice 发送加密消息
     _, encrypted = alice.encrypt_message("text", "这条消息由 KeyManager 调度解密")
     secret_key_id = encrypted["secret_key_id"]
-    print(f"[步骤 2] Alice 发送加密消息, secret_key_id={secret_key_id}")
+    print("[步骤 2] Alice 发送加密消息（已生成 secret_key_id）")
 
     # Bob 收到消息后，通过 secret_key_id 查找会话并解密
     session = bob_manager.get_session_by_key_id(secret_key_id)
