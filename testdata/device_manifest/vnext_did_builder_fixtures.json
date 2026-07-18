@@ -1,0 +1,742 @@
+{
+  "version": "anp-vnext-did-builder-fixtures-v2",
+  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "root_key_id": "did:wba:example.com:agents:alice:e1_fixture#root",
+  "retired_device_ids": [
+    "dev-retired-OLD"
+  ],
+  "base_document": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      {
+        "x-example": "https://example.invalid/ns#"
+      }
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "service": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#message",
+        "type": "ANPMessageService",
+        "serviceEndpoint": "https://example.com/anp"
+      }
+    ],
+    "x-example": {
+      "preserve": true,
+      "nested": [
+        "unchanged"
+      ]
+    }
+  },
+  "root_verification_method": {
+    "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+    "type": "JsonWebKey2020",
+    "controller": "did:wba:example.com:agents:alice:e1_fixture",
+    "publicKeyJwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    }
+  },
+  "device_a": {
+    "entry": {
+      "device_id": "dev-a-7N3KQ2",
+      "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+      "profiles": [
+        "anp.core.binding.v2",
+        "anp.identity.discovery.v2",
+        "anp.direct.base.v2",
+        "anp.direct.e2ee.v2",
+        "anp.group.base.v2",
+        "anp.group.e2ee.v2"
+      ]
+    },
+    "signing_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+      }
+    },
+    "e2ee_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+      }
+    }
+  },
+  "device_b": {
+    "entry": {
+      "device_id": "dev-b-9R5TLM",
+      "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+      "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+      "profiles": [
+        "anp.core.binding.v2",
+        "anp.identity.discovery.v2",
+        "anp.direct.base.v2",
+        "anp.direct.e2ee.v2",
+        "anp.group.base.v2",
+        "anp.group.e2ee.v2"
+      ]
+    },
+    "signing_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+      }
+    },
+    "e2ee_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8"
+      }
+    }
+  },
+  "device_b_rotated": {
+    "entry": {
+      "device_id": "dev-b-9R5TLM",
+      "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
+      "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
+      "profiles": [
+        "anp.core.binding.v2",
+        "anp.identity.discovery.v2",
+        "anp.direct.base.v2",
+        "anp.direct.e2ee.v2"
+      ]
+    },
+    "signing_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8"
+      }
+    },
+    "e2ee_verification_method": {
+      "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
+      "type": "JsonWebKey2020",
+      "controller": "did:wba:example.com:agents:alice:e1_fixture",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t8"
+      }
+    }
+  },
+  "x25519_multikey_verification_method": {
+    "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+    "type": "Multikey",
+    "controller": "did:wba:example.com:agents:alice:e1_fixture",
+    "publicKeyMultibase": "z6LSfzzyP6hrWD1TajhjJuRRbD9sArRcLJkQdmMvFASLH5nE"
+  },
+  "expected_build": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      {
+        "x-example": "https://example.invalid/ns#"
+      }
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "service": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#message",
+        "type": "ANPMessageService",
+        "serviceEndpoint": "https://example.com/anp"
+      }
+    ],
+    "x-example": {
+      "preserve": true,
+      "nested": [
+        "unchanged"
+      ]
+    },
+    "verificationMethod": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      }
+    ],
+    "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+    ],
+    "assertionMethod": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+    ],
+    "keyAgreement": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee"
+    ],
+    "deviceManifest": {
+      "type": "ANPDeviceManifest",
+      "devices": [
+        {
+          "device_id": "dev-a-7N3KQ2",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+          ]
+        }
+      ]
+    }
+  },
+  "expected_add": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      {
+        "x-example": "https://example.invalid/ns#"
+      }
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "service": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#message",
+        "type": "ANPMessageService",
+        "serviceEndpoint": "https://example.com/anp"
+      }
+    ],
+    "x-example": {
+      "preserve": true,
+      "nested": [
+        "unchanged"
+      ]
+    },
+    "verificationMethod": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8"
+        }
+      }
+    ],
+    "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign"
+    ],
+    "assertionMethod": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign"
+    ],
+    "keyAgreement": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee"
+    ],
+    "deviceManifest": {
+      "type": "ANPDeviceManifest",
+      "devices": [
+        {
+          "device_id": "dev-a-7N3KQ2",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+          ]
+        },
+        {
+          "device_id": "dev-b-9R5TLM",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+          ]
+        }
+      ]
+    }
+  },
+  "expected_update": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      {
+        "x-example": "https://example.invalid/ns#"
+      }
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "service": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#message",
+        "type": "ANPMessageService",
+        "serviceEndpoint": "https://example.com/anp"
+      }
+    ],
+    "x-example": {
+      "preserve": true,
+      "nested": [
+        "unchanged"
+      ]
+    },
+    "verificationMethod": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t8"
+        }
+      }
+    ],
+    "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign"
+    ],
+    "assertionMethod": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign"
+    ],
+    "keyAgreement": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee"
+    ],
+    "deviceManifest": {
+      "type": "ANPDeviceManifest",
+      "devices": [
+        {
+          "device_id": "dev-a-7N3KQ2",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+          ]
+        },
+        {
+          "device_id": "dev-b-9R5TLM",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2"
+          ]
+        }
+      ]
+    }
+  },
+  "expected_remove": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      {
+        "x-example": "https://example.invalid/ns#"
+      }
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "service": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#message",
+        "type": "ANPMessageService",
+        "serviceEndpoint": "https://example.com/anp"
+      }
+    ],
+    "x-example": {
+      "preserve": true,
+      "nested": [
+        "unchanged"
+      ]
+    },
+    "verificationMethod": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      }
+    ],
+    "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+    ],
+    "assertionMethod": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+    ],
+    "keyAgreement": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee"
+    ],
+    "deviceManifest": {
+      "type": "ANPDeviceManifest",
+      "devices": [
+        {
+          "device_id": "dev-a-7N3KQ2",
+          "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+          "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+          ]
+        }
+      ]
+    }
+  },
+  "invalid_public_key_cases": [
+    {
+      "name": "empty_root_jwk",
+      "role": "root",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {}
+      }
+    },
+    {
+      "name": "padded_root_jwk_x",
+      "role": "root",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        }
+      }
+    },
+    {
+      "name": "x25519_jwk_not_object",
+      "role": "device_e2ee",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": "not-an-object"
+      }
+    },
+    {
+      "name": "x25519_type_with_jwk_material",
+      "role": "device_e2ee",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "X25519KeyAgreementKey2019",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      }
+    },
+    {
+      "name": "unknown_multikey_codec_for_signing",
+      "role": "device_signing",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "z4TcfKcSAZCxRqW5Xb9zarwHdDXZcNY3iGmGSZwQ2HYoRHa6"
+      }
+    },
+    {
+      "name": "x25519_multikey_as_signing",
+      "role": "device_signing",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "z6LSdqbWoToXafWD7qhVMLz2HCTTMmhAnGnAki2vP11ANRTc"
+      }
+    },
+    {
+      "name": "ed25519_multikey_as_e2ee",
+      "role": "device_e2ee",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "z6Mkin5rT39RkHnBbrAfTpsK7iVP9HAM3apcSoZAaykpUvnr"
+      }
+    },
+    {
+      "name": "unknown_method_type_with_valid_jwk",
+      "role": "root",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "UnknownKey2026",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      }
+    },
+    {
+      "name": "conflicting_public_material_fields",
+      "role": "device_signing",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        },
+        "publicKeyMultibase": "z6MkgcgPsQF6pkGw8xARWGRuohnyLCRuVYrNZkEAipKeaGUE"
+      }
+    },
+    {
+      "name": "p5_p256_device_signing",
+      "role": "device_signing",
+      "verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+          "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+        }
+      }
+    }
+  ],
+  "duplicate_key_material_cases": [
+    {
+      "name": "root_equals_device_sign_cross_format",
+      "operation": "build",
+      "root_verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#root",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "z6MkgcgPsQF6pkGw8xARWGRuohnyLCRuVYrNZkEAipKeaGUE"
+      }
+    },
+    {
+      "name": "new_sign_equals_current_sign",
+      "operation": "add",
+      "signing_verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      }
+    },
+    {
+      "name": "new_e2ee_equals_current_e2ee",
+      "operation": "add",
+      "e2ee_verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"
+        }
+      }
+    },
+    {
+      "name": "new_sign_equals_new_e2ee_raw",
+      "operation": "add",
+      "e2ee_verification_method": {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+        }
+      }
+    }
+  ],
+  "invalid_relationship_cases": [
+    {
+      "name": "e2ee_in_authentication",
+      "relationship": "authentication",
+      "key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee"
+    },
+    {
+      "name": "e2ee_in_assertion_method",
+      "relationship": "assertionMethod",
+      "key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee"
+    },
+    {
+      "name": "signing_in_key_agreement",
+      "relationship": "keyAgreement",
+      "key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+    }
+  ]
+}

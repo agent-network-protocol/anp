@@ -32,8 +32,12 @@ from .device_manifest import (
     DeviceManifest,
     DeviceManifestEntry,
     DeviceManifestError,
+    add_device_to_did_document,
+    build_vnext_did_document,
     find_eligible_device,
     parse_device_manifest,
+    remove_device_from_did_document,
+    update_device_in_did_document,
     validate_device_manifest,
 )
 from .federation import (
@@ -87,6 +91,10 @@ __all__ = [
     "parse_device_manifest",
     "validate_device_manifest",
     "find_eligible_device",
+    "build_vnext_did_document",
+    "add_device_to_did_document",
+    "update_device_in_did_document",
+    "remove_device_from_did_document",
     "FederatedVerificationResult",
     "FederatedVerificationError",
     "verify_federated_http_request",
