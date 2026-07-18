@@ -1,3 +1,4 @@
+pub mod device_manifest;
 pub mod did_resolver;
 pub mod did_wba;
 pub mod did_wba_authenticator;
@@ -6,6 +7,12 @@ pub mod federation;
 pub mod http_signatures;
 pub mod verification_methods;
 
+pub use device_manifest::{
+    find_eligible_device, parse_device_manifest, validate_device_manifest, DeviceManifest,
+    DeviceManifestEntry, DeviceManifestError, DEVICE_MANIFEST_TYPE, PROFILE_CORE_BINDING_V2,
+    PROFILE_DIRECT_BASE_V2, PROFILE_DIRECT_E2EE_V2, PROFILE_GROUP_BASE_V2, PROFILE_GROUP_E2EE_V2,
+    PROFILE_IDENTITY_DISCOVERY_V2,
+};
 pub use did_resolver::{
     resolve_did_document, resolve_did_document_sync, resolve_did_document_with_options,
 };

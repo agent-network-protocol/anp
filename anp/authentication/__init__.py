@@ -21,6 +21,21 @@ from .did_wba import (
 from .did_resolver import resolve_did_document, resolve_did_document_sync
 from .did_wba_authenticator import DIDWbaAuthHeader
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
+from .device_manifest import (
+    DEVICE_MANIFEST_TYPE,
+    PROFILE_CORE_BINDING_V2,
+    PROFILE_DIRECT_BASE_V2,
+    PROFILE_DIRECT_E2EE_V2,
+    PROFILE_GROUP_BASE_V2,
+    PROFILE_GROUP_E2EE_V2,
+    PROFILE_IDENTITY_DISCOVERY_V2,
+    DeviceManifest,
+    DeviceManifestEntry,
+    DeviceManifestError,
+    find_eligible_device,
+    parse_device_manifest,
+    validate_device_manifest,
+)
 from .federation import (
     FederatedVerificationError,
     FederatedVerificationResult,
@@ -59,6 +74,19 @@ __all__ = [
     "DidWbaVerifier",
     "DidWbaVerifierConfig",
     "DidWbaVerifierError",
+    "DEVICE_MANIFEST_TYPE",
+    "PROFILE_CORE_BINDING_V2",
+    "PROFILE_IDENTITY_DISCOVERY_V2",
+    "PROFILE_DIRECT_BASE_V2",
+    "PROFILE_GROUP_BASE_V2",
+    "PROFILE_DIRECT_E2EE_V2",
+    "PROFILE_GROUP_E2EE_V2",
+    "DeviceManifest",
+    "DeviceManifestEntry",
+    "DeviceManifestError",
+    "parse_device_manifest",
+    "validate_device_manifest",
+    "find_eligible_device",
     "FederatedVerificationResult",
     "FederatedVerificationError",
     "verify_federated_http_request",

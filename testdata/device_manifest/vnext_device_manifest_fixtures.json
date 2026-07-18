@@ -1,0 +1,490 @@
+{
+  "version": "anp-device-manifest-vnext-fixtures-v1",
+  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "base_did_document": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1"
+    ],
+    "id": "did:wba:example.com:agents:alice:e1_fixture",
+    "verificationMethod": [
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "zDevASign"
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "zDevAE2EE"
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "zDevBSign"
+      },
+      {
+        "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+        "type": "Multikey",
+        "controller": "did:wba:example.com:agents:alice:e1_fixture",
+        "publicKeyMultibase": "zDevBE2EE"
+      },
+      {
+        "id": "did:wba:other.example:agents:mallory#foreign-sign",
+        "type": "Multikey",
+        "controller": "did:wba:other.example:agents:mallory",
+        "publicKeyMultibase": "zForeignSign"
+      }
+    ],
+    "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+      "did:wba:other.example:agents:mallory#foreign-sign"
+    ],
+    "assertionMethod": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+      "did:wba:other.example:agents:mallory#foreign-sign"
+    ],
+    "keyAgreement": [
+      "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+      "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee"
+    ],
+    "x-fixture-extension": {
+      "must_survive_validation": true
+    }
+  },
+  "valid": [
+    {
+      "name": "p5_single_device",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-7N3KQ2",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      },
+      "lookup": {
+        "device_id": "dev-a-7N3KQ2",
+        "profile": "anp.direct.e2ee.v2",
+        "found": true
+      }
+    },
+    {
+      "name": "p6_single_device",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      },
+      "lookup": {
+        "device_id": "dev-b-9R5TLM",
+        "profile": "anp.group.e2ee.v2",
+        "found": true
+      }
+    },
+    {
+      "name": "p5_and_p6_two_devices",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-7N3KQ2",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          },
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      },
+      "lookup": {
+        "device_id": "dev-a-7N3KQ2",
+        "profile": "anp.direct.base.v2",
+        "found": false
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "wrong_manifest_type",
+      "reason": "deviceManifest.type is fixed",
+      "device_manifest": {
+        "type": "OtherManifest",
+        "devices": []
+      }
+    },
+    {
+      "name": "unknown_manifest_member",
+      "reason": "deviceManifest is a closed schema",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [],
+        "epoch": "1"
+      }
+    },
+    {
+      "name": "unknown_device_member",
+      "reason": "a standard device entry has exactly four members",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-7N3KQ2",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ],
+            "device_name": "Alice phone"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty_profiles",
+      "reason": "profiles must be non-empty",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-7N3KQ2",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "incomplete_p5_dependencies",
+      "reason": "P5 requires P1, P2 and P3",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-7N3KQ2",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "incomplete_p6_dependencies",
+      "reason": "P6 requires P1, P2 and P4",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate_device_id",
+      "reason": "device_id is unique in the current Manifest",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "same-device",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          },
+          {
+            "device_id": "same-device",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "signing_key_reused_across_devices",
+      "reason": "an active key belongs to one current device entry",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          },
+          {
+            "device_id": "dev-b",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "e2ee_key_reused_across_devices",
+      "reason": "an active key belongs to one current device entry",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          },
+          {
+            "device_id": "dev-b",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "dangling_signing_key",
+      "reason": "signing_key_id must resolve in verificationMethod",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#missing-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "dangling_e2ee_key",
+      "reason": "e2ee_key_id must resolve in verificationMethod",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#missing-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "foreign_signing_key",
+      "reason": "device key DID URLs belong to the same Agent DID document",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:other.example:agents:mallory#foreign-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "p5_signing_key_not_assertion_method",
+      "reason": "P5 Bundle Object Proof uses assertionMethod",
+      "document_patch": {
+        "assertionMethod": [
+          "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign"
+        ]
+      },
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "p6_signing_key_not_authentication",
+      "reason": "P6 Origin Proof uses authentication",
+      "document_patch": {
+        "authentication": [
+          "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+        ]
+      },
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "e2ee_key_not_key_agreement",
+      "reason": "e2ee_key_id uses keyAgreement",
+      "document_patch": {
+        "keyAgreement": [
+          "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee"
+        ]
+      },
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "same_key_for_signing_and_e2ee",
+      "reason": "signing and key-agreement roles use distinct key IDs",
+      "document_patch": {
+        "keyAgreement": [
+          "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
+        ]
+      },
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
