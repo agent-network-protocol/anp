@@ -1,0 +1,503 @@
+{
+  "version": "anp-group-e2ee-p6-v2-wire-v1",
+  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "draft_extension_type": 61601,
+  "creator_key_package": {
+    "key_package_id": "kp-owner-1",
+    "owner_did": "did:wba:owner.example:agents:alice:e1_fixture",
+    "owner_device_id": "dev-a-1",
+    "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+    "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW93bmVyLTE",
+    "did_wba_binding": {
+      "agent_did": "did:wba:owner.example:agents:alice:e1_fixture",
+      "device_id": "dev-a-1",
+      "verification_method": "did:wba:owner.example:agents:alice:e1_fixture#dev-a-1-sign",
+      "leaf_signature_key_b64u": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "issued_at": "2026-07-19T00:00:00Z",
+      "expires_at": "2026-08-19T00:00:00Z",
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "eddsa-jcs-2022",
+        "created": "2026-07-19T00:00:00Z",
+        "proofPurpose": "assertionMethod",
+        "verificationMethod": "did:wba:owner.example:agents:alice:e1_fixture#dev-a-1-sign",
+        "proofValue": "zFixtureObjectProof"
+      }
+    },
+    "expires_at": "2026-08-19T00:00:00Z"
+  },
+  "member_key_package": {
+    "key_package_id": "kp-member-1",
+    "owner_did": "did:wba:member.example:agents:bob:e1_fixture",
+    "owner_device_id": "dev-b-1",
+    "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+    "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW1lbWJlci0x",
+    "did_wba_binding": {
+      "agent_did": "did:wba:member.example:agents:bob:e1_fixture",
+      "device_id": "dev-b-1",
+      "verification_method": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+      "leaf_signature_key_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "issued_at": "2026-07-19T00:00:00Z",
+      "expires_at": "2026-08-19T00:00:00Z",
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "eddsa-jcs-2022",
+        "created": "2026-07-19T00:00:00Z",
+        "proofPurpose": "assertionMethod",
+        "verificationMethod": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+        "proofValue": "zFixtureObjectProof"
+      }
+    },
+    "expires_at": "2026-08-19T00:00:00Z"
+  },
+  "publish_request": {
+    "method": "group.e2ee.publish_key_package",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "transport-protected",
+        "sender_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "sender_device_id": "dev-b-1",
+        "target": {
+          "kind": "service",
+          "did": "did:wba:host.example:services:message:e1_service"
+        },
+        "operation_id": "op-publish-1",
+        "created_at": "2026-07-19T00:00:00Z"
+      },
+      "body": {
+        "group_key_package": {
+          "key_package_id": "kp-member-1",
+          "owner_did": "did:wba:member.example:agents:bob:e1_fixture",
+          "owner_device_id": "dev-b-1",
+          "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+          "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW1lbWJlci0x",
+          "did_wba_binding": {
+            "agent_did": "did:wba:member.example:agents:bob:e1_fixture",
+            "device_id": "dev-b-1",
+            "verification_method": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+            "leaf_signature_key_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+            "issued_at": "2026-07-19T00:00:00Z",
+            "expires_at": "2026-08-19T00:00:00Z",
+            "proof": {
+              "type": "DataIntegrityProof",
+              "cryptosuite": "eddsa-jcs-2022",
+              "created": "2026-07-19T00:00:00Z",
+              "proofPurpose": "assertionMethod",
+              "verificationMethod": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+              "proofValue": "zFixtureObjectProof"
+            }
+          },
+          "expires_at": "2026-08-19T00:00:00Z"
+        }
+      }
+    }
+  },
+  "get_request": {
+    "method": "group.e2ee.get_key_package",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "transport-protected",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "service",
+          "did": "did:wba:host.example:services:message:e1_service"
+        },
+        "operation_id": "op-get-1",
+        "created_at": "2026-07-19T00:00:00Z"
+      },
+      "body": {
+        "target_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "target_device_id": "dev-b-1",
+        "preferred_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+        "require_fresh": true
+      }
+    }
+  },
+  "create_request": {
+    "method": "group.e2ee.create",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "group-e2ee",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "service",
+          "did": "did:wba:host.example:services:message:e1_service"
+        },
+        "operation_id": "op-create-1",
+        "created_at": "2026-07-19T00:00:00Z"
+      },
+      "body": {
+        "group_did": "did:wba:groups.example:teams:blue:e1_group",
+        "group_state_ref": {
+          "group_did": "did:wba:groups.example:teams:blue:e1_group",
+          "group_state_version": "42",
+          "policy_hash": "sha-256:policy-v42"
+        },
+        "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+        "creator_key_package": {
+          "key_package_id": "kp-owner-1",
+          "owner_did": "did:wba:owner.example:agents:alice:e1_fixture",
+          "owner_device_id": "dev-a-1",
+          "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+          "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW93bmVyLTE",
+          "did_wba_binding": {
+            "agent_did": "did:wba:owner.example:agents:alice:e1_fixture",
+            "device_id": "dev-a-1",
+            "verification_method": "did:wba:owner.example:agents:alice:e1_fixture#dev-a-1-sign",
+            "leaf_signature_key_b64u": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+            "issued_at": "2026-07-19T00:00:00Z",
+            "expires_at": "2026-08-19T00:00:00Z",
+            "proof": {
+              "type": "DataIntegrityProof",
+              "cryptosuite": "eddsa-jcs-2022",
+              "created": "2026-07-19T00:00:00Z",
+              "proofPurpose": "assertionMethod",
+              "verificationMethod": "did:wba:owner.example:agents:alice:e1_fixture#dev-a-1-sign",
+              "proofValue": "zFixtureObjectProof"
+            }
+          },
+          "expires_at": "2026-08-19T00:00:00Z"
+        },
+        "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+        "epoch": "0"
+      },
+      "auth": {
+        "scheme": "anp-rfc9421-origin-proof-v1",
+        "origin_proof": {
+          "contentDigest": "sha-256=:fixture:",
+          "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
+          "signature": "sig1=:fixture:"
+        }
+      }
+    }
+  },
+  "add_request": {
+    "method": "group.e2ee.add",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "group-e2ee",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "group",
+          "did": "did:wba:groups.example:teams:blue:e1_group"
+        },
+        "operation_id": "op-add-1",
+        "created_at": "2026-07-19T00:00:00Z"
+      },
+      "body": {
+        "member_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "member_device_id": "dev-b-1",
+        "group_state_ref": {
+          "group_did": "did:wba:groups.example:teams:blue:e1_group",
+          "group_state_version": "42",
+          "policy_hash": "sha-256:policy-v42"
+        },
+        "group_key_package": {
+          "key_package_id": "kp-member-1",
+          "owner_did": "did:wba:member.example:agents:bob:e1_fixture",
+          "owner_device_id": "dev-b-1",
+          "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+          "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW1lbWJlci0x",
+          "did_wba_binding": {
+            "agent_did": "did:wba:member.example:agents:bob:e1_fixture",
+            "device_id": "dev-b-1",
+            "verification_method": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+            "leaf_signature_key_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+            "issued_at": "2026-07-19T00:00:00Z",
+            "expires_at": "2026-08-19T00:00:00Z",
+            "proof": {
+              "type": "DataIntegrityProof",
+              "cryptosuite": "eddsa-jcs-2022",
+              "created": "2026-07-19T00:00:00Z",
+              "proofPurpose": "assertionMethod",
+              "verificationMethod": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+              "proofValue": "zFixtureObjectProof"
+            }
+          },
+          "expires_at": "2026-08-19T00:00:00Z"
+        },
+        "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+        "epoch": "8",
+        "commit_b64u": "bWxzLWFkZC1jb21taXQ",
+        "welcome_b64u": "bWxzLXdlbGNvbWU",
+        "ratchet_tree_b64u": "bWxzLXJhdGNoZXQtdHJlZQ"
+      },
+      "auth": {
+        "scheme": "anp-rfc9421-origin-proof-v1",
+        "origin_proof": {
+          "contentDigest": "sha-256=:fixture:",
+          "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
+          "signature": "sig1=:fixture:"
+        }
+      }
+    }
+  },
+  "remove_request": {
+    "method": "group.e2ee.remove",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "group-e2ee",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "group",
+          "did": "did:wba:groups.example:teams:blue:e1_group"
+        },
+        "operation_id": "op-remove-1",
+        "created_at": "2026-07-19T00:00:00Z"
+      },
+      "body": {
+        "member_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "member_device_id": "dev-b-1",
+        "group_state_ref": {
+          "group_did": "did:wba:groups.example:teams:blue:e1_group",
+          "group_state_version": "42",
+          "policy_hash": "sha-256:policy-v42"
+        },
+        "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+        "epoch": "9",
+        "commit_b64u": "bWxzLXJlbW92ZS1jb21taXQ"
+      },
+      "auth": {
+        "scheme": "anp-rfc9421-origin-proof-v1",
+        "origin_proof": {
+          "contentDigest": "sha-256=:fixture:",
+          "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
+          "signature": "sig1=:fixture:"
+        }
+      }
+    }
+  },
+  "send_request": {
+    "method": "group.e2ee.send",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "group-e2ee",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "group",
+          "did": "did:wba:groups.example:teams:blue:e1_group"
+        },
+        "operation_id": "op-send-1",
+        "created_at": "2026-07-19T00:00:00Z",
+        "message_id": "msg-1",
+        "content_type": "application/anp-group-cipher+json"
+      },
+      "body": {
+        "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+        "epoch": "9",
+        "private_message_b64u": "bWxzLXByaXZhdGUtbWVzc2FnZQ",
+        "group_state_ref": {
+          "group_did": "did:wba:groups.example:teams:blue:e1_group",
+          "group_state_version": "42",
+          "policy_hash": "sha-256:policy-v42"
+        },
+        "epoch_authenticator": "ZXBvY2gtYXV0aA"
+      },
+      "auth": {
+        "scheme": "anp-rfc9421-origin-proof-v1",
+        "origin_proof": {
+          "contentDigest": "sha-256=:fixture:",
+          "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
+          "signature": "sig1=:fixture:"
+        }
+      }
+    }
+  },
+  "notice_notification": {
+    "method": "group.e2ee.notice",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "transport-protected",
+        "sender_did": "did:wba:groups.example:teams:blue:e1_group",
+        "target": {
+          "kind": "agent",
+          "did": "did:wba:member.example:agents:bob:e1_fixture"
+        },
+        "recipient_device_id": "dev-b-1",
+        "operation_id": "op-add-1",
+        "created_at": "2026-07-19T00:00:01Z"
+      },
+      "body": {
+        "notice_id": "notice-welcome-1",
+        "notice_type": "welcome-delivery",
+        "group_did": "did:wba:groups.example:teams:blue:e1_group",
+        "group_state_ref": {
+          "group_did": "did:wba:groups.example:teams:blue:e1_group",
+          "group_state_version": "42",
+          "policy_hash": "sha-256:policy-v42"
+        },
+        "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+        "epoch": "8",
+        "subject_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "subject_device_id": "dev-b-1",
+        "subject_status": "active",
+        "welcome_b64u": "bWxzLXdlbGNvbWU",
+        "ratchet_tree_b64u": "bWxzLXJhdGNoZXQtdHJlZQ",
+        "epoch_authenticator": "ZXBvY2gtYXV0aA",
+        "group_receipt": {
+          "group_event_seq": "100"
+        }
+      }
+    }
+  },
+  "incoming_notification": {
+    "method": "group.incoming",
+    "params": {
+      "meta": {
+        "anp_version": "2.0",
+        "profile": "anp.group.e2ee.v2",
+        "security_profile": "group-e2ee",
+        "sender_did": "did:wba:owner.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-1",
+        "target": {
+          "kind": "agent",
+          "did": "did:wba:member.example:agents:bob:e1_fixture"
+        },
+        "recipient_device_id": "dev-b-1",
+        "operation_id": "op-send-1",
+        "message_id": "msg-1",
+        "content_type": "application/anp-group-cipher+json",
+        "created_at": "2026-07-19T00:00:02Z"
+      },
+      "body": {
+        "group_did": "did:wba:groups.example:teams:blue:e1_group",
+        "group_state_version": "42",
+        "group_event_seq": "101",
+        "accepted_at": "2026-07-19T00:00:01Z",
+        "group_receipt": {
+          "group_event_seq": "101"
+        },
+        "group_cipher_object": {
+          "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+          "epoch": "9",
+          "private_message_b64u": "bWxzLXByaXZhdGUtbWVzc2FnZQ",
+          "group_state_ref": {
+            "group_did": "did:wba:groups.example:teams:blue:e1_group",
+            "group_state_version": "42",
+            "policy_hash": "sha-256:policy-v42"
+          },
+          "epoch_authenticator": "ZXBvY2gtYXV0aA"
+        }
+      },
+      "auth": {
+        "scheme": "anp-rfc9421-origin-proof-v1",
+        "origin_proof": {
+          "contentDigest": "sha-256=:fixture:",
+          "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
+          "signature": "sig1=:fixture:"
+        }
+      }
+    }
+  },
+  "application_plaintext": {
+    "application_content_type": "application/json",
+    "thread_id": "thread-1",
+    "annotations": {
+      "kind": "fixture"
+    },
+    "payload": {
+      "data": {
+        "hello": "group"
+      },
+      "type": "example"
+    }
+  },
+  "expected_application_plaintext_jcs": "{\"annotations\":{\"kind\":\"fixture\"},\"application_content_type\":\"application/json\",\"payload\":{\"data\":{\"hello\":\"group\"},\"type\":\"example\"},\"thread_id\":\"thread-1\"}",
+  "expected_send_authenticated_data_jcs": "{\"content_type\":\"application/anp-group-cipher+json\",\"crypto_group_id_b64u\":\"Y3J5cHRvLWdyb3VwLWJsdWU\",\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_ref\":{\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_version\":\"42\",\"policy_hash\":\"sha-256:policy-v42\"},\"message_id\":\"msg-1\",\"operation_id\":\"op-send-1\",\"security_profile\":\"group-e2ee\",\"sender_device_id\":\"dev-a-1\",\"sender_did\":\"did:wba:owner.example:agents:alice:e1_fixture\"}",
+  "expected_add_submission_binding_jcs": "{\"crypto_group_id_b64u\":\"Y3J5cHRvLWdyb3VwLWJsdWU\",\"epoch\":\"8\",\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_ref\":{\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_version\":\"42\",\"policy_hash\":\"sha-256:policy-v42\"},\"member_device_id\":\"dev-b-1\",\"member_did\":\"did:wba:member.example:agents:bob:e1_fixture\",\"operation_id\":\"op-add-1\",\"security_profile\":\"group-e2ee\",\"sender_device_id\":\"dev-a-1\",\"sender_did\":\"did:wba:owner.example:agents:alice:e1_fixture\",\"subject_method\":\"group.e2ee.add\"}",
+  "expected_remove_submission_binding_jcs": "{\"crypto_group_id_b64u\":\"Y3J5cHRvLWdyb3VwLWJsdWU\",\"epoch\":\"9\",\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_ref\":{\"group_did\":\"did:wba:groups.example:teams:blue:e1_group\",\"group_state_version\":\"42\",\"policy_hash\":\"sha-256:policy-v42\"},\"member_device_id\":\"dev-b-1\",\"member_did\":\"did:wba:member.example:agents:bob:e1_fixture\",\"operation_id\":\"op-remove-1\",\"security_profile\":\"group-e2ee\",\"sender_device_id\":\"dev-a-1\",\"sender_did\":\"did:wba:owner.example:agents:alice:e1_fixture\",\"subject_method\":\"group.e2ee.remove\"}",
+  "publish_result": {
+    "published": true,
+    "owner_did": "did:wba:member.example:agents:bob:e1_fixture",
+    "owner_device_id": "dev-b-1",
+    "key_package_id": "kp-member-1",
+    "published_at": "2026-07-19T00:00:01Z"
+  },
+  "get_result": {
+    "target_did": "did:wba:member.example:agents:bob:e1_fixture",
+    "target_device_id": "dev-b-1",
+    "group_key_package": {
+      "key_package_id": "kp-member-1",
+      "owner_did": "did:wba:member.example:agents:bob:e1_fixture",
+      "owner_device_id": "dev-b-1",
+      "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+      "mls_key_package_b64u": "bWxzLWtleS1wYWNrYWdlLWtwLW1lbWJlci0x",
+      "did_wba_binding": {
+        "agent_did": "did:wba:member.example:agents:bob:e1_fixture",
+        "device_id": "dev-b-1",
+        "verification_method": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+        "leaf_signature_key_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+        "issued_at": "2026-07-19T00:00:00Z",
+        "expires_at": "2026-08-19T00:00:00Z",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-07-19T00:00:00Z",
+          "proofPurpose": "assertionMethod",
+          "verificationMethod": "did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign",
+          "proofValue": "zFixtureObjectProof"
+        }
+      },
+      "expires_at": "2026-08-19T00:00:00Z"
+    }
+  },
+  "create_result": {
+    "created": true,
+    "group_did": "did:wba:groups.example:teams:blue:e1_group",
+    "group_state_ref": {
+      "group_did": "did:wba:groups.example:teams:blue:e1_group",
+      "group_state_version": "42",
+      "policy_hash": "sha-256:policy-v42"
+    },
+    "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+    "epoch": "0",
+    "accepted_at": "2026-07-19T00:00:01Z"
+  },
+  "add_result": {
+    "accepted": true,
+    "group_did": "did:wba:groups.example:teams:blue:e1_group",
+    "member_did": "did:wba:member.example:agents:bob:e1_fixture",
+    "member_device_id": "dev-b-1",
+    "group_state_ref": {
+      "group_did": "did:wba:groups.example:teams:blue:e1_group",
+      "group_state_version": "42",
+      "policy_hash": "sha-256:policy-v42"
+    },
+    "crypto_group_id_b64u": "Y3J5cHRvLWdyb3VwLWJsdWU",
+    "epoch": "8",
+    "accepted_at": "2026-07-19T00:00:01Z"
+  },
+  "send_result": {
+    "accepted": true,
+    "group_did": "did:wba:groups.example:teams:blue:e1_group",
+    "message_id": "msg-1",
+    "operation_id": "op-send-1",
+    "group_event_seq": "101",
+    "group_state_version": "42",
+    "accepted_at": "2026-07-19T00:00:01Z",
+    "epoch": "9",
+    "group_receipt": {
+      "group_event_seq": "101"
+    }
+  },
+  "expected_member_binding_jcs": "{\"agent_did\":\"did:wba:member.example:agents:bob:e1_fixture\",\"device_id\":\"dev-b-1\",\"expires_at\":\"2026-08-19T00:00:00Z\",\"issued_at\":\"2026-07-19T00:00:00Z\",\"leaf_signature_key_b64u\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI\",\"proof\":{\"created\":\"2026-07-19T00:00:00Z\",\"cryptosuite\":\"eddsa-jcs-2022\",\"proofPurpose\":\"assertionMethod\",\"proofValue\":\"zFixtureObjectProof\",\"type\":\"DataIntegrityProof\",\"verificationMethod\":\"did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign\"},\"verification_method\":\"did:wba:member.example:agents:bob:e1_fixture#dev-b-1-sign\"}"
+}

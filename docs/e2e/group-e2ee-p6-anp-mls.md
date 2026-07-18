@@ -4,6 +4,8 @@
 
 - Hidden/test-only implementation for AWiki Group E2EE.
 - Protocol authority: [ANP P6 群组端到端加密](../../../AgentNetworkProtocol/chinese/message/06-群组端到端加密.md).
+- The side-by-side vNext wire/binding SDK is documented in
+  [P6 vNext SDK wire and binding helpers](group-e2ee-p6-v2-sdk.md).
 - Harness map: [Group E2EE cross-repo feature map](../../../../awiki-harness/features/group-e2ee.md).
 - Public discovery must remain disabled until a separate security-reviewed enablement PR.
 
@@ -51,6 +53,11 @@ Real OpenMLS mode covers:
 - `group status` / local binding summaries.
 
 Contract-test artifacts remain explicit test fixtures only. They must stay marked non-cryptographic and must not be used to claim real security.
+
+These commands and persisted records implement the legacy P6 v1 execution
+surface. They do not yet emit the vNext `0xF0A1` LeafNode binding extension and
+required capability declarations, so callers must not relabel their output as
+`anp.group.e2ee.v2`.
 
 ## P6 binding and safety rules
 

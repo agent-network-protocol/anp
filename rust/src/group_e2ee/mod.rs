@@ -15,6 +15,28 @@ use thiserror::Error;
 pub mod operations;
 #[cfg(feature = "mls")]
 pub mod storage;
+pub mod v2_aad;
+pub mod v2_binding;
+pub mod v2_errors;
+pub mod v2_models;
+pub mod v2_wire;
+
+pub use v2_aad::{
+    canonical_group_application_plaintext_v2, group_add_submission_binding_v2,
+    group_remove_submission_binding_v2, group_send_authenticated_data_v2,
+    parse_group_application_plaintext_v2,
+};
+pub use v2_binding::{
+    ensure_p6_v2_public_release_ready, generate_did_wba_binding_v2,
+    validate_group_key_package_binding_v2, validate_group_required_capabilities_v2,
+    validate_leaf_identity_set_v2, verify_did_wba_binding_v2, V2DidWbaBindingUnsigned,
+    V2KeyPackageBindingEvidence, V2LeafBindingEvidence, V2LeafExtension, V2LeafIdentity,
+};
+pub use v2_errors::{
+    group_e2ee_v2_error, GroupE2eeV2Error, GroupE2eeV2ProtocolError, GROUP_E2EE_V2_ERRORS,
+};
+pub use v2_models::*;
+pub use v2_wire::*;
 
 pub const PROFILE: &str = "anp.group.e2ee.v1";
 pub const SECURITY_PROFILE: &str = "group-e2ee";
