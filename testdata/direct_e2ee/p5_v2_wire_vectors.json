@@ -1,0 +1,385 @@
+{
+  "version": "anp-direct-e2ee-p5-v2-wire-v1",
+  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "prekey_bundle": {
+    "bundle_id": "bundle-b-001",
+    "owner_did": "did:wba:b.example:agents:bob:e1_fixture",
+    "owner_device_id": "dev-b-9R5TLM",
+    "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+    "static_key_agreement_id": "did:wba:b.example:agents:bob:e1_fixture#dev-b-e2ee",
+    "signed_prekey": {
+      "key_id": "spk-b-001",
+      "public_key_b64u": "UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0",
+      "expires_at": "2035-04-05T00:00:00Z"
+    },
+    "proof": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "eddsa-jcs-2022",
+      "verificationMethod": "did:wba:b.example:agents:bob:e1_fixture#dev-b-sign",
+      "proofPurpose": "assertionMethod",
+      "created": "2026-07-19T00:00:00Z",
+      "proofValue": "zFixtureProofValue"
+    }
+  },
+  "expected_signed_bundle_object_jcs": "{\"bundle_id\":\"bundle-b-001\",\"owner_device_id\":\"dev-b-9R5TLM\",\"owner_did\":\"did:wba:b.example:agents:bob:e1_fixture\",\"signed_prekey\":{\"expires_at\":\"2035-04-05T00:00:00Z\",\"key_id\":\"spk-b-001\",\"public_key_b64u\":\"UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0\"},\"static_key_agreement_id\":\"did:wba:b.example:agents:bob:e1_fixture#dev-b-e2ee\",\"suite\":\"ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1\"}",
+  "publish_request": {
+    "method": "direct.e2ee.publish_prekey_bundle",
+    "params": {
+      "meta": {
+        "profile": "anp.direct.e2ee.v2",
+        "security_profile": "transport-protected",
+        "sender_did": "did:wba:b.example:agents:bob:e1_fixture",
+        "sender_device_id": "dev-b-9R5TLM",
+        "target": {
+          "kind": "service",
+          "did": "did:wba:b.example:services:message"
+        },
+        "operation_id": "op-publish-bundle-b-001"
+      },
+      "body": {
+        "prekey_bundle": {
+          "bundle_id": "bundle-b-001",
+          "owner_did": "did:wba:b.example:agents:bob:e1_fixture",
+          "owner_device_id": "dev-b-9R5TLM",
+          "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+          "static_key_agreement_id": "did:wba:b.example:agents:bob:e1_fixture#dev-b-e2ee",
+          "signed_prekey": {
+            "key_id": "spk-b-001",
+            "public_key_b64u": "UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0",
+            "expires_at": "2035-04-05T00:00:00Z"
+          },
+          "proof": {
+            "type": "DataIntegrityProof",
+            "cryptosuite": "eddsa-jcs-2022",
+            "verificationMethod": "did:wba:b.example:agents:bob:e1_fixture#dev-b-sign",
+            "proofPurpose": "assertionMethod",
+            "created": "2026-07-19T00:00:00Z",
+            "proofValue": "zFixtureProofValue"
+          }
+        },
+        "one_time_prekeys": [
+          {
+            "key_id": "opk-b-001",
+            "public_key_b64u": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI"
+          }
+        ]
+      }
+    }
+  },
+  "publish_result": {
+    "published": true,
+    "owner_did": "did:wba:b.example:agents:bob:e1_fixture",
+    "owner_device_id": "dev-b-9R5TLM",
+    "bundle_id": "bundle-b-001",
+    "published_at": "2026-07-19T00:00:01Z",
+    "published_opk_count": 1
+  },
+  "get_request": {
+    "method": "direct.e2ee.get_prekey_bundle",
+    "params": {
+      "meta": {
+        "profile": "anp.direct.e2ee.v2",
+        "security_profile": "transport-protected",
+        "sender_did": "did:wba:a.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-7N3KQ2",
+        "target": {
+          "kind": "service",
+          "did": "did:wba:b.example:services:message"
+        },
+        "operation_id": "op-get-bundle-b-001"
+      },
+      "body": {
+        "target_did": "did:wba:b.example:agents:bob:e1_fixture",
+        "target_device_id": "dev-b-9R5TLM",
+        "preferred_suite": "ANP-DIRECT-E2EE-X3DH-25519-AES256GCM-SHA256-V1",
+        "require_opk": true
+      }
+    }
+  },
+  "get_result": {
+    "target_did": "did:wba:b.example:agents:bob:e1_fixture",
+    "target_device_id": "dev-b-9R5TLM",
+    "prekey_bundle": {
+      "bundle_id": "bundle-b-001",
+      "owner_did": "did:wba:b.example:agents:bob:e1_fixture",
+      "owner_device_id": "dev-b-9R5TLM",
+      "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+      "static_key_agreement_id": "did:wba:b.example:agents:bob:e1_fixture#dev-b-e2ee",
+      "signed_prekey": {
+        "key_id": "spk-b-001",
+        "public_key_b64u": "UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0",
+        "expires_at": "2035-04-05T00:00:00Z"
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "eddsa-jcs-2022",
+        "verificationMethod": "did:wba:b.example:agents:bob:e1_fixture#dev-b-sign",
+        "proofPurpose": "assertionMethod",
+        "created": "2026-07-19T00:00:00Z",
+        "proofValue": "zFixtureProofValue"
+      }
+    },
+    "one_time_prekey": {
+      "key_id": "opk-b-001",
+      "public_key_b64u": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI"
+    }
+  },
+  "direct_init_request": {
+    "method": "direct.send",
+    "params": {
+      "meta": {
+        "anp_version": "1.0",
+        "profile": "anp.direct.e2ee.v2",
+        "security_profile": "direct-e2ee",
+        "sender_did": "did:wba:a.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-7N3KQ2",
+        "target": {
+          "kind": "agent",
+          "did": "did:wba:b.example:agents:bob:e1_fixture"
+        },
+        "recipient_device_id": "dev-b-9R5TLM",
+        "operation_id": "msg-a-b-001",
+        "message_id": "msg-a-b-001",
+        "content_type": "application/anp-direct-init+json",
+        "created_at": "2026-07-19T00:01:00Z"
+      },
+      "body": {
+        "session_id": "or8NgG6Q0INmcN79HzN2Nw",
+        "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+        "sender_static_key_agreement_id": "did:wba:a.example:agents:alice:e1_fixture#dev-a-e2ee",
+        "recipient_bundle_id": "bundle-b-001",
+        "recipient_signed_prekey_id": "spk-b-001",
+        "recipient_one_time_prekey_id": "opk-b-001",
+        "sender_ephemeral_pub_b64u": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+        "ciphertext_b64u": "AQIDBAUGBwgJCgsMDQ4PEA"
+      }
+    }
+  },
+  "expected_ad_init": "{\"content_type\":\"application/anp-direct-init+json\",\"message_id\":\"msg-a-b-001\",\"operation_id\":\"msg-a-b-001\",\"profile\":\"anp.direct.e2ee.v2\",\"recipient_bundle_id\":\"bundle-b-001\",\"recipient_device_id\":\"dev-b-9R5TLM\",\"recipient_did\":\"did:wba:b.example:agents:bob:e1_fixture\",\"recipient_one_time_prekey_id\":\"opk-b-001\",\"recipient_signed_prekey_id\":\"spk-b-001\",\"security_profile\":\"direct-e2ee\",\"sender_device_id\":\"dev-a-7N3KQ2\",\"sender_did\":\"did:wba:a.example:agents:alice:e1_fixture\",\"sender_static_key_agreement_id\":\"did:wba:a.example:agents:alice:e1_fixture#dev-a-e2ee\",\"session_id\":\"or8NgG6Q0INmcN79HzN2Nw\",\"suite\":\"ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1\"}",
+  "direct_cipher_request": {
+    "method": "direct.send",
+    "params": {
+      "meta": {
+        "anp_version": "1.0",
+        "profile": "anp.direct.e2ee.v2",
+        "security_profile": "direct-e2ee",
+        "sender_did": "did:wba:a.example:agents:alice:e1_fixture",
+        "sender_device_id": "dev-a-7N3KQ2",
+        "target": {
+          "kind": "agent",
+          "did": "did:wba:b.example:agents:bob:e1_fixture"
+        },
+        "recipient_device_id": "dev-b-9R5TLM",
+        "operation_id": "msg-a-b-002",
+        "message_id": "msg-a-b-002",
+        "content_type": "application/anp-direct-cipher+json",
+        "created_at": "2026-07-19T00:02:00Z"
+      },
+      "body": {
+        "session_id": "or8NgG6Q0INmcN79HzN2Nw",
+        "ratchet_header": {
+          "dh_pub_b64u": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI",
+          "pn": "0",
+          "n": "1"
+        },
+        "ciphertext_b64u": "ERITFBUWFxgZGhscHR4fIA"
+      }
+    }
+  },
+  "expected_ad_msg": "{\"content_type\":\"application/anp-direct-cipher+json\",\"message_id\":\"msg-a-b-002\",\"operation_id\":\"msg-a-b-002\",\"profile\":\"anp.direct.e2ee.v2\",\"ratchet_header\":{\"dh_pub_b64u\":\"Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI\",\"n\":\"1\",\"pn\":\"0\"},\"recipient_device_id\":\"dev-b-9R5TLM\",\"recipient_did\":\"did:wba:b.example:agents:bob:e1_fixture\",\"security_profile\":\"direct-e2ee\",\"sender_device_id\":\"dev-a-7N3KQ2\",\"sender_did\":\"did:wba:a.example:agents:alice:e1_fixture\",\"session_id\":\"or8NgG6Q0INmcN79HzN2Nw\"}",
+  "application_plaintext": {
+    "application_content_type": "application/json",
+    "logical_message_id": "logical-8c9651",
+    "conversation_id": "conv-001",
+    "payload": {
+      "type": "example",
+      "data": {
+        "hello": "world"
+      }
+    }
+  },
+  "expected_application_plaintext_jcs": "{\"application_content_type\":\"application/json\",\"conversation_id\":\"conv-001\",\"logical_message_id\":\"logical-8c9651\",\"payload\":{\"data\":{\"hello\":\"world\"},\"type\":\"example\"}}",
+  "direct_send_result": {
+    "accepted": true,
+    "message_id": "msg-a-b-001",
+    "operation_id": "msg-a-b-001",
+    "target_did": "did:wba:b.example:agents:bob:e1_fixture",
+    "recipient_device_id": "dev-b-9R5TLM",
+    "accepted_at": "2026-07-19T00:01:01Z"
+  },
+  "encoding_negative_values": {
+    "session_id": "AA==",
+    "x25519_public_key": "AA==",
+    "ciphertext_b64u": "AQID==",
+    "payload_b64u": "AQID==",
+    "created_at": "not-rfc3339"
+  },
+  "errors": [
+    {
+      "code": 4000,
+      "anp_code": "anp.direct.e2ee.bundle_not_found"
+    },
+    {
+      "code": 4001,
+      "anp_code": "anp.direct.e2ee.bundle_invalid"
+    },
+    {
+      "code": 4002,
+      "anp_code": "anp.direct.e2ee.bundle_expired"
+    },
+    {
+      "code": 4003,
+      "anp_code": "anp.direct.e2ee.opk_unavailable"
+    },
+    {
+      "code": 4004,
+      "anp_code": "anp.direct.e2ee.missing_key_agreement"
+    },
+    {
+      "code": 4005,
+      "anp_code": "anp.direct.e2ee.session_not_found"
+    },
+    {
+      "code": 4006,
+      "anp_code": "anp.direct.e2ee.session_conflict"
+    },
+    {
+      "code": 4007,
+      "anp_code": "anp.direct.e2ee.bad_init_message"
+    },
+    {
+      "code": 4008,
+      "anp_code": "anp.direct.e2ee.replay_detected"
+    },
+    {
+      "code": 4009,
+      "anp_code": "anp.direct.e2ee.decrypt_failed"
+    },
+    {
+      "code": 4010,
+      "anp_code": "anp.direct.e2ee.max_skip_exceeded"
+    },
+    {
+      "code": 4011,
+      "anp_code": "anp.direct.e2ee.reset_required"
+    },
+    {
+      "code": 4012,
+      "anp_code": "anp.direct.e2ee.invalid_security_binding"
+    }
+  ],
+  "application_plaintext_numeric": {
+    "application_content_type": "application/json",
+    "annotations": {},
+    "payload": {
+      "numbers": [
+        333333333.3333333,
+        1e+30,
+        4.5,
+        0.002,
+        1e-27,
+        -0.0
+      ],
+      "empty": {}
+    }
+  },
+  "expected_application_plaintext_numeric_jcs": "{\"annotations\":{},\"application_content_type\":\"application/json\",\"payload\":{\"empty\":{},\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27,0]}}",
+  "signed_bundle_golden": {
+    "did_document": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/x25519-2019/v1"
+      ],
+      "id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+      "verificationMethod": [
+        {
+          "id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-1",
+          "type": "Multikey",
+          "controller": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+          "publicKeyMultibase": "z6Mkvki44ytAZEW96f75UzCq7geeQibudNBDQ2ZGao5x32j3"
+        },
+        {
+          "id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-2",
+          "type": "EcdsaSecp256r1VerificationKey2019",
+          "controller": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+          "publicKeyJwk": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "w7UN4ouJJwQYGdcbVJtxZ_4qNgAhDAr8P48zceREoQk",
+            "y": "aV9zd1qMFtkav-5Td0sAhJhvo5u-irPn5WqCVBJG504"
+          }
+        },
+        {
+          "id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-3",
+          "type": "X25519KeyAgreementKey2019",
+          "controller": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+          "publicKeyMultibase": "zGaU9ptBtdPJqXLd3gawFnDCawHBgRh58KFMqwfwvt2oY"
+        },
+        {
+          "id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign",
+          "type": "Multikey",
+          "controller": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+          "publicKeyMultibase": "z6MkneMkZqwqRiU5mJzSG3kDwzt9P8C59N4NGTfBLfSGE7c7"
+        }
+      ],
+      "authentication": [
+        "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-1",
+        "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign"
+      ],
+      "assertionMethod": [
+        "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-1",
+        "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign"
+      ],
+      "keyAgreement": [
+        "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-3"
+      ],
+      "deviceManifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-a-vector",
+            "signing_key_id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign",
+            "e2ee_key_id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-3",
+            "profiles": [
+              "anp.core.binding.v2",
+              "anp.identity.discovery.v2",
+              "anp.direct.base.v2",
+              "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "created": "2026-07-19T00:00:00Z",
+        "verificationMethod": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-1",
+        "proofPurpose": "assertionMethod",
+        "cryptosuite": "eddsa-jcs-2022",
+        "proofValue": "F5ZFquWYUYb1LmJC_p7uVC5D1rowNkaFvm7JxcMb5ShCocyxxtTEHqTW9Vni5fhpmIiIQy1advW1HBQZoxD2BA"
+      }
+    },
+    "prekey_bundle": {
+      "bundle_id": "bundle-vector-001",
+      "owner_did": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM",
+      "owner_device_id": "dev-a-vector",
+      "suite": "ANP-DIRECT-E2EE-X3DH-25519-CHACHA20POLY1305-SHA256-V1",
+      "static_key_agreement_id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-3",
+      "signed_prekey": {
+        "key_id": "spk-vector-001",
+        "public_key_b64u": "UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0",
+        "expires_at": "2035-01-01T00:00:00Z"
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "eddsa-jcs-2022",
+        "verificationMethod": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign",
+        "proofPurpose": "assertionMethod",
+        "created": "2026-07-19T00:00:00Z",
+        "proofValue": "z4Sxk56LY3fMteMTV5h3vreEWgz8t3FnxFSYPBhGRWFEK4XQ8pS6UxfoxvT2DV3NWun5LfnHkfSn5MtYvKn5PCy2M"
+      }
+    },
+    "now": "2026-07-19T00:00:00Z"
+  }
+}

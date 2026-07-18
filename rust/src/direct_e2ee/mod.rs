@@ -7,6 +7,11 @@ pub mod models;
 pub mod ratchet;
 pub mod session;
 pub mod store;
+pub mod v2_aad;
+pub mod v2_bundle;
+pub mod v2_errors;
+pub mod v2_models;
+pub mod v2_wire;
 pub mod x3dh;
 
 pub use aad::{build_init_aad, build_message_aad};
@@ -34,6 +39,27 @@ pub use models::{
 pub use ratchet::{decrypt_with_step, derive_chain_step, encrypt_with_step, ChainStep, MAX_SKIP};
 pub use session::DirectE2eeSession;
 pub use store::{IdentityKeyStore, PendingOutboundStore, SessionStore, SignedPrekeyStore};
+pub use v2_aad::{build_init_aad_v2, build_message_aad_v2, canonical_application_plaintext_v2};
+pub use v2_bundle::{
+    build_prekey_bundle_v2, key_service_metadata_v2, signed_bundle_object_jcs_v2,
+    verify_prekey_bundle_v2, V2GetPrekeyBundleBody, V2GetPrekeyBundleResult,
+    V2PublishPrekeyBundleBody, V2PublishPrekeyBundleResult,
+};
+pub use v2_errors::{
+    direct_e2ee_v2_error, DirectE2eeV2Error, DirectE2eeV2ProtocolError, DIRECT_E2EE_V2_ERRORS,
+};
+pub use v2_models::{
+    V2ApplicationPlaintext, V2DirectBody, V2DirectCipherBody, V2DirectInitBody, V2DirectMetadata,
+    V2KeyServiceMetadata, V2OneTimePrekey, V2PrekeyBundle, V2RatchetHeader, V2SignedPrekey,
+    V2Target, CONTENT_TYPE_DIRECT_CIPHER_V2, CONTENT_TYPE_DIRECT_INIT_V2, DIRECT_E2EE_PROFILE_V2,
+    DIRECT_E2EE_SECURITY_PROFILE, MTI_DIRECT_E2EE_SUITE_V2, TRANSPORT_PROTECTED_SECURITY_PROFILE,
+};
+pub use v2_wire::{
+    direct_send_request_v2, get_prekey_bundle_request_v2, parse_direct_send_request_v2,
+    parse_direct_send_result_v2, parse_get_prekey_bundle_request_v2,
+    parse_get_prekey_bundle_result_v2, parse_publish_prekey_bundle_request_v2,
+    parse_publish_prekey_bundle_result_v2, publish_prekey_bundle_request_v2, V2DirectSendResult,
+};
 pub use x3dh::{
     derive_initial_material_for_initiator, derive_initial_material_for_responder,
     initial_secret_key_and_nonce, InitialMaterial,

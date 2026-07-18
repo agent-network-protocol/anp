@@ -7,5 +7,6 @@ export 'src/errors.dart';
 export 'src/codec/codec.dart';
 export 'src/keys/keys.dart';
 export 'src/authentication/authentication.dart';
+export 'src/direct_e2ee/direct_e2ee.dart';
 export 'src/proof/proof.dart';
 export 'src/wns/wns.dart';

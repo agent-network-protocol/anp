@@ -76,7 +76,7 @@ Key APIs:
 
 ### `direct_e2ee`
 
-Direct end-to-end encryption helpers for `anp.direct.e2ee.v1`.
+Direct end-to-end encryption helpers. Existing unprefixed APIs remain `anp.direct.e2ee.v1`; explicit `V2` types/functions provide the side-by-side `anp.direct.e2ee.v2` wire contract without sharing v1 Ratchet state.
 
 Key APIs:
 
@@ -101,6 +101,17 @@ Key APIs:
 - `NewFileSessionStore`
 - `NewFileSignedPrekeyStore`
 - `NewFilePendingOutboundStore`
+- `BuildPrekeyBundleV2` / `VerifyPrekeyBundleV2`
+- `PublishPrekeyBundleRequestV2` / `GetPrekeyBundleRequestV2`
+- `ParsePublishPrekeyBundleRequestV2` / `ParseGetPrekeyBundleRequestV2`
+- `DirectSendRequestV2` / `ParseDirectSendRequestV2`
+- `BuildInitAADV2` / `BuildMessageAADV2`
+- `CanonicalApplicationPlaintextV2`
+
+The v2 wire parser rejects explicit `null` for omitted optional members,
+preserves empty `payload`/`annotations` objects under RFC 8785 JCS, and accepts
+any non-empty `preferred_suite` as a negotiation preference while continuing
+to validate returned MTI Bundle/cipher suite identifiers.
 
 Common production entry points:
 
