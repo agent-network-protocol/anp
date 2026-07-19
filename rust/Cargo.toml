@@ -63,6 +63,7 @@ url = { version = "2", optional = true }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 tiny_http = "0.12"
 serde_json_canonicalizer = "0.3.2"
+zeroize = "1"
 
 [[test]]
 name = "python_network_interop_tests"

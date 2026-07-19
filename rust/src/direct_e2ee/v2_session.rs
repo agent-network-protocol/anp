@@ -5,6 +5,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
+use zeroize::Zeroizing;
 
 use super::ratchet::{
     decrypt_with_step, derive_chain_step, derive_root_step, encrypt_with_step, ChainStep, MAX_SKIP,
@@ -24,6 +25,75 @@ pub const DIRECT_E2EE_V2_SESSION_STATE_FORMAT: &str = "anp.direct.e2ee.v2.sessio
 pub const DIRECT_E2EE_V2_PENDING_STATE_FORMAT: &str = "anp.direct.e2ee.v2.pending-state.v1";
 pub const V2_SESSION_STATUS_PENDING_CONFIRMATION: &str = "pending-confirmation";
 pub const V2_SESSION_STATUS_ESTABLISHED: &str = "established";
+
+const SECRET_JSON_APPLICATION_PREFIX: &[u8] =
+    br#"{"application_content_type":"application/json","payload":"#;
+const SECRET_JSON_APPLICATION_SUFFIX: &[u8] = b"}";
+
+/// Canonical JSON object bytes whose allocation is wiped on drop.
+///
+/// This is the application-plaintext boundary for unusually sensitive JSON
+/// controls such as an encrypted root-key transfer. It does not change P5 v2
+/// wire or AAD. The caller must produce canonical JSON object bytes; the
+/// constructor deliberately validates syntax without materializing a
+/// `serde_json::Value`, because doing so would create ordinary heap copies of
+/// every secret string. This controls SDK-owned plaintext allocations; the
+/// cryptographic backend may still use its own temporary buffers.
+pub struct V2SecretJsonPayload {
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl V2SecretJsonPayload {
+    pub fn from_canonical_json_object(bytes: Vec<u8>) -> Result<Self, DirectE2eeV2Error> {
+        validate_secret_json_object(&bytes)?;
+        Ok(Self {
+            bytes: Zeroizing::new(bytes),
+        })
+    }
+
+    pub fn expose_secret(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+
+    fn canonical_application_bytes(&self) -> Zeroizing<Vec<u8>> {
+        let mut bytes = Zeroizing::new(Vec::with_capacity(
+            SECRET_JSON_APPLICATION_PREFIX.len()
+                + self.bytes.len()
+                + SECRET_JSON_APPLICATION_SUFFIX.len(),
+        ));
+        bytes.extend_from_slice(SECRET_JSON_APPLICATION_PREFIX);
+        bytes.extend_from_slice(&self.bytes);
+        bytes.extend_from_slice(SECRET_JSON_APPLICATION_SUFFIX);
+        bytes
+    }
+
+    fn from_canonical_application_bytes(
+        mut application: Zeroizing<Vec<u8>>,
+    ) -> Result<Self, DirectE2eeV2Error> {
+        if !application.starts_with(SECRET_JSON_APPLICATION_PREFIX)
+            || !application.ends_with(SECRET_JSON_APPLICATION_SUFFIX)
+            || application.len()
+                <= SECRET_JSON_APPLICATION_PREFIX.len() + SECRET_JSON_APPLICATION_SUFFIX.len()
+        {
+            return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed));
+        }
+        let payload_end = application.len() - SECRET_JSON_APPLICATION_SUFFIX.len();
+        application.truncate(payload_end);
+        application.drain(..SECRET_JSON_APPLICATION_PREFIX.len());
+        let payload = std::mem::take(&mut *application);
+        Self::from_canonical_json_object(payload)
+            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))
+    }
+}
+
+impl fmt::Debug for V2SecretJsonPayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("V2SecretJsonPayload")
+            .field("bytes", &"<redacted-zeroizing-json>")
+            .finish()
+    }
+}
 
 /// The exact local/peer device and key binding for one P5 v2 session.
 ///
@@ -503,18 +573,84 @@ impl V2DirectE2eeSession {
         DirectE2eeV2Error,
     > {
         let ephemeral = X25519StaticSecret::random_from_rng(OsRng);
-        Self::initiate_session_with_ephemeral(
+        plaintext.validate()?;
+        let plaintext_bytes = Zeroizing::new(canonical_application_plaintext_v2(plaintext)?);
+        Self::initiate_session_with_ephemeral_bytes(
             binding,
             metadata,
             local_static_private,
             recipient_bundle,
             recipient_static_public,
             recipient_one_time_prekey,
-            plaintext,
+            &plaintext_bytes,
             &ephemeral,
         )
     }
 
+    /// Secret-payload equivalent of [`Self::initiate_session`]. All
+    /// product-controlled plaintext buffers are zeroized after encryption.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initiate_session_secret_json(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_private: &X25519StaticSecret,
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext: &V2SecretJsonPayload,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
+        let ephemeral = X25519StaticSecret::random_from_rng(OsRng);
+        let plaintext_bytes = plaintext.canonical_application_bytes();
+        Self::initiate_session_with_ephemeral_bytes(
+            binding,
+            metadata,
+            local_static_private,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            &plaintext_bytes,
+            &ephemeral,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn initiate_session_with_ephemeral_bytes(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_private: &X25519StaticSecret,
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext_bytes: &[u8],
+        ephemeral: &X25519StaticSecret,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
+        Self::initiate_session_with_ephemeral_bytes_impl(
+            binding,
+            metadata,
+            local_static_private,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            plaintext_bytes,
+            ephemeral,
+        )
+    }
+
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn initiate_session_with_ephemeral(
         binding: &V2SessionBinding,
@@ -533,9 +669,40 @@ impl V2DirectE2eeSession {
         ),
         DirectE2eeV2Error,
     > {
+        plaintext.validate()?;
+        let plaintext_bytes = Zeroizing::new(canonical_application_plaintext_v2(plaintext)?);
+        Self::initiate_session_with_ephemeral_bytes_impl(
+            binding,
+            metadata,
+            local_static_private,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            &plaintext_bytes,
+            sender_ephemeral_private,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn initiate_session_with_ephemeral_bytes_impl(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_private: &X25519StaticSecret,
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext_bytes: &[u8],
+        sender_ephemeral_private: &X25519StaticSecret,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
         binding.validate_outbound_metadata(metadata, CONTENT_TYPE_DIRECT_INIT_V2)?;
         validate_recipient_bundle(binding, recipient_bundle)?;
-        plaintext.validate()?;
 
         let recipient_signed_prekey_public = decode_fixed::<32>(
             "prekey_bundle.signed_prekey.public_key_b64u",
@@ -568,10 +735,8 @@ impl V2DirectE2eeSession {
         };
         let aad = build_init_aad_for_encryption(metadata, &body)?;
         let init_step = derive_chain_step(&initial.chain_key);
-        let plaintext_bytes = canonical_application_plaintext_v2(plaintext)?;
         body.ciphertext_b64u = crate::keys::base64url_encode(
-            &encrypt_with_step(&init_step, &plaintext_bytes, &aad)
-                .map_err(security_crypto_error)?,
+            &encrypt_with_step(&init_step, plaintext_bytes, &aad).map_err(security_crypto_error)?,
         );
         body.validate()?;
 
@@ -622,6 +787,66 @@ impl V2DirectE2eeSession {
         body: &V2DirectInitBody,
     ) -> Result<(V2DirectSessionState, V2ApplicationPlaintext, Option<String>), DirectE2eeV2Error>
     {
+        let (state, plaintext, consumed_opk_id) = Self::accept_incoming_init_bytes(
+            binding,
+            metadata,
+            local_static_private,
+            local_bundle,
+            local_signed_prekey_private,
+            local_one_time_prekey,
+            sender_static_public,
+            body,
+        )?;
+        Ok((
+            state,
+            parse_application_plaintext(&plaintext)?,
+            consumed_opk_id,
+        ))
+    }
+
+    /// Secret-payload equivalent of [`Self::accept_incoming_init`]. The full
+    /// decrypted application object and returned JSON payload are both held in
+    /// zeroizing allocations.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_incoming_init_secret_json(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_private: &X25519StaticSecret,
+        local_bundle: &V2PrekeyBundle,
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
+        sender_static_public: &[u8; 32],
+        body: &V2DirectInitBody,
+    ) -> Result<(V2DirectSessionState, V2SecretJsonPayload, Option<String>), DirectE2eeV2Error>
+    {
+        let (state, plaintext, consumed_opk_id) = Self::accept_incoming_init_bytes(
+            binding,
+            metadata,
+            local_static_private,
+            local_bundle,
+            local_signed_prekey_private,
+            local_one_time_prekey,
+            sender_static_public,
+            body,
+        )?;
+        Ok((
+            state,
+            V2SecretJsonPayload::from_canonical_application_bytes(plaintext)?,
+            consumed_opk_id,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accept_incoming_init_bytes(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_private: &X25519StaticSecret,
+        local_bundle: &V2PrekeyBundle,
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
+        sender_static_public: &[u8; 32],
+        body: &V2DirectInitBody,
+    ) -> Result<(V2DirectSessionState, Zeroizing<Vec<u8>>, Option<String>), DirectE2eeV2Error> {
         binding.validate_inbound_metadata(metadata, CONTENT_TYPE_DIRECT_INIT_V2)?;
         validate_local_bundle(binding, local_bundle, local_signed_prekey_private)?;
         body.validate()
@@ -680,7 +905,7 @@ impl V2DirectE2eeSession {
         }
         let aad = build_init_aad_v2(metadata, body)?;
         let init_step = derive_chain_step(&initial.chain_key);
-        let plaintext = decrypt_plaintext(&init_step, &body.ciphertext_b64u, &aad)?;
+        let plaintext = decrypt_plaintext_bytes(&init_step, &body.ciphertext_b64u, &aad)?;
 
         let ratchet_private = X25519StaticSecret::random_from_rng(OsRng);
         let ratchet_public = X25519PublicKey::from(&ratchet_private).to_bytes();
@@ -715,6 +940,28 @@ impl V2DirectE2eeSession {
         metadata: &V2DirectMetadata,
         plaintext: &V2ApplicationPlaintext,
     ) -> Result<(V2PendingOutboundRecord, V2DirectCipherBody), DirectE2eeV2Error> {
+        plaintext.validate()?;
+        let plaintext_bytes = Zeroizing::new(canonical_application_plaintext_v2(plaintext)?);
+        Self::encrypt_follow_up_bytes(state, expected_binding, metadata, &plaintext_bytes)
+    }
+
+    /// Secret-payload equivalent of [`Self::encrypt_follow_up`].
+    pub fn encrypt_follow_up_secret_json(
+        state: &mut V2DirectSessionState,
+        expected_binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        plaintext: &V2SecretJsonPayload,
+    ) -> Result<(V2PendingOutboundRecord, V2DirectCipherBody), DirectE2eeV2Error> {
+        let plaintext_bytes = plaintext.canonical_application_bytes();
+        Self::encrypt_follow_up_bytes(state, expected_binding, metadata, &plaintext_bytes)
+    }
+
+    fn encrypt_follow_up_bytes(
+        state: &mut V2DirectSessionState,
+        expected_binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        plaintext_bytes: &[u8],
+    ) -> Result<(V2PendingOutboundRecord, V2DirectCipherBody), DirectE2eeV2Error> {
         state.validate_for(expected_binding)?;
         expected_binding.validate_outbound_metadata(metadata, CONTENT_TYPE_DIRECT_CIPHER_V2)?;
         if state.status != V2_SESSION_STATUS_ESTABLISHED {
@@ -743,8 +990,7 @@ impl V2DirectE2eeSession {
         };
         let aad = build_message_aad_for_encryption(metadata, &body)?;
         body.ciphertext_b64u = crate::keys::base64url_encode(
-            &encrypt_with_step(&step, &canonical_application_plaintext_v2(plaintext)?, &aad)
-                .map_err(security_crypto_error)?,
+            &encrypt_with_step(&step, plaintext_bytes, &aad).map_err(security_crypto_error)?,
         );
         body.validate()?;
         let pending = pending_record(expected_binding, metadata, &body)?;
@@ -762,6 +1008,27 @@ impl V2DirectE2eeSession {
         metadata: &V2DirectMetadata,
         body: &V2DirectCipherBody,
     ) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
+        let plaintext = Self::decrypt_follow_up_bytes(state, expected_binding, metadata, body)?;
+        parse_application_plaintext(&plaintext)
+    }
+
+    /// Secret-payload equivalent of [`Self::decrypt_follow_up`].
+    pub fn decrypt_follow_up_secret_json(
+        state: &mut V2DirectSessionState,
+        expected_binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        body: &V2DirectCipherBody,
+    ) -> Result<V2SecretJsonPayload, DirectE2eeV2Error> {
+        let plaintext = Self::decrypt_follow_up_bytes(state, expected_binding, metadata, body)?;
+        V2SecretJsonPayload::from_canonical_application_bytes(plaintext)
+    }
+
+    fn decrypt_follow_up_bytes(
+        state: &mut V2DirectSessionState,
+        expected_binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        body: &V2DirectCipherBody,
+    ) -> Result<Zeroizing<Vec<u8>>, DirectE2eeV2Error> {
         state.validate_for(expected_binding)?;
         expected_binding.validate_inbound_metadata(metadata, CONTENT_TYPE_DIRECT_CIPHER_V2)?;
         body.validate()
@@ -779,7 +1046,7 @@ impl V2DirectE2eeSession {
             }
         }
         if state.status == V2_SESSION_STATUS_PENDING_CONFIRMATION {
-            return decrypt_first_reply(state, metadata, body);
+            return decrypt_first_reply_bytes(state, metadata, body);
         }
 
         let mut skipped_state = state.clone();
@@ -819,7 +1086,7 @@ impl V2DirectE2eeSession {
             })?,
         )?;
         let step = derive_chain_step(&recv_chain_key);
-        let plaintext = decrypt_cipher_plaintext(&step, metadata, body)?;
+        let plaintext = decrypt_cipher_plaintext_bytes(&step, metadata, body)?;
         next_state.recv_chain_key_b64u = Some(crate::keys::base64url_encode(&step.next_chain_key));
         next_state.recv_n = n
             .checked_add(1)
@@ -902,11 +1169,11 @@ fn pending_record<T: Serialize>(
     Ok(pending)
 }
 
-fn decrypt_first_reply(
+fn decrypt_first_reply_bytes(
     state: &mut V2DirectSessionState,
     metadata: &V2DirectMetadata,
     body: &V2DirectCipherBody,
-) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
+) -> Result<Zeroizing<Vec<u8>>, DirectE2eeV2Error> {
     if body.ratchet_header.pn != "0" || body.ratchet_header.n != "0" {
         return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage));
     }
@@ -932,7 +1199,7 @@ fn decrypt_first_reply(
     )
     .map_err(bad_init_crypto_error)?;
     let step = derive_chain_step(&recv_root.chain_key);
-    let plaintext = decrypt_cipher_plaintext(&step, metadata, body)?;
+    let plaintext = decrypt_cipher_plaintext_bytes(&step, metadata, body)?;
     next_state.root_key_b64u = crate::keys::base64url_encode(&send_root.root_key);
     next_state.recv_chain_key_b64u = Some(crate::keys::base64url_encode(&step.next_chain_key));
     next_state.send_chain_key_b64u = Some(crate::keys::base64url_encode(&send_root.chain_key));
@@ -990,7 +1257,7 @@ fn try_skipped_message_key(
     state: &mut V2DirectSessionState,
     metadata: &V2DirectMetadata,
     body: &V2DirectCipherBody,
-) -> Result<Option<V2ApplicationPlaintext>, DirectE2eeV2Error> {
+) -> Result<Option<Zeroizing<Vec<u8>>>, DirectE2eeV2Error> {
     let n = parse_u32(&body.ratchet_header.n, "ratchet_header.n")?;
     let Some(index) = state
         .skipped_message_keys
@@ -1012,7 +1279,7 @@ fn try_skipped_message_key(
         nonce: decode_fixed::<12>("state.skipped.nonce_b64u", &skipped.nonce_b64u)?,
         next_chain_key: [0u8; 32],
     };
-    decrypt_cipher_plaintext(&step, metadata, body).map(Some)
+    decrypt_cipher_plaintext_bytes(&step, metadata, body).map(Some)
 }
 
 fn skip_message_keys(
@@ -1085,35 +1352,56 @@ fn build_message_aad_for_encryption(
     build_message_aad_v2(metadata, &aad_body)
 }
 
-fn decrypt_cipher_plaintext(
+fn decrypt_cipher_plaintext_bytes(
     step: &ChainStep,
     metadata: &V2DirectMetadata,
     body: &V2DirectCipherBody,
-) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
-    decrypt_plaintext(
+) -> Result<Zeroizing<Vec<u8>>, DirectE2eeV2Error> {
+    decrypt_plaintext_bytes(
         step,
         &body.ciphertext_b64u,
         &build_message_aad_v2(metadata, body)?,
     )
 }
 
-fn decrypt_plaintext(
+fn decrypt_plaintext_bytes(
     step: &ChainStep,
     ciphertext_b64u: &str,
     aad: &[u8],
-) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
+) -> Result<Zeroizing<Vec<u8>>, DirectE2eeV2Error> {
     let ciphertext = crate::keys::base64url_decode(ciphertext_b64u)
         .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
     let plaintext_bytes =
-        decrypt_with_step(step, &ciphertext, aad).map_err(decrypt_crypto_error)?;
+        Zeroizing::new(decrypt_with_step(step, &ciphertext, aad).map_err(decrypt_crypto_error)?);
+    Ok(plaintext_bytes)
+}
+
+fn parse_application_plaintext(
+    plaintext_bytes: &Zeroizing<Vec<u8>>,
+) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
     let plaintext: V2ApplicationPlaintext = serde_json::from_slice(&plaintext_bytes)
         .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
     let canonical = canonical_application_plaintext_v2(&plaintext)
         .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
-    if canonical != plaintext_bytes {
+    if canonical.as_slice() != plaintext_bytes.as_slice() {
         return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed));
     }
     Ok(plaintext)
+}
+
+fn validate_secret_json_object(bytes: &[u8]) -> Result<(), DirectE2eeV2Error> {
+    if bytes.len() < 2 || bytes.first() != Some(&b'{') || bytes.last() != Some(&b'}') {
+        return Err(DirectE2eeV2Error::invalid(
+            "secret JSON payload must be one canonical JSON object",
+        ));
+    }
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    serde::de::IgnoredAny::deserialize(&mut deserializer).map_err(|_| {
+        DirectE2eeV2Error::invalid("secret JSON payload must be one canonical JSON object")
+    })?;
+    deserializer.end().map_err(|_| {
+        DirectE2eeV2Error::invalid("secret JSON payload must be one canonical JSON object")
+    })
 }
 
 fn parse_u32(value: &str, field: &str) -> Result<u32, DirectE2eeV2Error> {
@@ -1503,6 +1791,109 @@ mod tests {
         .expect("decrypt structured JSON");
         assert_eq!(decrypted, plaintext);
         assert_eq!(decrypted.payload, plaintext.payload);
+    }
+
+    #[test]
+    fn secret_json_init_first_reply_and_follow_up_use_redacted_payload_boundary() {
+        let alice_binding = binding(ALICE_DID, ALICE_DEVICE, BOB_DID, BOB_DEVICE);
+        let bob_binding = binding(BOB_DID, BOB_DEVICE, ALICE_DID, ALICE_DEVICE);
+        let alice_static = X25519StaticSecret::from([81u8; 32]);
+        let bob_static = X25519StaticSecret::from([82u8; 32]);
+        let bob_spk = X25519StaticSecret::from([83u8; 32]);
+        let bob_bundle = bundle(
+            BOB_DID,
+            BOB_DEVICE,
+            &bob_binding.local_e2ee_key_id,
+            &bob_spk,
+        );
+        let envelope = V2SecretJsonPayload::from_canonical_json_object(
+            br#"{"root_private_key":"TOP-SECRET-ROOT","system_type":"awiki.device.root-key.v1"}"#
+                .to_vec(),
+        )
+        .expect("canonical secret envelope");
+        assert!(!format!("{envelope:?}").contains("TOP-SECRET-ROOT"));
+
+        let init_meta = metadata(
+            &alice_binding,
+            "msg-secret-init",
+            CONTENT_TYPE_DIRECT_INIT_V2,
+        );
+        let (mut alice_state, _, init_body) = V2DirectE2eeSession::initiate_session_secret_json(
+            &alice_binding,
+            &init_meta,
+            &alice_static,
+            &bob_bundle,
+            &X25519PublicKey::from(&bob_static).to_bytes(),
+            None,
+            &envelope,
+        )
+        .expect("encrypt secret init");
+        let (mut bob_state, received, _) = V2DirectE2eeSession::accept_incoming_init_secret_json(
+            &bob_binding,
+            &init_meta,
+            &bob_static,
+            &bob_bundle,
+            &bob_spk,
+            None,
+            &X25519PublicKey::from(&alice_static).to_bytes(),
+            &init_body,
+        )
+        .expect("decrypt secret init");
+        assert_eq!(received.expose_secret(), envelope.expose_secret());
+
+        let ack = V2SecretJsonPayload::from_canonical_json_object(
+            br#"{"result":"imported","system_type":"awiki.device.root-key-imported.v1"}"#.to_vec(),
+        )
+        .expect("canonical secret ack");
+        let reply_meta = metadata(
+            &bob_binding,
+            "msg-secret-reply",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, reply) = V2DirectE2eeSession::encrypt_follow_up_secret_json(
+            &mut bob_state,
+            &bob_binding,
+            &reply_meta,
+            &ack,
+        )
+        .expect("encrypt secret first reply");
+        let received_ack = V2DirectE2eeSession::decrypt_follow_up_secret_json(
+            &mut alice_state,
+            &alice_binding,
+            &reply_meta,
+            &reply,
+        )
+        .expect("decrypt secret first reply");
+        assert_eq!(received_ack.expose_secret(), ack.expose_secret());
+        assert_eq!(alice_state.status, V2_SESSION_STATUS_ESTABLISHED);
+
+        let follow_up = V2SecretJsonPayload::from_canonical_json_object(
+            br#"{"sequence":2,"system_type":"awiki.device.control.v1"}"#.to_vec(),
+        )
+        .expect("canonical secret follow-up");
+        let follow_meta = metadata(
+            &alice_binding,
+            "msg-secret-follow-up",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, follow_body) = V2DirectE2eeSession::encrypt_follow_up_secret_json(
+            &mut alice_state,
+            &alice_binding,
+            &follow_meta,
+            &follow_up,
+        )
+        .expect("encrypt secret follow-up");
+        let received_follow_up = V2DirectE2eeSession::decrypt_follow_up_secret_json(
+            &mut bob_state,
+            &bob_binding,
+            &follow_meta,
+            &follow_body,
+        )
+        .expect("decrypt secret follow-up");
+        assert_eq!(
+            received_follow_up.expose_secret(),
+            follow_up.expose_secret()
+        );
     }
 
     #[test]

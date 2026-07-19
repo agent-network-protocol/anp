@@ -59,9 +59,10 @@ pub use v2_models::{
 pub use v2_session::{
     deserialize_pending_outbound_v2, deserialize_session_state_v2, disable_peer_device_sessions_v2,
     select_default_outbound_session_v2, serialize_pending_outbound_v2, serialize_session_state_v2,
-    V2DirectE2eeSession, V2DirectSessionState, V2PendingOutboundRecord, V2SessionBinding,
-    V2SkippedMessageKey, DIRECT_E2EE_V2_PENDING_STATE_FORMAT, DIRECT_E2EE_V2_SESSION_STATE_FORMAT,
-    V2_SESSION_STATUS_ESTABLISHED, V2_SESSION_STATUS_PENDING_CONFIRMATION,
+    V2DirectE2eeSession, V2DirectSessionState, V2PendingOutboundRecord, V2SecretJsonPayload,
+    V2SessionBinding, V2SkippedMessageKey, DIRECT_E2EE_V2_PENDING_STATE_FORMAT,
+    DIRECT_E2EE_V2_SESSION_STATE_FORMAT, V2_SESSION_STATUS_ESTABLISHED,
+    V2_SESSION_STATUS_PENDING_CONFIRMATION,
 };
 pub use v2_wire::{
     direct_send_request_v2, get_prekey_bundle_request_v2, parse_direct_send_request_v2,
