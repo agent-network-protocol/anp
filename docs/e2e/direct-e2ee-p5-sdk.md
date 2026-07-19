@@ -45,6 +45,67 @@ the expected `V2SessionBinding`, so a current device/key mismatch fails closed.
 Session state contains private ratchet material and must be stored encrypted;
 its `Debug` implementation redacts secrets.
 
+### Rust runtime integration preconditions
+
+The Rust runtime deliberately does not resolve DID documents or own a product
+database. Before `V2DirectE2eeSession::initiate_session`, the caller must use
+one current DID-document view whose authenticity was already validated by the
+normal DID-resolution path to:
+
+1. confirm the exact target device is Manifest-eligible for P5 v2;
+2. validate the complete `V2GetPrekeyBundleResult`;
+3. verify its Bundle proof and Manifest key binding with
+   `verify_prekey_bundle_v2`;
+4. extract the recipient static X25519 public key from that same verified DID
+   document; and
+5. use only an OPK sidecar from that same get response and exact target.
+
+The caller must likewise check that its local static private key derives the
+current local Manifest E2EE public key. Before accepting init, the receiver
+must bind its Bundle, signed-prekey private key, and optional OPK record/private
+key to the current local Manifest device, and extract the sender static public
+key from the current sender DID document for the exact peer binding.
+The runtime tests include a real Object Proof plus Device Manifest flow through
+Bundle verification, key extraction, init creation, and init acceptance; test
+fixtures with placeholder proofs are not evidence that these preconditions
+were performed.
+
+Product persistence provides the transaction boundary that an in-memory SDK
+cannot provide:
+
+- persist the returned pending init before its first send, and retry the exact
+  stored body, `operation_id`, and `message_id` bytes rather than generating a
+  new ephemeral init;
+- on receive, atomically record init replay/idempotency state, persist the new
+  session, and consume/delete the returned OPK ID; and
+- atomically persist each accepted Ratchet transition. A matching skipped key
+  is the sole failure path that intentionally commits key deletion after AEAD
+  failure, as required by P5. A product wrapper must therefore persist the
+  possibly mutated state even when that call returns `DecryptFailed`; ordinary
+  failure paths leave the state byte-for-byte unchanged.
+
+Skipped message keys use one per-session bound across all DH chains. The
+persisted vector is insertion-ordered; once `MAX_SKIP` is full, insertion
+deterministically evicts the oldest entry first. Successful runtime commits
+validate the complete resulting state before replacement, while ordinary
+authentication, max-skip, and Ratchet failures leave the prior state intact.
+
+Runtime failures expose `DirectE2eeV2RuntimeErrorKind` and
+`DirectE2eeV2Error::protocol_error()` for stable product mapping:
+
+| Runtime category | P5 code | `anp_code` |
+| --- | ---: | --- |
+| `BadInitMessage` | 4007 | `anp.direct.e2ee.bad_init_message` |
+| `ReplayDetected` | 4008 | `anp.direct.e2ee.replay_detected` |
+| `DecryptFailed` | 4009 | `anp.direct.e2ee.decrypt_failed` |
+| `MaxSkipExceeded` | 4010 | `anp.direct.e2ee.max_skip_exceeded` |
+| `InvalidSecurityBinding` | 4012 | `anp.direct.e2ee.invalid_security_binding` |
+
+Replay detection is product-store state: when the atomic init replay check
+rejects a non-idempotent replay, the integration maps it with
+`DirectE2eeV2Error::runtime(DirectE2eeV2RuntimeErrorKind::ReplayDetected)`.
+The SDK does not maintain a second hidden replay database.
+
 P5 rules that product integrations rely on:
 
 - `prekey_bundle` must not embed `one_time_prekey`; OPK is a top-level sidecar from `direct.e2ee.get_prekey_bundle`.
@@ -71,6 +132,7 @@ The v2 surface additionally fixes these interoperability rules:
 - Same-DID own-device sessions are supported when the two opaque device IDs and E2EE key references differ. The identical DID/device endpoint is rejected.
 - `select_default_outbound_session_v2` selects only an established, enabled session within one exact binding from a caller-provided newest-first slice. `disable_peer_device_sessions_v2` disables only the selected peer device; it is a local primitive and does not implement a product Registry.
 - A matching skipped message key follows P5 section 10.2.3.2 and is consumed even when AEAD authentication fails. Ordinary unmatched-message failures remain tentative and do not advance session state.
+- The `MAX_SKIP` cap is global to one session, not reset per DH chain; eviction is deterministic oldest-insertion-first and never uses wall-clock time.
 
 For ordinary structured JSON, products should use `application/json` as the inner
 `application_content_type` and put the JSON object directly in `payload`:

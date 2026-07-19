@@ -47,7 +47,8 @@ pub use v2_bundle::{
     V2PublishPrekeyBundleBody, V2PublishPrekeyBundleResult,
 };
 pub use v2_errors::{
-    direct_e2ee_v2_error, DirectE2eeV2Error, DirectE2eeV2ProtocolError, DIRECT_E2EE_V2_ERRORS,
+    direct_e2ee_v2_error, DirectE2eeV2Error, DirectE2eeV2ProtocolError,
+    DirectE2eeV2RuntimeErrorKind, DIRECT_E2EE_V2_ERRORS,
 };
 pub use v2_models::{
     V2ApplicationPlaintext, V2DirectBody, V2DirectCipherBody, V2DirectInitBody, V2DirectMetadata,

@@ -10,7 +10,7 @@ use super::ratchet::{
     decrypt_with_step, derive_chain_step, derive_root_step, encrypt_with_step, ChainStep, MAX_SKIP,
 };
 use super::v2_aad::{build_init_aad_v2, build_message_aad_v2, canonical_application_plaintext_v2};
-use super::v2_errors::DirectE2eeV2Error;
+use super::v2_errors::{DirectE2eeV2Error, DirectE2eeV2RuntimeErrorKind};
 use super::v2_models::{
     V2ApplicationPlaintext, V2DirectCipherBody, V2DirectInitBody, V2DirectMetadata,
     V2OneTimePrekey, V2PrekeyBundle, V2RatchetHeader, CONTENT_TYPE_DIRECT_CIPHER_V2,
@@ -44,43 +44,45 @@ pub struct V2SessionBinding {
 
 impl V2SessionBinding {
     pub fn validate(&self) -> Result<(), DirectE2eeV2Error> {
-        for (field, value) in [
-            ("binding.local_did", self.local_did.as_str()),
-            ("binding.local_device_id", self.local_device_id.as_str()),
-            ("binding.peer_did", self.peer_did.as_str()),
-            ("binding.peer_device_id", self.peer_device_id.as_str()),
-            ("binding.local_e2ee_key_id", self.local_e2ee_key_id.as_str()),
-            ("binding.peer_e2ee_key_id", self.peer_e2ee_key_id.as_str()),
+        for value in [
+            self.local_did.as_str(),
+            self.local_device_id.as_str(),
+            self.peer_did.as_str(),
+            self.peer_device_id.as_str(),
+            self.local_e2ee_key_id.as_str(),
+            self.peer_e2ee_key_id.as_str(),
         ] {
             if value.is_empty() {
-                return Err(DirectE2eeV2Error::invalid(format!(
-                    "{field} must be a non-empty string"
-                )));
+                return Err(runtime_error(
+                    DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
+                ));
             }
         }
         if self.suite != MTI_DIRECT_E2EE_SUITE_V2 {
-            return Err(DirectE2eeV2Error::invalid(
-                "binding.suite must equal the P5 v2 MTI suite",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         if self.local_did == self.peer_did && self.local_device_id == self.peer_device_id {
-            return Err(DirectE2eeV2Error::invalid(
-                "a P5 v2 session cannot target the same DID and device as its local endpoint",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         validate_key_id_for_did(
             "binding.local_e2ee_key_id",
             &self.local_e2ee_key_id,
             &self.local_did,
-        )?;
+        )
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
         validate_key_id_for_did(
             "binding.peer_e2ee_key_id",
             &self.peer_e2ee_key_id,
             &self.peer_did,
-        )?;
+        )
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
         if self.local_e2ee_key_id == self.peer_e2ee_key_id {
-            return Err(DirectE2eeV2Error::invalid(
-                "local and peer devices must use distinct E2EE key references",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         Ok(())
@@ -99,8 +101,8 @@ impl V2SessionBinding {
             || metadata.recipient_device_id != self.peer_device_id
             || metadata.content_type != expected_content_type
         {
-            return Err(DirectE2eeV2Error::invalid(
-                "outbound metadata does not match the exact session device pair",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         Ok(())
@@ -119,8 +121,8 @@ impl V2SessionBinding {
             || metadata.recipient_device_id != self.local_device_id
             || metadata.content_type != expected_content_type
         {
-            return Err(DirectE2eeV2Error::invalid(
-                "inbound metadata does not match the exact session device pair",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         Ok(())
@@ -297,16 +299,17 @@ impl V2DirectSessionState {
     }
 
     fn validate_for(&self, expected_binding: &V2SessionBinding) -> Result<(), DirectE2eeV2Error> {
-        self.validate()?;
+        self.validate()
+            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
         expected_binding.validate()?;
         if &self.binding != expected_binding {
-            return Err(DirectE2eeV2Error::invalid(
-                "session state does not match the current exact device/key binding",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         if self.disabled {
-            return Err(DirectE2eeV2Error::invalid(
-                "session state is disabled for this peer device",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         Ok(())
@@ -468,6 +471,21 @@ pub fn disable_peer_device_sessions_v2(
 pub struct V2DirectE2eeSession;
 
 impl V2DirectE2eeSession {
+    /// Creates a v2 init and the exact pending record that must be retried.
+    ///
+    /// Before calling this method, the product must validate one complete
+    /// `direct.e2ee.get_prekey_bundle` response with both
+    /// `V2GetPrekeyBundleResult::validate` and `verify_prekey_bundle_v2`, after
+    /// resolving and authenticity-validating the current DID document and
+    /// confirming that the selected Manifest device is eligible for Direct
+    /// E2EE. `recipient_static_public` must be extracted from that same verified
+    /// document, and an optional OPK must be the sidecar returned for the same
+    /// target device in that same response. The caller must also prove locally that
+    /// `local_static_private` matches its current Manifest E2EE public key.
+    ///
+    /// Persist both returned state records before sending. An idempotent retry
+    /// must resend the exact serialized pending body and outer identifiers; it
+    /// must not generate a fresh ephemeral key or init.
     pub fn initiate_session(
         binding: &V2SessionBinding,
         metadata: &V2DirectMetadata,
@@ -536,7 +554,7 @@ impl V2DirectE2eeSession {
             &recipient_signed_prekey_public,
             recipient_opk_public.as_ref(),
         )
-        .map_err(runtime_crypto_error)?;
+        .map_err(security_crypto_error)?;
         let sender_ephemeral_public = X25519PublicKey::from(sender_ephemeral_private).to_bytes();
         let mut body = V2DirectInitBody {
             session_id: initial.session_id.clone(),
@@ -552,7 +570,8 @@ impl V2DirectE2eeSession {
         let init_step = derive_chain_step(&initial.chain_key);
         let plaintext_bytes = canonical_application_plaintext_v2(plaintext)?;
         body.ciphertext_b64u = crate::keys::base64url_encode(
-            &encrypt_with_step(&init_step, &plaintext_bytes, &aad).map_err(runtime_crypto_error)?,
+            &encrypt_with_step(&init_step, &plaintext_bytes, &aad)
+                .map_err(security_crypto_error)?,
         );
         body.validate()?;
 
@@ -582,6 +601,16 @@ impl V2DirectE2eeSession {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Accepts an init after product-level binding and replay checks.
+    ///
+    /// `local_bundle`, the optional OPK record/private key, and the local
+    /// static private key must belong to the current local Manifest device.
+    /// `sender_static_public` must be extracted from the current sender DID
+    /// document for the exact peer binding used to route the init. The product
+    /// storage transaction must atomically record init replay/idempotency
+    /// state, persist the returned session, and consume/delete the returned
+    /// OPK ID. This SDK method only returns the OPK ID to consume; it cannot
+    /// make those product-owned stores atomic.
     pub fn accept_incoming_init(
         binding: &V2SessionBinding,
         metadata: &V2DirectMetadata,
@@ -595,13 +624,14 @@ impl V2DirectE2eeSession {
     {
         binding.validate_inbound_metadata(metadata, CONTENT_TYPE_DIRECT_INIT_V2)?;
         validate_local_bundle(binding, local_bundle, local_signed_prekey_private)?;
-        body.validate()?;
+        body.validate()
+            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage))?;
         if body.sender_static_key_agreement_id != binding.peer_e2ee_key_id
             || body.recipient_bundle_id != local_bundle.bundle_id
             || body.recipient_signed_prekey_id != local_bundle.signed_prekey.key_id
         {
-            return Err(DirectE2eeV2Error::invalid(
-                "init key or Bundle references do not match the exact device pair",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
 
@@ -611,19 +641,24 @@ impl V2DirectE2eeSession {
         ) {
             (None, None) => (None, None),
             (Some(expected_id), Some((opk, private))) if expected_id == opk.key_id => {
-                opk.validate()?;
+                opk.validate().map_err(|_| {
+                    runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding)
+                })?;
                 let expected_public =
-                    decode_fixed::<32>("one_time_prekey.public_key_b64u", &opk.public_key_b64u)?;
+                    decode_fixed::<32>("one_time_prekey.public_key_b64u", &opk.public_key_b64u)
+                        .map_err(|_| {
+                            runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding)
+                        })?;
                 if X25519PublicKey::from(private).to_bytes() != expected_public {
-                    return Err(DirectE2eeV2Error::invalid(
-                        "one-time prekey private material does not match its public record",
+                    return Err(runtime_error(
+                        DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
                     ));
                 }
                 (Some(private), Some(opk.key_id.clone()))
             }
             _ => {
-                return Err(DirectE2eeV2Error::invalid(
-                    "init one-time prekey reference does not match local device material",
+                return Err(runtime_error(
+                    DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
                 ));
             }
         };
@@ -639,26 +674,19 @@ impl V2DirectE2eeSession {
             sender_static_public,
             &sender_ephemeral_public,
         )
-        .map_err(runtime_crypto_error)?;
+        .map_err(bad_init_crypto_error)?;
         if body.session_id != initial.session_id {
-            return Err(DirectE2eeV2Error::invalid(
-                "body.session_id does not match the derived P5 v2 session",
-            ));
+            return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage));
         }
         let aad = build_init_aad_v2(metadata, body)?;
         let init_step = derive_chain_step(&initial.chain_key);
-        let plaintext = decrypt_plaintext(
-            &init_step,
-            &body.ciphertext_b64u,
-            &aad,
-            "body.ciphertext_b64u",
-        )?;
+        let plaintext = decrypt_plaintext(&init_step, &body.ciphertext_b64u, &aad)?;
 
         let ratchet_private = X25519StaticSecret::random_from_rng(OsRng);
         let ratchet_public = X25519PublicKey::from(&ratchet_private).to_bytes();
         let dh = ratchet_private.diffie_hellman(&X25519PublicKey::from(sender_ephemeral_public));
         let root_step =
-            derive_root_step(&initial.root_key, &dh.to_bytes()).map_err(runtime_crypto_error)?;
+            derive_root_step(&initial.root_key, &dh.to_bytes()).map_err(bad_init_crypto_error)?;
         let state = V2DirectSessionState {
             state_format: DIRECT_E2EE_V2_SESSION_STATE_FORMAT.to_owned(),
             binding: binding.clone(),
@@ -690,9 +718,7 @@ impl V2DirectE2eeSession {
         state.validate_for(expected_binding)?;
         expected_binding.validate_outbound_metadata(metadata, CONTENT_TYPE_DIRECT_CIPHER_V2)?;
         if state.status != V2_SESSION_STATUS_ESTABLISHED {
-            return Err(DirectE2eeV2Error::invalid(
-                "pending-confirmation sessions cannot send follow-up ciphertext",
-            ));
+            return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage));
         }
         let send_chain_key = decode_fixed::<32>(
             "state.send_chain_key_b64u",
@@ -718,12 +744,15 @@ impl V2DirectE2eeSession {
         let aad = build_message_aad_for_encryption(metadata, &body)?;
         body.ciphertext_b64u = crate::keys::base64url_encode(
             &encrypt_with_step(&step, &canonical_application_plaintext_v2(plaintext)?, &aad)
-                .map_err(runtime_crypto_error)?,
+                .map_err(security_crypto_error)?,
         );
         body.validate()?;
         let pending = pending_record(expected_binding, metadata, &body)?;
-        state.send_chain_key_b64u = Some(crate::keys::base64url_encode(&step.next_chain_key));
-        state.send_n = next_send_n;
+        let mut next_state = state.clone();
+        next_state.send_chain_key_b64u = Some(crate::keys::base64url_encode(&step.next_chain_key));
+        next_state.send_n = next_send_n;
+        next_state.validate_for(expected_binding)?;
+        *state = next_state;
         Ok((pending, body))
     }
 
@@ -735,16 +764,17 @@ impl V2DirectE2eeSession {
     ) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
         state.validate_for(expected_binding)?;
         expected_binding.validate_inbound_metadata(metadata, CONTENT_TYPE_DIRECT_CIPHER_V2)?;
-        body.validate()?;
+        body.validate()
+            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
         if body.session_id != state.session_id {
-            return Err(DirectE2eeV2Error::invalid(
-                "cipher body does not match the selected session_id",
+            return Err(runtime_error(
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
             ));
         }
         if let Some(suite) = body.suite.as_deref() {
             if suite != state.binding.suite {
-                return Err(DirectE2eeV2Error::invalid(
-                    "cipher body suite does not match the selected session",
+                return Err(runtime_error(
+                    DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
                 ));
             }
         }
@@ -755,12 +785,14 @@ impl V2DirectE2eeSession {
         let mut skipped_state = state.clone();
         match try_skipped_message_key(&mut skipped_state, metadata, body) {
             Ok(Some(plaintext)) => {
+                skipped_state.validate_for(expected_binding)?;
                 *state = skipped_state;
                 return Ok(plaintext);
             }
             Ok(None) => {}
             Err(error) => {
                 if skipped_state.skipped_message_keys != state.skipped_message_keys {
+                    skipped_state.validate_for(expected_binding)?;
                     *state = skipped_state;
                 }
                 return Err(error);
@@ -777,7 +809,7 @@ impl V2DirectE2eeSession {
         }
         let n = parse_u32(&body.ratchet_header.n, "ratchet_header.n")?;
         if n < next_state.recv_n {
-            return Err(DirectE2eeV2Error::invalid("duplicate P5 v2 message number"));
+            return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed));
         }
         skip_message_keys(&mut next_state, n)?;
         let recv_chain_key = decode_fixed::<32>(
@@ -792,6 +824,7 @@ impl V2DirectE2eeSession {
         next_state.recv_n = n
             .checked_add(1)
             .ok_or_else(|| DirectE2eeV2Error::invalid("receive counter overflow"))?;
+        next_state.validate_for(expected_binding)?;
         *state = next_state;
         Ok(plaintext)
     }
@@ -801,14 +834,16 @@ fn validate_recipient_bundle(
     binding: &V2SessionBinding,
     bundle: &V2PrekeyBundle,
 ) -> Result<(), DirectE2eeV2Error> {
-    bundle.validate_structure()?;
+    bundle
+        .validate_structure()
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
     if bundle.owner_did != binding.peer_did
         || bundle.owner_device_id != binding.peer_device_id
         || bundle.suite != binding.suite
         || bundle.static_key_agreement_id != binding.peer_e2ee_key_id
     {
-        return Err(DirectE2eeV2Error::invalid(
-            "recipient Bundle does not match the exact peer device/key binding",
+        return Err(runtime_error(
+            DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
         ));
     }
     Ok(())
@@ -819,23 +854,26 @@ fn validate_local_bundle(
     bundle: &V2PrekeyBundle,
     signed_prekey_private: &X25519StaticSecret,
 ) -> Result<(), DirectE2eeV2Error> {
-    bundle.validate_structure()?;
+    bundle
+        .validate_structure()
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
     if bundle.owner_did != binding.local_did
         || bundle.owner_device_id != binding.local_device_id
         || bundle.suite != binding.suite
         || bundle.static_key_agreement_id != binding.local_e2ee_key_id
     {
-        return Err(DirectE2eeV2Error::invalid(
-            "local Bundle does not match the exact local device/key binding",
+        return Err(runtime_error(
+            DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
         ));
     }
     let expected_spk = decode_fixed::<32>(
         "prekey_bundle.signed_prekey.public_key_b64u",
         &bundle.signed_prekey.public_key_b64u,
-    )?;
+    )
+    .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding))?;
     if X25519PublicKey::from(signed_prekey_private).to_bytes() != expected_spk {
-        return Err(DirectE2eeV2Error::invalid(
-            "signed prekey private material does not match the local Bundle",
+        return Err(runtime_error(
+            DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
         ));
     }
     Ok(())
@@ -870,9 +908,7 @@ fn decrypt_first_reply(
     body: &V2DirectCipherBody,
 ) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
     if body.ratchet_header.pn != "0" || body.ratchet_header.n != "0" {
-        return Err(DirectE2eeV2Error::invalid(
-            "first reply header must use pn=0 and n=0",
-        ));
+        return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage));
     }
     let mut next_state = state.clone();
     let root_key = decode_fixed::<32>("state.root_key_b64u", &next_state.root_key_b64u)?;
@@ -888,13 +924,13 @@ fn decrypt_first_reply(
         &root_key,
         &local_private.diffie_hellman(&peer_public).to_bytes(),
     )
-    .map_err(runtime_crypto_error)?;
+    .map_err(bad_init_crypto_error)?;
     let new_private = X25519StaticSecret::random_from_rng(OsRng);
     let send_root = derive_root_step(
         &recv_root.root_key,
         &new_private.diffie_hellman(&peer_public).to_bytes(),
     )
-    .map_err(runtime_crypto_error)?;
+    .map_err(bad_init_crypto_error)?;
     let step = derive_chain_step(&recv_root.chain_key);
     let plaintext = decrypt_cipher_plaintext(&step, metadata, body)?;
     next_state.root_key_b64u = crate::keys::base64url_encode(&send_root.root_key);
@@ -930,13 +966,13 @@ fn ratchet_step(
         &root_key,
         &local_private.diffie_hellman(&peer_public).to_bytes(),
     )
-    .map_err(runtime_crypto_error)?;
+    .map_err(security_crypto_error)?;
     let new_private = X25519StaticSecret::random_from_rng(OsRng);
     let send_root = derive_root_step(
         &recv_root.root_key,
         &new_private.diffie_hellman(&peer_public).to_bytes(),
     )
-    .map_err(runtime_crypto_error)?;
+    .map_err(security_crypto_error)?;
     state.root_key_b64u = crate::keys::base64url_encode(&send_root.root_key);
     state.recv_chain_key_b64u = Some(crate::keys::base64url_encode(&recv_root.chain_key));
     state.send_chain_key_b64u = Some(crate::keys::base64url_encode(&send_root.chain_key));
@@ -987,9 +1023,7 @@ fn skip_message_keys(
         return Ok(());
     }
     if until_n.saturating_sub(state.recv_n) > MAX_SKIP {
-        return Err(DirectE2eeV2Error::invalid(
-            "P5 v2 message skip exceeded MAX_SKIP",
-        ));
+        return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::MaxSkipExceeded));
     }
     let mut recv_chain_key = decode_fixed::<32>(
         "state.recv_chain_key_b64u",
@@ -999,19 +1033,34 @@ fn skip_message_keys(
     )?;
     while state.recv_n < until_n {
         let step = derive_chain_step(&recv_chain_key);
-        state.skipped_message_keys.push(V2SkippedMessageKey {
+        let skipped = V2SkippedMessageKey {
             dh_pub_b64u: state.peer_ratchet_public_key_b64u.clone().ok_or_else(|| {
                 DirectE2eeV2Error::invalid("session has no peer ratchet public key")
             })?,
             n: state.recv_n,
             message_key_b64u: crate::keys::base64url_encode(&step.message_key),
             nonce_b64u: crate::keys::base64url_encode(&step.nonce),
-        });
+        };
+        push_skipped_message_key(state, skipped);
         recv_chain_key = step.next_chain_key;
         state.recv_n += 1;
     }
     state.recv_chain_key_b64u = Some(crate::keys::base64url_encode(&recv_chain_key));
     Ok(())
+}
+
+/// Insert one skipped key while enforcing the per-session P5 bound.
+///
+/// The vector is persisted in insertion order. Once full, the oldest entry is
+/// evicted before the new entry is appended. This is deterministic across
+/// restarts and DH chains and deliberately avoids wall-clock ordering.
+fn push_skipped_message_key(state: &mut V2DirectSessionState, skipped: V2SkippedMessageKey) {
+    let maximum = MAX_SKIP as usize;
+    if state.skipped_message_keys.len() >= maximum {
+        let remove_count = state.skipped_message_keys.len() + 1 - maximum;
+        state.skipped_message_keys.drain(..remove_count);
+    }
+    state.skipped_message_keys.push(skipped);
 }
 
 fn build_init_aad_for_encryption(
@@ -1045,7 +1094,6 @@ fn decrypt_cipher_plaintext(
         step,
         &body.ciphertext_b64u,
         &build_message_aad_v2(metadata, body)?,
-        "body.ciphertext_b64u",
     )
 }
 
@@ -1053,18 +1101,17 @@ fn decrypt_plaintext(
     step: &ChainStep,
     ciphertext_b64u: &str,
     aad: &[u8],
-    ciphertext_field: &str,
 ) -> Result<V2ApplicationPlaintext, DirectE2eeV2Error> {
     let ciphertext = crate::keys::base64url_decode(ciphertext_b64u)
-        .map_err(|_| DirectE2eeV2Error::invalid(format!("{ciphertext_field} is not base64url")))?;
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
     let plaintext_bytes =
-        decrypt_with_step(step, &ciphertext, aad).map_err(runtime_crypto_error)?;
-    let plaintext: V2ApplicationPlaintext = serde_json::from_slice(&plaintext_bytes)?;
-    let canonical = canonical_application_plaintext_v2(&plaintext)?;
+        decrypt_with_step(step, &ciphertext, aad).map_err(decrypt_crypto_error)?;
+    let plaintext: V2ApplicationPlaintext = serde_json::from_slice(&plaintext_bytes)
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
+    let canonical = canonical_application_plaintext_v2(&plaintext)
+        .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
     if canonical != plaintext_bytes {
-        return Err(DirectE2eeV2Error::invalid(
-            "decrypted Application Plaintext is not RFC 8785 canonical JSON",
-        ));
+        return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed));
     }
     Ok(plaintext)
 }
@@ -1094,17 +1141,40 @@ fn decode_fixed<const N: usize>(field: &str, value: &str) -> Result<[u8; N], Dir
         .map_err(|_| DirectE2eeV2Error::invalid(format!("{field} must encode {N} bytes")))
 }
 
-fn runtime_crypto_error(_error: super::errors::DirectE2eeError) -> DirectE2eeV2Error {
-    DirectE2eeV2Error::invalid("P5 v2 cryptographic operation failed")
+fn runtime_error(kind: DirectE2eeV2RuntimeErrorKind) -> DirectE2eeV2Error {
+    DirectE2eeV2Error::runtime(kind)
+}
+
+fn decrypt_crypto_error(_error: super::errors::DirectE2eeError) -> DirectE2eeV2Error {
+    runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed)
+}
+
+fn bad_init_crypto_error(_error: super::errors::DirectE2eeError) -> DirectE2eeV2Error {
+    runtime_error(DirectE2eeV2RuntimeErrorKind::BadInitMessage)
+}
+
+fn security_crypto_error(_error: super::errors::DirectE2eeError) -> DirectE2eeV2Error {
+    runtime_error(DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::direct_e2ee::{
-        DirectSessionState, PendingOutboundRecord, V2SignedPrekey, V2Target,
-        DIRECT_E2EE_PROFILE_V2, DIRECT_E2EE_SECURITY_PROFILE,
+    use crate::authentication::{
+        create_did_wba_document, DidDocumentBundle, DidDocumentOptions, DidProfile,
     };
+    use crate::direct_e2ee::{
+        build_prekey_bundle_v2, direct_e2ee_v2_error, extract_x25519_public_key,
+        verify_prekey_bundle_v2, DirectSessionState, PendingOutboundRecord,
+        V2GetPrekeyBundleResult, V2SignedPrekey, V2Target, DIRECT_E2EE_PROFILE_V2,
+        DIRECT_E2EE_SECURITY_PROFILE,
+    };
+    use crate::proof::{
+        generate_w3c_proof, ProofGenerationOptions, CRYPTOSUITE_EDDSA_JCS_2022,
+        PROOF_TYPE_DATA_INTEGRITY,
+    };
+    use crate::PrivateKeyMaterial;
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     const ALICE_DID: &str = "did:wba:alice.example:agents:alice:e1_alice";
@@ -1117,6 +1187,13 @@ mod tests {
         bob_binding: V2SessionBinding,
         alice_state: V2DirectSessionState,
         bob_state: V2DirectSessionState,
+    }
+
+    fn assert_runtime_kind(error: DirectE2eeV2Error, expected: DirectE2eeV2RuntimeErrorKind) {
+        assert_eq!(error.runtime_kind(), Some(expected));
+        assert_eq!(error.protocol_error(), Some(expected.protocol_error()));
+        assert_eq!(expected.protocol_error().code, expected.code());
+        assert_eq!(expected.protocol_error().anp_code, expected.anp_code());
     }
 
     fn binding(
@@ -1159,6 +1236,65 @@ mod tests {
         }
     }
 
+    fn text_plaintext(text: &str) -> V2ApplicationPlaintext {
+        V2ApplicationPlaintext {
+            application_content_type: "text/plain".to_owned(),
+            logical_message_id: None,
+            conversation_id: None,
+            reply_to_message_id: None,
+            annotations: None,
+            text: Some(text.to_owned()),
+            payload: None,
+            payload_b64u: None,
+        }
+    }
+
+    fn initiate_pair_before_reply() -> (
+        V2SessionBinding,
+        V2SessionBinding,
+        V2DirectSessionState,
+        V2DirectSessionState,
+    ) {
+        let alice_binding = binding(ALICE_DID, ALICE_DEVICE, BOB_DID, BOB_DEVICE);
+        let bob_binding = binding(BOB_DID, BOB_DEVICE, ALICE_DID, ALICE_DEVICE);
+        let alice_static = X25519StaticSecret::from([71u8; 32]);
+        let bob_static = X25519StaticSecret::from([73u8; 32]);
+        let bob_spk = X25519StaticSecret::from([75u8; 32]);
+        let bob_bundle = bundle(
+            BOB_DID,
+            BOB_DEVICE,
+            &bob_binding.local_e2ee_key_id,
+            &bob_spk,
+        );
+        let init_meta = metadata(
+            &alice_binding,
+            "msg-pending-init",
+            CONTENT_TYPE_DIRECT_INIT_V2,
+        );
+        let (alice_state, _, init_body) = V2DirectE2eeSession::initiate_session(
+            &alice_binding,
+            &init_meta,
+            &alice_static,
+            &bob_bundle,
+            &X25519PublicKey::from(&bob_static).to_bytes(),
+            None,
+            &text_plaintext("pending init"),
+        )
+        .expect("initiate pending pair");
+        let (bob_state, _, _) = V2DirectE2eeSession::accept_incoming_init(
+            &bob_binding,
+            &init_meta,
+            &bob_static,
+            &bob_bundle,
+            &bob_spk,
+            None,
+            &X25519PublicKey::from(&alice_static).to_bytes(),
+            &init_body,
+        )
+        .expect("accept pending pair init");
+        (alice_binding, bob_binding, alice_state, bob_state)
+    }
+
     fn bundle(
         owner_did: &str,
         owner_device_id: &str,
@@ -1186,6 +1322,63 @@ mod tests {
                 "created": "2026-07-19T00:00:00Z",
                 "proofValue": "zTestProof"
             }),
+        }
+    }
+
+    fn manifest_device(hostname: &str, path: &str, device_id: &str) -> (DidDocumentBundle, Value) {
+        let generated = create_did_wba_document(
+            hostname,
+            DidDocumentOptions {
+                path_segments: vec!["agents".to_owned(), path.to_owned()],
+                did_profile: DidProfile::E1,
+                ..Default::default()
+            },
+        )
+        .expect("create DID document");
+        let did = generated.did().expect("generated DID").to_owned();
+        let mut document = generated.did_document.clone();
+        document
+            .as_object_mut()
+            .expect("DID document object")
+            .remove("proof");
+        document["deviceManifest"] = json!({
+            "type": "ANPDeviceManifest",
+            "devices": [{
+                "device_id": device_id,
+                "signing_key_id": format!("{did}#key-1"),
+                "e2ee_key_id": format!("{did}#key-3"),
+                "profiles": [
+                    "anp.core.binding.v2",
+                    "anp.identity.discovery.v2",
+                    "anp.direct.base.v2",
+                    "anp.direct.e2ee.v2"
+                ]
+            }]
+        });
+        let signing_key = PrivateKeyMaterial::from_pem(&generated.keys["key-1"].private_key_pem)
+            .expect("load DID signing key");
+        document = generate_w3c_proof(
+            &document,
+            &signing_key,
+            &format!("{did}#key-1"),
+            ProofGenerationOptions {
+                proof_purpose: Some("assertionMethod".to_owned()),
+                proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_owned()),
+                cryptosuite: Some(CRYPTOSUITE_EDDSA_JCS_2022.to_owned()),
+                created: Some("2026-07-19T00:00:00Z".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("sign DID document with Manifest");
+        (generated, document)
+    }
+
+    fn generated_x25519_private(generated: &DidDocumentBundle) -> X25519StaticSecret {
+        match PrivateKeyMaterial::from_pem(&generated.keys["key-3"].private_key_pem)
+            .expect("load X25519 private key")
+        {
+            PrivateKeyMaterial::X25519(private) => private,
+            _ => panic!("key-3 must be X25519"),
         }
     }
 
@@ -1380,6 +1573,156 @@ mod tests {
     }
 
     #[test]
+    fn verified_manifest_bundle_response_drives_real_init() {
+        let (alice_generated, alice_document) =
+            manifest_device("alice-runtime.example", "alice", ALICE_DEVICE);
+        let (bob_generated, bob_document) =
+            manifest_device("bob-runtime.example", "bob", BOB_DEVICE);
+        let alice_did = alice_generated.did().expect("Alice DID").to_owned();
+        let bob_did = bob_generated.did().expect("Bob DID").to_owned();
+        let alice_key_id = format!("{alice_did}#key-3");
+        let bob_key_id = format!("{bob_did}#key-3");
+        let alice_static = generated_x25519_private(&alice_generated);
+        let bob_static = generated_x25519_private(&bob_generated);
+
+        let alice_static_public =
+            extract_x25519_public_key(&alice_document, &alice_key_id).expect("Alice static key");
+        let bob_static_public =
+            extract_x25519_public_key(&bob_document, &bob_key_id).expect("Bob static key");
+        assert_eq!(
+            X25519PublicKey::from(&alice_static).to_bytes(),
+            alice_static_public,
+            "the local private key must match the current Manifest public key",
+        );
+        assert_eq!(
+            X25519PublicKey::from(&bob_static).to_bytes(),
+            bob_static_public,
+        );
+
+        let bob_signing =
+            PrivateKeyMaterial::from_pem(&bob_generated.keys["key-1"].private_key_pem)
+                .expect("Bob signing key");
+        let bob_spk = X25519StaticSecret::from([101u8; 32]);
+        let signed_prekey = V2SignedPrekey {
+            key_id: "spk-bob-real".to_owned(),
+            public_key_b64u: crate::keys::base64url_encode(
+                &X25519PublicKey::from(&bob_spk).to_bytes(),
+            ),
+            expires_at: "2035-01-01T00:00:00Z".to_owned(),
+        };
+        let signed_bundle = build_prekey_bundle_v2(
+            "bundle-bob-real",
+            &bob_did,
+            BOB_DEVICE,
+            &bob_key_id,
+            signed_prekey,
+            &bob_signing,
+            &format!("{bob_did}#key-1"),
+            Some("2026-07-19T00:00:00Z"),
+        )
+        .expect("build real Bundle proof");
+        let bob_opk_private = X25519StaticSecret::from([103u8; 32]);
+        let response = V2GetPrekeyBundleResult {
+            target_did: bob_did.clone(),
+            target_device_id: BOB_DEVICE.to_owned(),
+            prekey_bundle: signed_bundle,
+            one_time_prekey: Some(V2OneTimePrekey {
+                key_id: "opk-bob-real".to_owned(),
+                public_key_b64u: crate::keys::base64url_encode(
+                    &X25519PublicKey::from(&bob_opk_private).to_bytes(),
+                ),
+            }),
+        };
+        response.validate().expect("complete get response");
+        verify_prekey_bundle_v2(
+            &response.prekey_bundle,
+            &bob_document,
+            Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 1).unwrap(),
+        )
+        .expect("real proof and current Manifest binding");
+
+        let alice_binding = V2SessionBinding {
+            local_did: alice_did.clone(),
+            local_device_id: ALICE_DEVICE.to_owned(),
+            peer_did: bob_did.clone(),
+            peer_device_id: BOB_DEVICE.to_owned(),
+            suite: MTI_DIRECT_E2EE_SUITE_V2.to_owned(),
+            local_e2ee_key_id: alice_key_id,
+            peer_e2ee_key_id: bob_key_id,
+        };
+        let bob_binding = V2SessionBinding {
+            local_did: bob_did,
+            local_device_id: BOB_DEVICE.to_owned(),
+            peer_did: alice_did,
+            peer_device_id: ALICE_DEVICE.to_owned(),
+            suite: MTI_DIRECT_E2EE_SUITE_V2.to_owned(),
+            local_e2ee_key_id: alice_binding.peer_e2ee_key_id.clone(),
+            peer_e2ee_key_id: alice_binding.local_e2ee_key_id.clone(),
+        };
+        let init_meta = metadata(
+            &alice_binding,
+            "msg-real-binding-init",
+            CONTENT_TYPE_DIRECT_INIT_V2,
+        );
+        let plaintext = text_plaintext("verified response only");
+        let (_, pending, body) = V2DirectE2eeSession::initiate_session(
+            &alice_binding,
+            &init_meta,
+            &alice_static,
+            &response.prekey_bundle,
+            &bob_static_public,
+            response.one_time_prekey.as_ref(),
+            &plaintext,
+        )
+        .expect("initiate from verified response");
+        assert_eq!(pending.body, serde_json::to_value(&body).unwrap());
+        let (_, decrypted, consumed_opk) = V2DirectE2eeSession::accept_incoming_init(
+            &bob_binding,
+            &init_meta,
+            &bob_static,
+            &response.prekey_bundle,
+            &bob_spk,
+            Some((
+                response.one_time_prekey.as_ref().expect("response OPK"),
+                &bob_opk_private,
+            )),
+            &alice_static_public,
+            &body,
+        )
+        .expect("accept verified init");
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(consumed_opk.as_deref(), Some("opk-bob-real"));
+    }
+
+    #[test]
+    fn pending_init_retry_serialization_is_byte_exact() {
+        let exact = binding(ALICE_DID, ALICE_DEVICE, BOB_DID, BOB_DEVICE);
+        let alice_static = X25519StaticSecret::from([105u8; 32]);
+        let bob_static = X25519StaticSecret::from([107u8; 32]);
+        let bob_spk = X25519StaticSecret::from([109u8; 32]);
+        let bob_bundle = bundle(BOB_DID, BOB_DEVICE, &exact.peer_e2ee_key_id, &bob_spk);
+        let init_meta = metadata(&exact, "msg-byte-exact-retry", CONTENT_TYPE_DIRECT_INIT_V2);
+        let (state, pending, body) = V2DirectE2eeSession::initiate_session(
+            &exact,
+            &init_meta,
+            &alice_static,
+            &bob_bundle,
+            &X25519PublicKey::from(&bob_static).to_bytes(),
+            None,
+            &text_plaintext("persist once, retry exact bytes"),
+        )
+        .expect("create pending init");
+        let first_bytes = serialize_pending_outbound_v2(&pending).expect("serialize pending");
+        let restored = deserialize_pending_outbound_v2(&first_bytes).expect("restore pending");
+        let retry_bytes = serialize_pending_outbound_v2(&restored).expect("serialize retry");
+        assert_eq!(retry_bytes, first_bytes);
+        assert_eq!(restored.operation_id, init_meta.operation_id);
+        assert_eq!(restored.message_id, init_meta.message_id);
+        assert_eq!(restored.session_id, state.session_id);
+        assert_eq!(restored.body, serde_json::to_value(body).unwrap());
+    }
+
+    #[test]
     fn same_did_different_devices_are_valid_but_same_endpoint_is_rejected() {
         let did = ALICE_DID;
         let a1_binding = binding(did, "dev-a1", did, "dev-a2");
@@ -1527,13 +1870,14 @@ mod tests {
         let mut aad_tamper = message_meta.clone();
         aad_tamper.message_id = "msg-tamper-aad".to_owned();
         aad_tamper.operation_id = aad_tamper.message_id.clone();
-        assert!(V2DirectE2eeSession::decrypt_follow_up(
+        let error = V2DirectE2eeSession::decrypt_follow_up(
             &mut pair.bob_state,
             &pair.bob_binding,
             &aad_tamper,
             &body,
         )
-        .is_err());
+        .expect_err("AAD tamper must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
         assert_eq!(pair.bob_state, original);
 
         let mut ciphertext_tamper = body.clone();
@@ -1541,35 +1885,38 @@ mod tests {
             .expect("decode ciphertext");
         ciphertext[0] ^= 1;
         ciphertext_tamper.ciphertext_b64u = crate::keys::base64url_encode(&ciphertext);
-        assert!(V2DirectE2eeSession::decrypt_follow_up(
+        let error = V2DirectE2eeSession::decrypt_follow_up(
             &mut pair.bob_state,
             &pair.bob_binding,
             &message_meta,
             &ciphertext_tamper,
         )
-        .is_err());
+        .expect_err("ciphertext tamper must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
         assert_eq!(pair.bob_state, original);
 
         let mut device_tamper = message_meta.clone();
         device_tamper.sender_device_id = "dev-alice-evil".to_owned();
-        assert!(V2DirectE2eeSession::decrypt_follow_up(
+        let error = V2DirectE2eeSession::decrypt_follow_up(
             &mut pair.bob_state,
             &pair.bob_binding,
             &device_tamper,
             &body,
         )
-        .is_err());
+        .expect_err("device tamper must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding);
         assert_eq!(pair.bob_state, original);
 
         let mut key_tamper = pair.bob_binding.clone();
         key_tamper.peer_e2ee_key_id = format!("{ALICE_DID}#ka-attacker");
-        assert!(V2DirectE2eeSession::decrypt_follow_up(
+        let error = V2DirectE2eeSession::decrypt_follow_up(
             &mut pair.bob_state,
             &key_tamper,
             &message_meta,
             &body,
         )
-        .is_err());
+        .expect_err("key tamper must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding);
         assert_eq!(pair.bob_state, original);
     }
 
@@ -1635,25 +1982,324 @@ mod tests {
                 ciphertext[0] ^= 1;
                 tampered_body.ciphertext_b64u = crate::keys::base64url_encode(&ciphertext);
             }
-            assert!(V2DirectE2eeSession::decrypt_follow_up(
+            let error = V2DirectE2eeSession::decrypt_follow_up(
                 &mut pair.bob_state,
                 &pair.bob_binding,
                 &tampered_meta,
                 &tampered_body,
             )
-            .is_err());
+            .expect_err("matching skipped-key tamper must fail");
+            assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
             assert!(
                 pair.bob_state.skipped_message_keys.is_empty(),
                 "P5 requires the matched skipped key to be consumed"
             );
-            assert!(V2DirectE2eeSession::decrypt_follow_up(
+            let error = V2DirectE2eeSession::decrypt_follow_up(
                 &mut pair.bob_state,
                 &pair.bob_binding,
                 &message_2_meta,
                 &message_2_body,
             )
-            .is_err());
+            .expect_err("consumed skipped key cannot be retried");
+            assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
         }
+    }
+
+    #[test]
+    fn runtime_error_categories_match_the_frozen_p5_allocations() {
+        for (kind, code, anp_code) in [
+            (
+                DirectE2eeV2RuntimeErrorKind::BadInitMessage,
+                4007,
+                "anp.direct.e2ee.bad_init_message",
+            ),
+            (
+                DirectE2eeV2RuntimeErrorKind::ReplayDetected,
+                4008,
+                "anp.direct.e2ee.replay_detected",
+            ),
+            (
+                DirectE2eeV2RuntimeErrorKind::DecryptFailed,
+                4009,
+                "anp.direct.e2ee.decrypt_failed",
+            ),
+            (
+                DirectE2eeV2RuntimeErrorKind::MaxSkipExceeded,
+                4010,
+                "anp.direct.e2ee.max_skip_exceeded",
+            ),
+            (
+                DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding,
+                4012,
+                "anp.direct.e2ee.invalid_security_binding",
+            ),
+        ] {
+            let protocol = kind.protocol_error();
+            assert_eq!(kind.code(), code);
+            assert_eq!(kind.anp_code(), anp_code);
+            assert_eq!(protocol.code, code);
+            assert_eq!(protocol.anp_code, anp_code);
+            assert_eq!(direct_e2ee_v2_error(code), Some(protocol));
+            assert_runtime_kind(DirectE2eeV2Error::runtime(kind), kind);
+        }
+    }
+
+    #[test]
+    fn skipped_key_fifo_is_bounded_and_over_gap_failure_is_atomic() {
+        let mut state = establish_pair().bob_state;
+        let initial_recv_n = state.recv_n;
+        skip_message_keys(&mut state, initial_recv_n + MAX_SKIP)
+            .expect("exact MAX_SKIP gap is accepted");
+        assert_eq!(state.skipped_message_keys.len(), MAX_SKIP as usize);
+        let oldest = state.skipped_message_keys[0].clone();
+        state.validate().expect("exact-bound state validates");
+
+        let next_until = state.recv_n + 1;
+        skip_message_keys(&mut state, next_until).expect("next insertion evicts oldest");
+        assert_eq!(state.skipped_message_keys.len(), MAX_SKIP as usize);
+        assert!(!state.skipped_message_keys.contains(&oldest));
+        state.validate().expect("evicted state validates");
+
+        let before_over_gap = state.clone();
+        let error = skip_message_keys(&mut state, before_over_gap.recv_n + MAX_SKIP + 1)
+            .expect_err("over-limit gap must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::MaxSkipExceeded);
+        assert_eq!(state, before_over_gap);
+    }
+
+    #[test]
+    fn skipped_key_fifo_is_shared_across_dh_chains() {
+        let mut state = establish_pair().bob_state;
+        let old_dh = state
+            .peer_ratchet_public_key_b64u
+            .clone()
+            .expect("old peer ratchet");
+        let old_until = state.recv_n + 700;
+        skip_message_keys(&mut state, old_until).expect("fill old chain");
+        assert_eq!(state.skipped_message_keys.len(), 700);
+
+        let new_peer = X25519PublicKey::from(&X25519StaticSecret::from([91u8; 32]));
+        let new_dh = crate::keys::base64url_encode(&new_peer.to_bytes());
+        ratchet_step(&mut state, &new_dh).expect("advance to new DH chain");
+        skip_message_keys(&mut state, 700).expect("fill new chain and evict globally");
+
+        assert_eq!(state.skipped_message_keys.len(), MAX_SKIP as usize);
+        assert_eq!(
+            state
+                .skipped_message_keys
+                .iter()
+                .filter(|item| item.dh_pub_b64u == old_dh)
+                .count(),
+            300
+        );
+        assert_eq!(
+            state
+                .skipped_message_keys
+                .iter()
+                .filter(|item| item.dh_pub_b64u == new_dh)
+                .count(),
+            700
+        );
+        state.validate().expect("cross-DH bounded state validates");
+    }
+
+    #[test]
+    fn multi_round_ratchet_decrypts_a_delayed_old_chain_message() {
+        let mut pair = establish_pair();
+        let delayed_meta = metadata(
+            &pair.alice_binding,
+            "msg-delayed-old-chain",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, delayed_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &delayed_meta,
+            &text_plaintext("delayed across ratchets"),
+        )
+        .expect("encrypt delayed message");
+        let later_meta = metadata(
+            &pair.alice_binding,
+            "msg-later-same-chain",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, later_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &later_meta,
+            &text_plaintext("advance Alice chain"),
+        )
+        .expect("encrypt later message");
+        V2DirectE2eeSession::decrypt_follow_up(
+            &mut pair.bob_state,
+            &pair.bob_binding,
+            &later_meta,
+            &later_body,
+        )
+        .expect("Bob skips delayed message");
+        let delayed_dh = delayed_body.ratchet_header.dh_pub_b64u.clone();
+        assert!(pair
+            .bob_state
+            .skipped_message_keys
+            .iter()
+            .any(|item| item.dh_pub_b64u == delayed_dh));
+
+        let bob_meta = metadata(
+            &pair.bob_binding,
+            "msg-bob-next-ratchet",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, bob_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.bob_state,
+            &pair.bob_binding,
+            &bob_meta,
+            &text_plaintext("advance Bob ratchet"),
+        )
+        .expect("Bob encrypts next ratchet message");
+        V2DirectE2eeSession::decrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &bob_meta,
+            &bob_body,
+        )
+        .expect("Alice advances and rotates send key");
+
+        let alice_new_meta = metadata(
+            &pair.alice_binding,
+            "msg-alice-new-ratchet",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, alice_new_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &alice_new_meta,
+            &text_plaintext("advance Alice ratchet again"),
+        )
+        .expect("Alice encrypts on new ratchet");
+        assert_ne!(alice_new_body.ratchet_header.dh_pub_b64u, delayed_dh);
+        V2DirectE2eeSession::decrypt_follow_up(
+            &mut pair.bob_state,
+            &pair.bob_binding,
+            &alice_new_meta,
+            &alice_new_body,
+        )
+        .expect("Bob advances to Alice's new DH chain");
+
+        let delayed = V2DirectE2eeSession::decrypt_follow_up(
+            &mut pair.bob_state,
+            &pair.bob_binding,
+            &delayed_meta,
+            &delayed_body,
+        )
+        .expect("old-chain skipped key remains usable");
+        assert_eq!(delayed.text.as_deref(), Some("delayed across ratchets"));
+        assert!(!pair
+            .bob_state
+            .skipped_message_keys
+            .iter()
+            .any(|item| item.dh_pub_b64u == delayed_dh));
+    }
+
+    #[test]
+    fn failed_decrypt_rolls_back_tentative_fifo_eviction_and_ratchet() {
+        let mut pair = establish_pair();
+        let old_dh = crate::keys::base64url_encode(&[97u8; 32]);
+        pair.bob_state.skipped_message_keys = (0..MAX_SKIP)
+            .map(|n| V2SkippedMessageKey {
+                dh_pub_b64u: old_dh.clone(),
+                n,
+                message_key_b64u: crate::keys::base64url_encode(&[3u8; 32]),
+                nonce_b64u: crate::keys::base64url_encode(&[4u8; 12]),
+            })
+            .collect();
+        pair.bob_state
+            .validate()
+            .expect("full skipped-key state validates");
+        let before = pair.bob_state.clone();
+
+        let first_meta = metadata(
+            &pair.alice_binding,
+            "msg-eviction-first",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &first_meta,
+            &text_plaintext("intentionally skipped"),
+        )
+        .expect("encrypt skipped message");
+        let second_meta = metadata(
+            &pair.alice_binding,
+            "msg-eviction-second",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, mut second_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut pair.alice_state,
+            &pair.alice_binding,
+            &second_meta,
+            &text_plaintext("tampered after tentative eviction"),
+        )
+        .expect("encrypt later message");
+        let mut ciphertext =
+            crate::keys::base64url_decode(&second_body.ciphertext_b64u).expect("decode ciphertext");
+        ciphertext[0] ^= 1;
+        second_body.ciphertext_b64u = crate::keys::base64url_encode(&ciphertext);
+
+        let error = V2DirectE2eeSession::decrypt_follow_up(
+            &mut pair.bob_state,
+            &pair.bob_binding,
+            &second_meta,
+            &second_body,
+        )
+        .expect_err("tampered ciphertext must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
+        assert_eq!(pair.bob_state, before);
+    }
+
+    #[test]
+    fn first_reply_tamper_rolls_back_pending_confirmation_state() {
+        let (alice_binding, bob_binding, mut alice_state, mut bob_state) =
+            initiate_pair_before_reply();
+        let reply_meta = metadata(
+            &bob_binding,
+            "msg-first-reply-tamper",
+            CONTENT_TYPE_DIRECT_CIPHER_V2,
+        );
+        let (_, mut reply_body) = V2DirectE2eeSession::encrypt_follow_up(
+            &mut bob_state,
+            &bob_binding,
+            &reply_meta,
+            &text_plaintext("first reply"),
+        )
+        .expect("encrypt first reply");
+        let original = alice_state.clone();
+        let mut ciphertext =
+            crate::keys::base64url_decode(&reply_body.ciphertext_b64u).expect("decode first reply");
+        ciphertext[0] ^= 1;
+        reply_body.ciphertext_b64u = crate::keys::base64url_encode(&ciphertext);
+
+        let error = V2DirectE2eeSession::decrypt_follow_up(
+            &mut alice_state,
+            &alice_binding,
+            &reply_meta,
+            &reply_body,
+        )
+        .expect_err("tampered first reply must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::DecryptFailed);
+        assert_eq!(alice_state, original);
+
+        let mut bad_header = reply_body;
+        bad_header.ratchet_header.n = "1".to_owned();
+        let error = V2DirectE2eeSession::decrypt_follow_up(
+            &mut alice_state,
+            &alice_binding,
+            &reply_meta,
+            &bad_header,
+        )
+        .expect_err("invalid first reply header must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::BadInitMessage);
+        assert_eq!(alice_state, original);
     }
 
     #[test]
@@ -1758,7 +2404,7 @@ mod tests {
             payload_b64u: None,
         };
         let mut wrong_device = bundle(BOB_DID, "dev-bob-other", &exact.peer_e2ee_key_id, &peer_spk);
-        assert!(V2DirectE2eeSession::initiate_session(
+        let error = V2DirectE2eeSession::initiate_session(
             &exact,
             &init_meta,
             &local_static,
@@ -1767,10 +2413,11 @@ mod tests {
             None,
             &plaintext,
         )
-        .is_err());
+        .expect_err("wrong Bundle device must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding);
         wrong_device.owner_device_id = BOB_DEVICE.to_owned();
         wrong_device.static_key_agreement_id = format!("{BOB_DID}#ka-wrong");
-        assert!(V2DirectE2eeSession::initiate_session(
+        let error = V2DirectE2eeSession::initiate_session(
             &exact,
             &init_meta,
             &local_static,
@@ -1779,7 +2426,8 @@ mod tests {
             None,
             &plaintext,
         )
-        .is_err());
+        .expect_err("wrong Bundle key must fail");
+        assert_runtime_kind(error, DirectE2eeV2RuntimeErrorKind::InvalidSecurityBinding);
     }
 
     #[test]
