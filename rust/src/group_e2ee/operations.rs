@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub mod typed;
+pub mod v2;
 pub use typed::*;
 
 const DEVICE_ID_DEFAULT: &str = "default";

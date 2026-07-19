@@ -47,8 +47,33 @@ It then follows the current Manifest entry to the device `signing_key_id` and
 verifies the P1 Ed25519 Object Proof. Device-ID, leaf-key, credential, extension
 or capability substitution fails closed.
 
-The existing v1 typed OpenMLS operation path does not currently emit this
-complete v2 extension/capability profile and must not be advertised as P6 v2.
+The existing v1 typed OpenMLS operation path does not emit this complete v2
+extension/capability profile and must not be advertised as P6 v2. Rust now has
+a separate persistent v2 operation facade at
+`anp::group_e2ee::operations::v2`; it does not reinterpret or migrate v1 group
+state.
+
+## Persistent Rust operation facade
+
+The v2 facade uses `GroupMlsStore` and `ImCoreSqliteGroupMlsStore` so every
+local DID/device pair has independent OpenMLS signer, KeyPackage private
+material, Leaf state and epoch secrets. It provides typed operations for:
+
+- device-bound KeyPackage generation;
+- create/Add/Remove preparation followed by explicit finalize or abort after
+  the Group Host accepts or rejects the request;
+- device-targeted Welcome and ordered Commit processing;
+- one-shot MLS application encryption and device-local decryption.
+
+Every KeyPackage and current Leaf is checked against the exact DID/device
+binding extension and current DID document. Add rejects an existing sibling
+pair or leaf key, Remove selects exactly one DID/device Leaf, application
+decryption verifies both the frozen JCS `authenticated_data` and the sender
+Leaf binding, and no private MLS state appears in a returned wire object.
+
+The facade performs the local cryptographic obligations only. P4 membership,
+owner authorization, current group-state CAS, KeyPackage lease/consumption and
+delivery authorization remain Group Host/product responsibilities.
 
 ## Real OpenMLS multi-device gate
 
@@ -65,9 +90,12 @@ be substituted around another device's actual TLS KeyPackage.
 The test deliberately projects the business member count by de-duplicating MLS
 credential DIDs; it does not change MLS credentials or add an internal counter
 to the cross-domain P6 model. This gate proves that the frozen semantics are
-expressible with the pinned OpenMLS version. It is not a product runtime API,
-does not upgrade the legacy typed operation path to v2, and does not bypass the
-draft extension release gate.
+expressible with the pinned OpenMLS version. The persistent public-facade gate
+in `rust/tests/group_e2ee_v2_operations.rs` exercises the same lifecycle using
+separate on-disk device stores, service-acceptance finalization, canonical
+application plaintext, and a single MLS-encrypted attachment Manifest. Neither
+test upgrades the legacy typed path or bypasses the draft extension release
+gate.
 
 ## Draft extension release gate
 
@@ -84,6 +112,7 @@ updated together with its vectors.
 ```bash
 cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_wire_vectors
 cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_multi_device_mls
+cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_operations
 cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_typed_operations_tests
 (cd golang && go test ./group_e2ee)
 ```
