@@ -34,21 +34,22 @@ const SECRET_JSON_APPLICATION_SUFFIX: &[u8] = b"}";
 ///
 /// This is the application-plaintext boundary for unusually sensitive JSON
 /// controls such as an encrypted root-key transfer. It does not change P5 v2
-/// wire or AAD. The caller must produce canonical JSON object bytes; the
-/// constructor deliberately validates syntax without materializing a
-/// `serde_json::Value`, because doing so would create ordinary heap copies of
-/// every secret string. This controls SDK-owned plaintext allocations; the
-/// cryptographic backend may still use its own temporary buffers.
+/// wire or AAD. `from_canonical_json_object` is a trusted-constructor boundary:
+/// the caller must produce canonical JSON object bytes. The constructor checks
+/// object syntax without materializing a `serde_json::Value`, because doing so
+/// would create ordinary heap copies of every secret string; it deliberately
+/// does not re-canonicalize or prove member order. This controls SDK-owned
+/// plaintext allocations; the cryptographic backend may still use its own
+/// temporary buffers.
 pub struct V2SecretJsonPayload {
     bytes: Zeroizing<Vec<u8>>,
 }
 
 impl V2SecretJsonPayload {
     pub fn from_canonical_json_object(bytes: Vec<u8>) -> Result<Self, DirectE2eeV2Error> {
+        let bytes = Zeroizing::new(bytes);
         validate_secret_json_object(&bytes)?;
-        Ok(Self {
-            bytes: Zeroizing::new(bytes),
-        })
+        Ok(Self { bytes })
     }
 
     pub fn expose_secret(&self) -> &[u8] {
@@ -68,7 +69,7 @@ impl V2SecretJsonPayload {
     }
 
     fn from_canonical_application_bytes(
-        mut application: Zeroizing<Vec<u8>>,
+        application: Zeroizing<Vec<u8>>,
     ) -> Result<Self, DirectE2eeV2Error> {
         if !application.starts_with(SECRET_JSON_APPLICATION_PREFIX)
             || !application.ends_with(SECRET_JSON_APPLICATION_SUFFIX)
@@ -78,11 +79,11 @@ impl V2SecretJsonPayload {
             return Err(runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed));
         }
         let payload_end = application.len() - SECRET_JSON_APPLICATION_SUFFIX.len();
-        application.truncate(payload_end);
-        application.drain(..SECRET_JSON_APPLICATION_PREFIX.len());
-        let payload = std::mem::take(&mut *application);
-        Self::from_canonical_json_object(payload)
-            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))
+        let payload =
+            Zeroizing::new(application[SECRET_JSON_APPLICATION_PREFIX.len()..payload_end].to_vec());
+        validate_secret_json_object(&payload)
+            .map_err(|_| runtime_error(DirectE2eeV2RuntimeErrorKind::DecryptFailed))?;
+        Ok(Self { bytes: payload })
     }
 }
 
@@ -1894,6 +1895,17 @@ mod tests {
             received_follow_up.expose_secret(),
             follow_up.expose_secret()
         );
+    }
+
+    #[test]
+    fn secret_json_trusted_constructor_rejects_invalid_objects() {
+        for invalid in [
+            b"not-json".to_vec(),
+            br#"["not-an-object"]"#.to_vec(),
+            br#"{"unterminated":"secret""#.to_vec(),
+        ] {
+            assert!(V2SecretJsonPayload::from_canonical_json_object(invalid).is_err());
+        }
     }
 
     #[test]
