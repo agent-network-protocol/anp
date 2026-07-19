@@ -7,8 +7,8 @@
 
 use super::{
     active_binding, binding, binding_status, ciphersuite, decode_b64u, delete_binding,
-    delete_openmls_group_state, encode_b64u, ensure_agent, insert_pending_commit, load_group,
-    load_signer, mark_binding_inactive, pending_commit, set_binding_epoch_status, sqlite_error,
+    delete_openmls_group_state, encode_b64u, ensure_agent, load_group, load_signer,
+    mark_binding_inactive, pending_commit, set_binding_epoch_status, sqlite_error,
     update_pending_commit_status, upsert_binding, upsert_binding_status,
 };
 use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsOwnerScope, GroupMlsStore};
@@ -17,11 +17,12 @@ use crate::group_e2ee::{
     group_add_submission_binding_v2, group_remove_submission_binding_v2,
     group_send_authenticated_data_v2, parse_group_application_plaintext_v2,
     validate_group_key_package_binding_v2, validate_leaf_identity_set_v2,
-    verify_did_wba_binding_v2, V2DidWbaBinding, V2DidWbaBindingUnsigned, V2GroupAddBody,
-    V2GroupApplicationPlaintext, V2GroupCipherObject, V2GroupControlMetadata, V2GroupCreateBody,
-    V2GroupKeyPackage, V2GroupRemoveBody, V2GroupSendMetadata, V2GroupStateRef,
-    V2KeyPackageBindingEvidence, V2LeafBindingEvidence, V2LeafExtension, V2LeafIdentity,
-    DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2, GROUP_E2EE_MTI_SUITE_V2, METHOD_GROUP_ADD_V2,
+    verify_did_wba_binding_v2, V2DidWbaBinding, V2DidWbaBindingUnsigned, V2E2eeNotice,
+    V2GroupAddBody, V2GroupApplicationPlaintext, V2GroupCipherObject, V2GroupControlMetadata,
+    V2GroupCreateBody, V2GroupKeyPackage, V2GroupNoticeMetadata, V2GroupRemoveBody,
+    V2GroupSendMetadata, V2GroupStateRef, V2KeyPackageBindingEvidence, V2LeafBindingEvidence,
+    V2LeafExtension, V2LeafIdentity, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2,
+    GROUP_E2EE_MTI_SUITE_V2, GROUP_E2EE_SECURITY_PROFILE_V2, METHOD_GROUP_ADD_V2,
     METHOD_GROUP_REMOVE_V2,
 };
 use crate::PrivateKeyMaterial;
@@ -34,6 +35,7 @@ use openmls_traits::OpenMlsProvider;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::typed::{GroupMlsOperationError, GroupMlsOperationResult};
 
@@ -188,6 +190,73 @@ pub struct V2ProcessCommitOutput {
     pub from_epoch: String,
     pub epoch: String,
     pub self_removed: bool,
+}
+
+/// Standard P6 v2 notice input for one exact local device.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V2ProcessNoticeInput {
+    pub recipient_did: String,
+    pub recipient_device_id: String,
+    pub meta: V2GroupNoticeMetadata,
+    pub notice: V2E2eeNotice,
+    pub member_documents: Vec<V2DidDocument>,
+    pub now: String,
+    pub draft_extension_negotiated: bool,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2ProcessNoticeOutput {
+    pub notice_operation_id: String,
+    pub source_operation_id: Option<String>,
+    pub notice_type: String,
+    pub crypto_group_id_b64u: String,
+    pub from_epoch: String,
+    pub epoch: String,
+    pub self_removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2ReconcilePendingInput {
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2ReconciledPendingCommit {
+    pub pending_commit_id: String,
+    pub operation_id: String,
+    pub group_did: String,
+    pub previous_status: String,
+    pub status: String,
+    pub action: String,
+    pub prepared_response: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2ReconcilePendingOutput {
+    pub pending_commits: Vec<V2ReconciledPendingCommit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct V2MembershipAuthenticatedData {
+    group_did: String,
+    crypto_group_id_b64u: String,
+    group_state_ref: V2GroupStateRef,
+    subject_method: String,
+    member_did: String,
+    member_device_id: String,
+    epoch: String,
+    security_profile: String,
+    sender_did: String,
+    sender_device_id: String,
+    operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct V2PrepareJournalResponse<T> {
+    journal_version: String,
+    prepared_response: Option<T>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -393,13 +462,35 @@ pub fn create_group_prepare_v2<S: GroupMlsStore>(
         .random_vec(CRYPTO_GROUP_ID_LEN)
         .map_err(|err| mls_operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
     let group_id = GroupId::from_slice(&crypto_group_id);
+    let body = V2GroupCreateBody {
+        group_did: input.group_state_ref.group_did.clone(),
+        group_state_ref: input.group_state_ref,
+        suite: GROUP_E2EE_MTI_SUITE_V2.to_owned(),
+        creator_key_package: input.creator_key_package,
+        crypto_group_id_b64u: encode_b64u(group_id.as_slice()),
+        epoch: "0".to_owned(),
+    };
+    body.validate()
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    insert_v2_preparing(
+        &scope.app_conn,
+        &input.pending_commit_id,
+        &input.meta.operation_id,
+        "group create",
+        &input.meta.sender_did,
+        &input.meta.sender_device_id,
+        &body.group_did,
+        &body.crypto_group_id_b64u,
+        &input.meta.sender_did,
+        "active",
+        0,
+        0,
+        &input.request_id,
+    )?;
     let group = MlsGroup::new_with_group_id(
         &scope.provider,
         &signer,
-        &v2_group_create_config(
-            &input.creator_key_package.did_wba_binding,
-            &input.request_id,
-        )?,
+        &v2_group_create_config(&body.creator_key_package.did_wba_binding, &input.request_id)?,
         group_id.clone(),
         credential,
     )
@@ -424,7 +515,7 @@ pub fn create_group_prepare_v2<S: GroupMlsStore>(
         &scope.app_conn,
         &input.meta.sender_did,
         &input.meta.sender_device_id,
-        &input.group_state_ref.group_did,
+        &body.group_state_ref.group_did,
         &group_id,
         0,
         "creator",
@@ -432,38 +523,17 @@ pub fn create_group_prepare_v2<S: GroupMlsStore>(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
-    let body = V2GroupCreateBody {
-        group_did: input.group_state_ref.group_did.clone(),
-        group_state_ref: input.group_state_ref,
-        suite: GROUP_E2EE_MTI_SUITE_V2.to_owned(),
-        creator_key_package: input.creator_key_package,
-        crypto_group_id_b64u: encode_b64u(group_id.as_slice()),
-        epoch: "0".to_owned(),
-    };
-    body.validate()
-        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
     let local_artifact = encode_b64u(b"p6-v2-local-create");
-    insert_pending_commit(
+    mark_v2_prepared(
         &scope.app_conn,
         &input.pending_commit_id,
-        &input.meta.operation_id,
-        "group create",
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
-        &body.group_did,
-        &input.meta.sender_did,
-        "active",
-        0,
-        0,
         &local_artifact,
         None,
         None,
         Some(&encode_b64u(group.epoch_authenticator().as_slice())),
-        &serde_json::to_value(&body)
-            .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?,
+        &body,
         &input.request_id,
-    )
-    .map_err(GroupMlsOperationError::from)?;
+    )?;
     Ok(V2PreparedCreate {
         pending_commit_id: input.pending_commit_id,
         body,
@@ -544,6 +614,21 @@ pub fn add_member_prepare_v2<S: GroupMlsStore>(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
+    insert_v2_preparing(
+        &scope.app_conn,
+        &input.pending_commit_id,
+        &input.meta.operation_id,
+        "group add-member",
+        &input.meta.sender_did,
+        &input.meta.sender_device_id,
+        &input.group_state_ref.group_did,
+        &crypto_group_id_b64u,
+        &target.agent_did,
+        "active",
+        local_binding.epoch,
+        next_epoch,
+        &input.request_id,
+    )?;
     let (commit, welcome, _) = group
         .add_members(&scope.provider, &signer, &[key_package])
         .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id))?;
@@ -608,15 +693,6 @@ pub fn add_member_prepare_v2<S: GroupMlsStore>(
     persist_pending_membership(
         &scope,
         &input.pending_commit_id,
-        &input.meta.operation_id,
-        "group add-member",
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
-        &body.group_state_ref.group_did,
-        &body.member_did,
-        "active",
-        local_binding.epoch,
-        next_epoch,
         &body.commit_b64u,
         Some(&body.ratchet_tree_b64u),
         &body,
@@ -699,19 +775,31 @@ pub fn remove_member_prepare_v2<S: GroupMlsStore>(
         &input.request_id,
     )?;
     group.set_aad(aad.clone());
+    let signer = load_signer(
+        &scope.provider,
+        &scope.app_conn,
+        &input.meta.sender_did,
+        &input.meta.sender_device_id,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    insert_v2_preparing(
+        &scope.app_conn,
+        &input.pending_commit_id,
+        &input.meta.operation_id,
+        "group remove-member",
+        &input.meta.sender_did,
+        &input.meta.sender_device_id,
+        &input.group_state_ref.group_did,
+        &crypto_group_id_b64u,
+        &input.member_did,
+        "removed",
+        local_binding.epoch,
+        next_epoch,
+        &input.request_id,
+    )?;
     let (commit, welcome, _) = group
-        .remove_members(
-            &scope.provider,
-            &load_signer(
-                &scope.provider,
-                &scope.app_conn,
-                &input.meta.sender_did,
-                &input.meta.sender_device_id,
-                &input.request_id,
-            )
-            .map_err(GroupMlsOperationError::from)?,
-            &[leaf.index],
-        )
+        .remove_members(&scope.provider, &signer, &[leaf.index])
         .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id))?;
     if welcome.is_some() {
         return Err(operation_error(
@@ -757,15 +845,6 @@ pub fn remove_member_prepare_v2<S: GroupMlsStore>(
     persist_pending_membership(
         &scope,
         &input.pending_commit_id,
-        &input.meta.operation_id,
-        "group remove-member",
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
-        &body.group_state_ref.group_did,
-        &body.member_did,
-        "removed",
-        local_binding.epoch,
-        next_epoch,
         &body.commit_b64u,
         None,
         &body,
@@ -792,71 +871,24 @@ pub fn finalize_commit_v2<S: GroupMlsStore>(
             &input.request_id,
         ));
     }
-    if pending.status != "finalized" {
-        if pending.command == "group create" {
-            let group = load_group(
-                &scope.provider,
-                &GroupId::from_slice(
-                    &decode_b64u(&pending.crypto_group_id_b64u, &input.request_id)
-                        .map_err(GroupMlsOperationError::from)?,
-                ),
-                &input.request_id,
-            )
-            .map_err(GroupMlsOperationError::from)?;
-            if group.epoch().as_u64() != pending.to_epoch {
-                return Err(operation_error(
-                    "group.e2ee.epoch_conflict",
-                    "created group epoch changed before service acceptance",
-                    &input.request_id,
-                ));
-            }
-        } else {
-            let mut group = load_group(
-                &scope.provider,
-                &GroupId::from_slice(
-                    &decode_b64u(&pending.crypto_group_id_b64u, &input.request_id)
-                        .map_err(GroupMlsOperationError::from)?,
-                ),
-                &input.request_id,
-            )
-            .map_err(GroupMlsOperationError::from)?;
-            let staged = group.pending_commit().ok_or_else(|| {
-                operation_error(
-                    "group.e2ee.commit_invalid",
-                    "OpenMLS pending commit is missing",
-                    &input.request_id,
-                )
-            })?;
-            if staged.epoch().as_u64() != pending.to_epoch {
-                return Err(operation_error(
-                    "group.e2ee.epoch_conflict",
-                    "OpenMLS pending epoch changed before service acceptance",
-                    &input.request_id,
-                ));
-            }
-            group.merge_pending_commit(&scope.provider).map_err(|err| {
-                mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id)
-            })?;
-        }
-        // P6 v2 changes one exact leaf.  A sibling leaf can share the local
-        // controller DID, so DID equality must never deactivate this device.
-        set_binding_epoch_status(
-            &scope.app_conn,
-            &pending.agent_did,
-            &pending.device_id,
-            &pending.group_did,
-            pending.to_epoch,
-            "active",
+    if pending.status == "preparing" {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "prepare was interrupted; reconcile_pending_v2 is required",
             &input.request_id,
-        )
-        .map_err(GroupMlsOperationError::from)?;
+        ));
+    }
+    if matches!(pending.status.as_str(), "prepared" | "pending") {
         update_pending_commit_status(
             &scope.app_conn,
             &pending.pending_commit_id,
-            "finalized",
+            "accepted",
             &input.request_id,
         )
         .map_err(GroupMlsOperationError::from)?;
+    }
+    if pending.status != "finalized" {
+        complete_accepted_pending(&scope, &pending, &input.request_id)?;
     }
     Ok(V2FinalizeOutput {
         pending_commit_id: pending.pending_commit_id,
@@ -876,45 +908,15 @@ pub fn abort_commit_v2<S: GroupMlsStore>(
     let scope = open_scope(store, &input.request_id)?;
     let pending = pending_commit(&scope.app_conn, &input.pending_commit_id, &input.request_id)
         .map_err(GroupMlsOperationError::from)?;
-    if pending.status == "finalized" {
+    if matches!(pending.status.as_str(), "accepted" | "finalized") {
         return Err(operation_error(
             "group.e2ee.commit_invalid",
-            "finalized pending commit cannot be aborted",
+            "an accepted or finalized pending commit cannot be aborted",
             &input.request_id,
         ));
     }
     if pending.status != "aborted" {
-        if pending.command == "group create" {
-            let group_id = GroupId::from_slice(
-                &decode_b64u(&pending.crypto_group_id_b64u, &input.request_id)
-                    .map_err(GroupMlsOperationError::from)?,
-            );
-            delete_openmls_group_state(&scope.app_conn, &group_id, &input.request_id)
-                .map_err(GroupMlsOperationError::from)?;
-            delete_binding(
-                &scope.app_conn,
-                &pending.agent_did,
-                &pending.device_id,
-                &pending.group_did,
-                &input.request_id,
-            )
-            .map_err(GroupMlsOperationError::from)?;
-        } else {
-            let mut group = load_group(
-                &scope.provider,
-                &GroupId::from_slice(
-                    &decode_b64u(&pending.crypto_group_id_b64u, &input.request_id)
-                        .map_err(GroupMlsOperationError::from)?,
-                ),
-                &input.request_id,
-            )
-            .map_err(GroupMlsOperationError::from)?;
-            group
-                .clear_pending_commit(scope.provider.storage())
-                .map_err(|err| {
-                    mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id)
-                })?;
-        }
+        rollback_pending(&scope, &pending, &input.request_id)?;
         update_pending_commit_status(
             &scope.app_conn,
             &pending.pending_commit_id,
@@ -934,6 +936,200 @@ pub fn abort_commit_v2<S: GroupMlsStore>(
     })
 }
 
+/// Repairs write-ahead prepare/finalize state after a process restart.
+///
+/// `preparing` entries are conservatively rolled back because the service has
+/// not yet received a complete prepared artifact. `prepared` entries remain
+/// pending an explicit service decision. `accepted` entries are completed
+/// idempotently from the persisted OpenMLS state.
+pub fn reconcile_pending_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2ReconcilePendingInput,
+) -> GroupMlsOperationResult<V2ReconcilePendingOutput> {
+    let scope = open_scope(store, &input.request_id)?;
+    let mut statement = scope
+        .app_conn
+        .prepare(
+            "SELECT pending_commit_id
+             FROM pending_commits
+             WHERE status IN ('preparing', 'prepared', 'pending', 'accepted')
+             ORDER BY created_at, pending_commit_id",
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    drop(statement);
+
+    let mut reconciled = Vec::with_capacity(ids.len());
+    for pending_commit_id in ids {
+        let pending = pending_commit(&scope.app_conn, &pending_commit_id, &input.request_id)
+            .map_err(GroupMlsOperationError::from)?;
+        let previous_status = pending.status.clone();
+        let (status, action) = match pending.status.as_str() {
+            "preparing" => {
+                rollback_pending(&scope, &pending, &input.request_id)?;
+                update_pending_commit_status(
+                    &scope.app_conn,
+                    &pending.pending_commit_id,
+                    "aborted",
+                    &input.request_id,
+                )
+                .map_err(GroupMlsOperationError::from)?;
+                ("aborted", "rolled-back-interrupted-prepare")
+            }
+            "prepared" | "pending" => ("prepared", "awaiting-service-decision"),
+            "accepted" => {
+                complete_accepted_pending(&scope, &pending, &input.request_id)?;
+                ("finalized", "completed-accepted-commit")
+            }
+            _ => continue,
+        };
+        let prepared_response = if status == "prepared" {
+            pending_prepared_response(
+                &scope.app_conn,
+                &pending.pending_commit_id,
+                &input.request_id,
+            )?
+        } else {
+            None
+        };
+        reconciled.push(V2ReconciledPendingCommit {
+            pending_commit_id: pending.pending_commit_id,
+            operation_id: pending.operation_id,
+            group_did: pending.group_did,
+            previous_status,
+            status: status.to_owned(),
+            action: action.to_owned(),
+            prepared_response,
+        });
+    }
+    Ok(V2ReconcilePendingOutput {
+        pending_commits: reconciled,
+    })
+}
+
+fn complete_accepted_pending(
+    scope: &GroupMlsOperationScope,
+    pending: &super::PendingCommitRecord,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let group_id = GroupId::from_slice(
+        &decode_b64u(&pending.crypto_group_id_b64u, request_id)
+            .map_err(GroupMlsOperationError::from)?,
+    );
+    let mut group =
+        load_group(&scope.provider, &group_id, request_id).map_err(GroupMlsOperationError::from)?;
+    if pending.command == "group create" {
+        if group.epoch().as_u64() != pending.to_epoch {
+            return Err(operation_error(
+                "group.e2ee.epoch_conflict",
+                "created group epoch changed before service acceptance",
+                request_id,
+            ));
+        }
+    } else if group.epoch().as_u64() == pending.from_epoch {
+        let staged = group.pending_commit().ok_or_else(|| {
+            operation_error(
+                "group.e2ee.commit_invalid",
+                "OpenMLS pending commit is missing",
+                request_id,
+            )
+        })?;
+        if staged.epoch().as_u64() != pending.to_epoch {
+            return Err(operation_error(
+                "group.e2ee.epoch_conflict",
+                "OpenMLS pending epoch changed before service acceptance",
+                request_id,
+            ));
+        }
+        group
+            .merge_pending_commit(&scope.provider)
+            .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, request_id))?;
+    } else if group.epoch().as_u64() != pending.to_epoch || group.pending_commit().is_some() {
+        return Err(operation_error(
+            "group.e2ee.epoch_conflict",
+            "persisted OpenMLS state cannot complete the accepted commit",
+            request_id,
+        ));
+    }
+
+    // P6 v2 changes one exact leaf. A sibling leaf can share the local
+    // controller DID, so DID equality must never deactivate this device.
+    set_binding_epoch_status(
+        &scope.app_conn,
+        &pending.agent_did,
+        &pending.device_id,
+        &pending.group_did,
+        pending.to_epoch,
+        "active",
+        request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    update_pending_commit_status(
+        &scope.app_conn,
+        &pending.pending_commit_id,
+        "finalized",
+        request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    Ok(())
+}
+
+fn rollback_pending(
+    scope: &GroupMlsOperationScope,
+    pending: &super::PendingCommitRecord,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let group_id = GroupId::from_slice(
+        &decode_b64u(&pending.crypto_group_id_b64u, request_id)
+            .map_err(GroupMlsOperationError::from)?,
+    );
+    if pending.command == "group create" {
+        delete_openmls_group_state(&scope.app_conn, &group_id, request_id)
+            .map_err(GroupMlsOperationError::from)?;
+        delete_binding(
+            &scope.app_conn,
+            &pending.agent_did,
+            &pending.device_id,
+            &pending.group_did,
+            request_id,
+        )
+        .map_err(GroupMlsOperationError::from)?;
+        return Ok(());
+    }
+
+    let Some(mut group) = MlsGroup::load(scope.provider.storage(), &group_id)
+        .map_err(|err| mls_operation_error("group.e2ee.state_not_ready", err, request_id))?
+    else {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "OpenMLS group state is missing during prepare reconciliation",
+            request_id,
+        ));
+    };
+    if group.epoch().as_u64() == pending.to_epoch {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "a merged membership commit cannot be rolled back",
+            request_id,
+        ));
+    }
+    if group.epoch().as_u64() != pending.from_epoch {
+        return Err(operation_error(
+            "group.e2ee.epoch_conflict",
+            "OpenMLS epoch changed during prepare reconciliation",
+            request_id,
+        ));
+    }
+    group
+        .clear_pending_commit(scope.provider.storage())
+        .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, request_id))?;
+    Ok(())
+}
+
 pub fn process_welcome_v2<S: GroupMlsStore>(
     store: &S,
     input: V2ProcessWelcomeInput,
@@ -944,6 +1140,14 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
         &input.recipient_device_id,
         &input.request_id,
     )?;
+    let scope = open_scope(store, &input.request_id)?;
+    process_welcome_with_scope(&scope, input)
+}
+
+fn process_welcome_with_scope(
+    scope: &GroupMlsOperationScope,
+    input: V2ProcessWelcomeInput,
+) -> GroupMlsOperationResult<V2ProcessCommitOutput> {
     if input.group_state_ref.group_did != input.group_did {
         return Err(operation_error(
             "group.e2ee.welcome_invalid",
@@ -952,7 +1156,6 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
         ));
     }
     let target_epoch = parse_epoch(&input.epoch, &input.request_id)?;
-    let scope = open_scope(store, &input.request_id)?;
     ensure_agent(
         &scope.provider,
         &scope.app_conn,
@@ -970,7 +1173,7 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
     )
     .map_err(GroupMlsOperationError::from)?
     {
-        if existing.epoch >= target_epoch
+        if existing.epoch == target_epoch
             && encode_b64u(existing.openmls_group_id.as_slice()) == input.crypto_group_id_b64u
         {
             let group = load_group(
@@ -982,7 +1185,7 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
             ensure_group_head(&group, &existing, &input.group_did, &input.request_id)?;
             return Ok(V2ProcessCommitOutput {
                 crypto_group_id_b64u: input.crypto_group_id_b64u,
-                from_epoch: existing.epoch.to_string(),
+                from_epoch: target_epoch.saturating_sub(1).to_string(),
                 epoch: existing.epoch.to_string(),
                 self_removed: false,
             });
@@ -1026,7 +1229,7 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
         .into_group(&scope.provider)
         .map_err(|err| mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id))?;
     let validation = validate_all_group_leaves(
-        &scope,
+        scope,
         &group,
         &input.member_documents,
         &input.now,
@@ -1072,6 +1275,637 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
         epoch: target_epoch.to_string(),
         self_removed: false,
     })
+}
+
+/// Processes the standard device-targeted P6 v2 `group.e2ee.notice` shape.
+///
+/// Commit callers do not provide a second, synthetic control metadata object.
+/// The originating operation, sender DID/device, affected leaf, state reference,
+/// crypto group and epoch are recovered from the authenticated MLS Commit AAD
+/// and checked against the notice plus current DID documents.
+pub fn process_notice_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2ProcessNoticeInput,
+) -> GroupMlsOperationResult<V2ProcessNoticeOutput> {
+    validate_notice_outer(&input)?;
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        &input.recipient_did,
+        &input.recipient_device_id,
+        &input.request_id,
+    )?;
+    let scope = open_scope(store, &input.request_id)?;
+    let digest = notice_input_digest(&input)?;
+    let receipt_key = format!("p6-v2-notice:{}", input.meta.operation_id);
+    match begin_notice_receipt(&scope.app_conn, &receipt_key, &digest, &input.request_id)? {
+        NoticeReceiptState::Finalized(output) => return Ok(output),
+        NoticeReceiptState::Processing(Some(output)) => {
+            if recover_notice_if_applied(&scope, &input, &output)? {
+                finalize_notice_receipt(&scope.app_conn, &receipt_key, &output, &input.request_id)?;
+                return Ok(output);
+            }
+        }
+        NoticeReceiptState::New | NoticeReceiptState::Processing(None) => {}
+    }
+
+    let output = match input.notice.notice_type.as_str() {
+        "welcome-delivery" => {
+            let processed = process_welcome_with_scope(
+                &scope,
+                V2ProcessWelcomeInput {
+                    recipient_did: input.recipient_did.clone(),
+                    recipient_device_id: input.recipient_device_id.clone(),
+                    group_did: input.notice.group_did.clone(),
+                    group_state_ref: input.notice.group_state_ref.clone(),
+                    crypto_group_id_b64u: input.notice.crypto_group_id_b64u.clone(),
+                    epoch: input.notice.epoch.clone(),
+                    welcome_b64u: input.notice.welcome_b64u.clone().ok_or_else(|| {
+                        operation_error(
+                            "group.e2ee.welcome_invalid",
+                            "welcome-delivery is missing welcome_b64u",
+                            &input.request_id,
+                        )
+                    })?,
+                    ratchet_tree_b64u: input.notice.ratchet_tree_b64u.clone().ok_or_else(|| {
+                        operation_error(
+                            "group.e2ee.welcome_invalid",
+                            "welcome-delivery is missing ratchet_tree_b64u",
+                            &input.request_id,
+                        )
+                    })?,
+                    member_documents: input.member_documents.clone(),
+                    now: input.now.clone(),
+                    draft_extension_negotiated: input.draft_extension_negotiated,
+                    request_id: input.request_id.clone(),
+                },
+            )?;
+            if let Err(err) = validate_persisted_epoch_authenticator(
+                &scope,
+                &input.notice.crypto_group_id_b64u,
+                input.notice.epoch_authenticator.as_deref(),
+                &input.request_id,
+            ) {
+                let group_id = GroupId::from_slice(
+                    &decode_b64u(&input.notice.crypto_group_id_b64u, &input.request_id)
+                        .map_err(GroupMlsOperationError::from)?,
+                );
+                delete_openmls_group_state(&scope.app_conn, &group_id, &input.request_id)
+                    .map_err(GroupMlsOperationError::from)?;
+                delete_binding(
+                    &scope.app_conn,
+                    &input.recipient_did,
+                    &input.recipient_device_id,
+                    &input.notice.group_did,
+                    &input.request_id,
+                )
+                .map_err(GroupMlsOperationError::from)?;
+                return Err(err);
+            }
+            V2ProcessNoticeOutput {
+                notice_operation_id: input.meta.operation_id.clone(),
+                source_operation_id: None,
+                notice_type: input.notice.notice_type.clone(),
+                crypto_group_id_b64u: processed.crypto_group_id_b64u,
+                from_epoch: processed.from_epoch,
+                epoch: processed.epoch,
+                self_removed: processed.self_removed,
+            }
+        }
+        "commit-delivery" => process_notice_commit(&scope, &input, &receipt_key)?,
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.notice_type_unsupported",
+                "unsupported P6 v2 notice type",
+                &input.request_id,
+            ))
+        }
+    };
+    set_notice_receipt_output(
+        &scope.app_conn,
+        &receipt_key,
+        &output,
+        "processing",
+        &input.request_id,
+    )?;
+    finalize_notice_receipt(&scope.app_conn, &receipt_key, &output, &input.request_id)?;
+    Ok(output)
+}
+
+fn process_notice_commit(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessNoticeInput,
+    receipt_key: &str,
+) -> GroupMlsOperationResult<V2ProcessNoticeOutput> {
+    let local_binding = binding(
+        &scope.app_conn,
+        &input.recipient_did,
+        &input.recipient_device_id,
+        &input.notice.group_did,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    let mut group = load_group(
+        &scope.provider,
+        &local_binding.openmls_group_id,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    ensure_group_head(
+        &group,
+        &local_binding,
+        &input.notice.group_did,
+        &input.request_id,
+    )?;
+    if input.notice.crypto_group_id_b64u != encode_b64u(group.group_id().as_slice()) {
+        return Err(operation_error(
+            "group.e2ee.crypto_group_mismatch",
+            "notice crypto group does not match local state",
+            &input.request_id,
+        ));
+    }
+    let target_epoch = parse_epoch(&input.notice.epoch, &input.request_id)?;
+    if target_epoch
+        != local_binding.epoch.checked_add(1).ok_or_else(|| {
+            operation_error(
+                "group.e2ee.epoch_conflict",
+                "epoch overflow",
+                &input.request_id,
+            )
+        })?
+    {
+        return Err(operation_error(
+            "group.e2ee.epoch_conflict",
+            "notice Commit epoch is not exactly local epoch plus one",
+            &input.request_id,
+        ));
+    }
+    let message = MlsMessageIn::tls_deserialize_exact(
+        decode_b64u(
+            input.notice.commit_b64u.as_deref().ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.commit_invalid",
+                    "commit-delivery is missing commit_b64u",
+                    &input.request_id,
+                )
+            })?,
+            &input.request_id,
+        )
+        .map_err(GroupMlsOperationError::from)?,
+    )
+    .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id))?;
+    let protocol = message.try_into_protocol_message().map_err(|_| {
+        operation_error(
+            "group.e2ee.commit_invalid",
+            "commit_b64u is not an MLS protocol message",
+            &input.request_id,
+        )
+    })?;
+    let processed = group
+        .process_message(&scope.provider, protocol)
+        .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id))?;
+    let authenticated = parse_membership_authenticated_data(processed.aad(), &input.request_id)?;
+    validate_notice_membership_binding(&authenticated, &input.notice, &input.request_id)?;
+    let sender_document = exact_did_document(
+        &input.member_documents,
+        &authenticated.sender_did,
+        &input.request_id,
+    )?;
+    validate_processed_sender(
+        scope,
+        &group,
+        processed.sender(),
+        &authenticated.sender_did,
+        &authenticated.sender_device_id,
+        sender_document,
+        &input.now,
+        input.draft_extension_negotiated,
+        &input.request_id,
+    )?;
+    let staged = match processed.into_content() {
+        ProcessedMessageContent::StagedCommitMessage(value) => *value,
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "commit_b64u does not contain a staged Commit",
+                &input.request_id,
+            ))
+        }
+    };
+    if staged.epoch().as_u64() != target_epoch {
+        return Err(operation_error(
+            "group.e2ee.epoch_conflict",
+            "staged Commit epoch does not match the notice epoch",
+            &input.request_id,
+        ));
+    }
+    let method = if authenticated.subject_method == METHOD_GROUP_ADD_V2 {
+        V2MembershipCommitMethod::Add
+    } else {
+        V2MembershipCommitMethod::Remove
+    };
+    let member_document = exact_did_document(
+        &input.member_documents,
+        &input.notice.subject_did,
+        &input.request_id,
+    )?;
+    validate_staged_membership_delta(
+        scope,
+        &group,
+        &staged,
+        &method,
+        &input.notice.subject_did,
+        &input.notice.subject_device_id,
+        member_document,
+        &input.now,
+        input.draft_extension_negotiated,
+        &input.request_id,
+    )?;
+    if let Some(expected) = input.notice.epoch_authenticator.as_deref() {
+        let actual = staged.epoch_authenticator().ok_or_else(|| {
+            operation_error(
+                "group.e2ee.commit_invalid",
+                "notice carries an epoch authenticator for a removed local leaf",
+                &input.request_id,
+            )
+        })?;
+        if encode_b64u(actual.as_slice()) != expected {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "notice epoch_authenticator does not match the staged Commit",
+                &input.request_id,
+            ));
+        }
+    }
+    let self_removed = staged.self_removed();
+    let output = V2ProcessNoticeOutput {
+        notice_operation_id: input.meta.operation_id.clone(),
+        source_operation_id: Some(authenticated.operation_id),
+        notice_type: input.notice.notice_type.clone(),
+        crypto_group_id_b64u: input.notice.crypto_group_id_b64u.clone(),
+        from_epoch: local_binding.epoch.to_string(),
+        epoch: target_epoch.to_string(),
+        self_removed,
+    };
+    set_notice_receipt_output(
+        &scope.app_conn,
+        receipt_key,
+        &output,
+        "processing",
+        &input.request_id,
+    )?;
+    group
+        .merge_staged_commit(&scope.provider, staged)
+        .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, &input.request_id))?;
+    let status = if self_removed { "removed" } else { "active" };
+    set_binding_epoch_status(
+        &scope.app_conn,
+        &input.recipient_did,
+        &input.recipient_device_id,
+        &input.notice.group_did,
+        target_epoch,
+        status,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    Ok(output)
+}
+
+enum NoticeReceiptState {
+    New,
+    Processing(Option<V2ProcessNoticeOutput>),
+    Finalized(V2ProcessNoticeOutput),
+}
+
+fn validate_notice_outer(input: &V2ProcessNoticeInput) -> GroupMlsOperationResult<()> {
+    input
+        .meta
+        .validate()
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    input
+        .notice
+        .validate()
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    if input.meta.sender_did != input.notice.group_did {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "notice sender_did must equal its group_did business anchor",
+            &input.request_id,
+        ));
+    }
+    if input.meta.target.did != input.recipient_did
+        || input.meta.recipient_device_id != input.recipient_device_id
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "notice target does not identify the exact local recipient device",
+            &input.request_id,
+        ));
+    }
+    if input.notice.notice_type == "welcome-delivery"
+        && (input.notice.subject_did != input.recipient_did
+            || input.notice.subject_device_id != input.recipient_device_id
+            || input.notice.subject_status != "active")
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "Welcome target must equal the active added subject device",
+            &input.request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn notice_input_digest(input: &V2ProcessNoticeInput) -> GroupMlsOperationResult<String> {
+    let canonical = crate::canonical_json::canonicalize_json(&json!({
+        "meta": input.meta,
+        "notice": input.notice,
+        "recipient_did": input.recipient_did,
+        "recipient_device_id": input.recipient_device_id,
+    }))
+    .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    Ok(encode_b64u(&Sha256::digest(canonical)))
+}
+
+fn begin_notice_receipt(
+    conn: &rusqlite::Connection,
+    receipt_key: &str,
+    digest: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<NoticeReceiptState> {
+    let existing = conn
+        .query_row(
+            "SELECT input_digest, response_json, status
+             FROM operations WHERE operation_id = ?1",
+            params![receipt_key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if let Some((stored_digest, response_json, status)) = existing {
+        if stored_digest != digest {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "notice operation_id was replayed with different content",
+                request_id,
+            ));
+        }
+        let output =
+            if response_json == "null" {
+                None
+            } else {
+                Some(serde_json::from_str(&response_json).map_err(|err| {
+                    operation_error("group.e2ee.state_not_ready", err, request_id)
+                })?)
+            };
+        return match status.as_str() {
+            "processing" => Ok(NoticeReceiptState::Processing(output)),
+            "finalized" => output.map(NoticeReceiptState::Finalized).ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.state_not_ready",
+                    "finalized notice receipt has no output",
+                    request_id,
+                )
+            }),
+            _ => Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "notice receipt has an unsupported state",
+                request_id,
+            )),
+        };
+    }
+    conn.execute(
+        "INSERT INTO operations(operation_id, command, input_digest, response_json, status, updated_at)
+         VALUES (?1, 'group.e2ee.notice.v2', ?2, 'null', 'processing', CURRENT_TIMESTAMP)",
+        params![receipt_key, digest],
+    )
+    .map_err(|err| sqlite_operation_error(err, request_id))?;
+    Ok(NoticeReceiptState::New)
+}
+
+fn set_notice_receipt_output(
+    conn: &rusqlite::Connection,
+    receipt_key: &str,
+    output: &V2ProcessNoticeOutput,
+    status: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let expected_status = status;
+    conn.execute(
+        "UPDATE operations
+             SET response_json = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP
+             WHERE operation_id = ?1",
+        params![
+            receipt_key,
+            serde_json::to_string(output).map_err(|err| operation_error(
+                "group.e2ee.state_not_ready",
+                err,
+                request_id,
+            ))?,
+            expected_status,
+        ],
+    )
+    .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let persisted_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM operations WHERE operation_id = ?1",
+            params![receipt_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if persisted_status.as_deref() != Some(expected_status) {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "notice receipt disappeared during processing",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn finalize_notice_receipt(
+    conn: &rusqlite::Connection,
+    receipt_key: &str,
+    output: &V2ProcessNoticeOutput,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    set_notice_receipt_output(conn, receipt_key, output, "finalized", request_id)
+}
+
+fn recover_notice_if_applied(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessNoticeInput,
+    output: &V2ProcessNoticeOutput,
+) -> GroupMlsOperationResult<bool> {
+    let expected_epoch = parse_epoch(&output.epoch, &input.request_id)?;
+    let group_id = GroupId::from_slice(
+        &decode_b64u(&output.crypto_group_id_b64u, &input.request_id)
+            .map_err(GroupMlsOperationError::from)?,
+    );
+    let Some(group) = MlsGroup::load(scope.provider.storage(), &group_id)
+        .map_err(|err| mls_operation_error("group.e2ee.state_not_ready", err, &input.request_id))?
+    else {
+        return Ok(false);
+    };
+    if group.epoch().as_u64() != expected_epoch {
+        return Ok(false);
+    }
+    let status = if output.self_removed {
+        "removed"
+    } else {
+        "active"
+    };
+    if binding_status(
+        &scope.app_conn,
+        &input.recipient_did,
+        &input.recipient_device_id,
+        &input.notice.group_did,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?
+    .is_some()
+    {
+        set_binding_epoch_status(
+            &scope.app_conn,
+            &input.recipient_did,
+            &input.recipient_device_id,
+            &input.notice.group_did,
+            expected_epoch,
+            status,
+            &input.request_id,
+        )
+        .map_err(GroupMlsOperationError::from)?;
+    } else if !output.self_removed {
+        upsert_binding(
+            &scope.app_conn,
+            &input.recipient_did,
+            &input.recipient_device_id,
+            &input.notice.group_did,
+            &group_id,
+            expected_epoch,
+            "member",
+            &input.request_id,
+        )
+        .map_err(GroupMlsOperationError::from)?;
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn validate_persisted_epoch_authenticator(
+    scope: &GroupMlsOperationScope,
+    crypto_group_id_b64u: &str,
+    expected: Option<&str>,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let group_id = GroupId::from_slice(
+        &decode_b64u(crypto_group_id_b64u, request_id).map_err(GroupMlsOperationError::from)?,
+    );
+    let group =
+        load_group(&scope.provider, &group_id, request_id).map_err(GroupMlsOperationError::from)?;
+    if encode_b64u(group.epoch_authenticator().as_slice()) != expected {
+        return Err(operation_error(
+            "group.e2ee.welcome_invalid",
+            "notice epoch_authenticator does not match the Welcome state",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn parse_membership_authenticated_data(
+    aad: &[u8],
+    request_id: &str,
+) -> GroupMlsOperationResult<V2MembershipAuthenticatedData> {
+    let value: Value = serde_json::from_slice(aad)
+        .map_err(|err| operation_error("group.e2ee.commit_invalid", err, request_id))?;
+    let canonical = crate::canonical_json::canonicalize_json(&value)
+        .map_err(|err| operation_error("group.e2ee.commit_invalid", err, request_id))?;
+    if canonical != aad {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "Commit authenticated_data is not exact RFC 8785 JCS",
+            request_id,
+        ));
+    }
+    let authenticated: V2MembershipAuthenticatedData = serde_json::from_value(value)
+        .map_err(|err| operation_error("group.e2ee.commit_invalid", err, request_id))?;
+    for (field, value) in [
+        ("sender_did", authenticated.sender_did.as_str()),
+        ("sender_device_id", authenticated.sender_device_id.as_str()),
+        ("operation_id", authenticated.operation_id.as_str()),
+    ] {
+        require_non_empty(field, value, request_id)?;
+    }
+    Ok(authenticated)
+}
+
+fn validate_notice_membership_binding(
+    authenticated: &V2MembershipAuthenticatedData,
+    notice: &V2E2eeNotice,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let expected_method = match notice.subject_status.as_str() {
+        "active" => METHOD_GROUP_ADD_V2,
+        "removed" => METHOD_GROUP_REMOVE_V2,
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "notice subject_status cannot identify Add or Remove",
+                request_id,
+            ))
+        }
+    };
+    if authenticated.group_did != notice.group_did
+        || authenticated.crypto_group_id_b64u != notice.crypto_group_id_b64u
+        || authenticated.group_state_ref != notice.group_state_ref
+        || authenticated.subject_method != expected_method
+        || authenticated.member_did != notice.subject_did
+        || authenticated.member_device_id != notice.subject_device_id
+        || authenticated.epoch != notice.epoch
+        || authenticated.security_profile != GROUP_E2EE_SECURITY_PROFILE_V2
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "Commit authenticated_data does not match the standard notice",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn exact_did_document<'a>(
+    documents: &'a [V2DidDocument],
+    did: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<&'a Value> {
+    let mut matches = documents.iter().filter(|entry| entry.did == did);
+    let document = matches.next().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.did_binding_invalid",
+            format!("missing DID document for {did}"),
+            request_id,
+        )
+    })?;
+    if matches.next().is_some() || document.document.get("id").and_then(Value::as_str) != Some(did)
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            format!("DID document set is ambiguous or mismatched for {did}"),
+            request_id,
+        ));
+    }
+    Ok(&document.document)
 }
 
 pub fn process_commit_v2<S: GroupMlsStore>(
@@ -1985,41 +2819,153 @@ fn ensure_group_head(
 fn persist_pending_membership<T: Serialize>(
     scope: &GroupMlsOperationScope,
     pending_commit_id: &str,
-    operation_id: &str,
-    command: &str,
-    actor_did: &str,
-    actor_device_id: &str,
-    group_did: &str,
-    subject_did: &str,
-    subject_status: &str,
-    from_epoch: u64,
-    to_epoch: u64,
     commit_b64u: &str,
     ratchet_tree_b64u: Option<&str>,
     response: &T,
     request_id: &str,
 ) -> GroupMlsOperationResult<()> {
-    insert_pending_commit(
+    mark_v2_prepared(
         &scope.app_conn,
         pending_commit_id,
-        operation_id,
-        command,
-        actor_did,
-        actor_device_id,
-        group_did,
-        subject_did,
-        subject_status,
-        from_epoch,
-        to_epoch,
         commit_b64u,
         ratchet_tree_b64u,
         None,
         None,
-        &serde_json::to_value(response)
-            .map_err(|err| operation_error("group.e2ee.commit_invalid", err, request_id))?,
+        response,
         request_id,
     )
-    .map_err(GroupMlsOperationError::from)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_v2_preparing(
+    conn: &rusqlite::Connection,
+    pending_commit_id: &str,
+    operation_id: &str,
+    command: &str,
+    actor_did: &str,
+    actor_device_id: &str,
+    group_did: &str,
+    crypto_group_id_b64u: &str,
+    subject_did: &str,
+    subject_status: &str,
+    from_epoch: u64,
+    to_epoch: u64,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let journal = V2PrepareJournalResponse::<Value> {
+        journal_version: "p6-v2-prepare-journal-v1".to_owned(),
+        prepared_response: None,
+    };
+    conn.execute(
+        "INSERT INTO pending_commits(
+            pending_commit_id, operation_id, command, agent_did, device_id, group_did,
+            crypto_group_id_b64u, subject_did, subject_status, from_epoch, to_epoch,
+            commit_b64u, ratchet_tree_b64u, group_info_b64u,
+            epoch_authenticator_b64u, status, response_json, updated_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                 '', NULL, NULL, NULL, 'preparing', ?12, CURRENT_TIMESTAMP)",
+        params![
+            pending_commit_id,
+            operation_id,
+            command,
+            actor_did,
+            actor_device_id,
+            group_did,
+            crypto_group_id_b64u,
+            subject_did,
+            subject_status,
+            from_epoch as i64,
+            to_epoch as i64,
+            serde_json::to_string(&journal).map_err(|err| operation_error(
+                "group.e2ee.state_not_ready",
+                err,
+                request_id,
+            ))?,
+        ],
+    )
+    .map_err(|err| sqlite_operation_error(err, request_id))?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mark_v2_prepared<T: Serialize>(
+    conn: &rusqlite::Connection,
+    pending_commit_id: &str,
+    commit_b64u: &str,
+    ratchet_tree_b64u: Option<&str>,
+    group_info_b64u: Option<&str>,
+    epoch_authenticator_b64u: Option<&str>,
+    response: &T,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let journal = V2PrepareJournalResponse {
+        journal_version: "p6-v2-prepare-journal-v1".to_owned(),
+        prepared_response: Some(response),
+    };
+    conn.execute(
+        "UPDATE pending_commits
+             SET commit_b64u = ?2,
+                 ratchet_tree_b64u = ?3,
+                 group_info_b64u = ?4,
+                 epoch_authenticator_b64u = ?5,
+                 status = 'prepared',
+                 response_json = ?6,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE pending_commit_id = ?1 AND status = 'preparing'",
+        params![
+            pending_commit_id,
+            commit_b64u,
+            ratchet_tree_b64u,
+            group_info_b64u,
+            epoch_authenticator_b64u,
+            serde_json::to_string(&journal).map_err(|err| operation_error(
+                "group.e2ee.state_not_ready",
+                err,
+                request_id,
+            ))?,
+        ],
+    )
+    .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM pending_commits WHERE pending_commit_id = ?1",
+            params![pending_commit_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if status.as_deref() != Some("prepared") {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "prepare journal is not in preparing state",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn pending_prepared_response(
+    conn: &rusqlite::Connection,
+    pending_commit_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Option<Value>> {
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM pending_commits WHERE pending_commit_id = ?1",
+            params![pending_commit_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let value: Value = serde_json::from_str(&response_json)
+        .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+    if value.get("journal_version").is_some() {
+        serde_json::from_value::<V2PrepareJournalResponse<Value>>(value)
+            .map(|journal| journal.prepared_response)
+            .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))
+    } else {
+        Ok(Some(value))
+    }
 }
 
 fn load_public_group(

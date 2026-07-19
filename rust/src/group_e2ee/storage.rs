@@ -494,7 +494,8 @@ fn install_im_core_compat_views(
     scope: &GroupMlsOwnerScope,
 ) -> rusqlite::Result<()> {
     conn.execute_batch(
-        "DROP VIEW IF EXISTS temp.agents;
+        "DROP VIEW IF EXISTS temp.operations;
+         DROP VIEW IF EXISTS temp.agents;
          DROP VIEW IF EXISTS temp.key_packages;
          DROP VIEW IF EXISTS temp.group_bindings;
          DROP VIEW IF EXISTS temp.pending_commits;
@@ -511,7 +512,58 @@ fn install_im_core_compat_views(
         rusqlite::params![scope.owner_identity_id, scope.owner_did, scope.device_id],
     )?;
     conn.execute_batch(
-        "CREATE TEMP VIEW agents AS
+        "CREATE TEMP VIEW operations AS
+            SELECT operation_id,
+                   command,
+                   input_digest,
+                   response_json,
+                   status,
+                   created_at,
+                   updated_at
+            FROM group_mls_operations
+            WHERE owner_identity_id = (SELECT owner_identity_id FROM temp.group_mls_scope)
+              AND device_id = (SELECT device_id FROM temp.group_mls_scope);
+         CREATE TEMP TRIGGER operations_insert
+         INSTEAD OF INSERT ON operations
+         BEGIN
+            INSERT INTO group_mls_operations(
+                owner_identity_id, device_id, operation_id, command,
+                input_digest, response_json, status, updated_at
+            )
+            VALUES (
+                (SELECT owner_identity_id FROM temp.group_mls_scope),
+                (SELECT device_id FROM temp.group_mls_scope),
+                NEW.operation_id,
+                NEW.command,
+                NEW.input_digest,
+                NEW.response_json,
+                NEW.status,
+                CURRENT_TIMESTAMP
+            );
+         END;
+         CREATE TEMP TRIGGER operations_update
+         INSTEAD OF UPDATE ON operations
+         BEGIN
+            UPDATE group_mls_operations
+            SET command = NEW.command,
+                input_digest = NEW.input_digest,
+                response_json = NEW.response_json,
+                status = NEW.status,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE owner_identity_id = (SELECT owner_identity_id FROM temp.group_mls_scope)
+              AND device_id = (SELECT device_id FROM temp.group_mls_scope)
+              AND operation_id = OLD.operation_id;
+         END;
+         CREATE TEMP TRIGGER operations_delete
+         INSTEAD OF DELETE ON operations
+         BEGIN
+            DELETE FROM group_mls_operations
+            WHERE owner_identity_id = (SELECT owner_identity_id FROM temp.group_mls_scope)
+              AND device_id = (SELECT device_id FROM temp.group_mls_scope)
+              AND operation_id = OLD.operation_id;
+         END;
+
+         CREATE TEMP VIEW agents AS
             SELECT owner_did AS agent_did,
                    device_id,
                    signature_public_key,
@@ -731,7 +783,20 @@ fn install_im_core_compat_views(
          INSTEAD OF UPDATE ON pending_commits
          BEGIN
             UPDATE group_mls_pending_commits
-            SET status = NEW.status,
+            SET operation_id = NEW.operation_id,
+                command = NEW.command,
+                owner_did = NEW.agent_did,
+                group_did = NEW.group_did,
+                crypto_group_id_b64u = NEW.crypto_group_id_b64u,
+                subject_did = NEW.subject_did,
+                subject_status = NEW.subject_status,
+                from_epoch = NEW.from_epoch,
+                to_epoch = NEW.to_epoch,
+                commit_b64u = NEW.commit_b64u,
+                ratchet_tree_b64u = NEW.ratchet_tree_b64u,
+                group_info_b64u = NEW.group_info_b64u,
+                epoch_authenticator_b64u = NEW.epoch_authenticator_b64u,
+                status = NEW.status,
                 response_json = NEW.response_json,
                 updated_at = CURRENT_TIMESTAMP
             WHERE owner_identity_id = (SELECT owner_identity_id FROM temp.group_mls_scope)

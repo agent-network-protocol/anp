@@ -63,6 +63,8 @@ material, Leaf state and epoch secrets. It provides typed operations for:
 - create/Add/Remove preparation followed by explicit finalize or abort after
   the Group Host accepts or rejects the request;
 - device-targeted Welcome and ordered Commit processing;
+- direct processing of standard `V2GroupNoticeMetadata + V2E2eeNotice`
+  delivery without reconstructing an originating control DTO;
 - one-shot MLS application encryption and device-local decryption.
 
 Every KeyPackage and current Leaf is checked against the exact DID/device
@@ -70,6 +72,32 @@ binding extension and current DID document. Add rejects an existing sibling
 pair or leaf key, Remove selects exactly one DID/device Leaf, application
 decryption verifies both the frozen JCS `authenticated_data` and the sender
 Leaf binding, and no private MLS state appears in a returned wire object.
+
+`process_notice_v2` verifies the exact recipient DID/device before touching
+local MLS state. For Commit delivery it obtains `subject_method`, the affected
+DID/device, group/state/epoch, originating `operation_id`, and sender DID/device
+from the authenticated MLS Commit AAD. It then verifies the MLS sender Leaf and
+current DID documents against that same pair. Welcome delivery additionally
+requires the outer recipient to equal the added subject device. Exact replay of
+the same notice operation and bytes returns the persisted result; reusing the
+operation ID with different bytes fails closed.
+
+OpenMLS storage and SDK metadata use separate SQLite connections, so the SDK
+does not claim that prepare/finalize is one cross-provider SQL transaction.
+Instead, create/Add/Remove use a recoverable write-ahead journal:
+
+```text
+preparing -> prepared -> accepted -> finalized
+                    \-> aborted
+```
+
+`preparing` is durable before OpenMLS mutation. An interrupted prepare is
+conservatively rolled back by `reconcile_pending_v2`; a `prepared` entry waits
+for the Group Host decision and returns its persisted public request artifact;
+an `accepted` entry completes an already-started merge idempotently.
+`finalize_commit_v2` and `abort_commit_v2` are restart-safe.
+The journal stores only public operation artifacts and identifiers; it does not
+copy or export Leaf private keys, epoch secrets, or the OpenMLS database.
 
 The facade performs the local cryptographic obligations only. P4 membership,
 owner authorization, current group-state CAS, KeyPackage lease/consumption and
@@ -93,9 +121,10 @@ to the cross-domain P6 model. This gate proves that the frozen semantics are
 expressible with the pinned OpenMLS version. The persistent public-facade gate
 in `rust/tests/group_e2ee_v2_operations.rs` exercises the same lifecycle using
 separate on-disk device stores, service-acceptance finalization, canonical
-application plaintext, and a single MLS-encrypted attachment Manifest. Neither
-test upgrades the legacy typed path or bypasses the draft extension release
-gate.
+application plaintext, standard Welcome/Commit notice replay and binding,
+write-ahead restart reconciliation, and a single MLS-encrypted attachment
+Manifest. Neither test upgrades the legacy typed path or bypasses the draft
+extension release gate.
 
 ## Draft extension release gate
 

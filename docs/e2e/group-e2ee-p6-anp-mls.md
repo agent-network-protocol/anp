@@ -61,10 +61,21 @@ The separate `anp::group_e2ee::operations::v2` facade is the Rust vNext path.
 It uses the same `GroupMlsStore` boundary but creates new v2-only state with the
 required device-binding extension and capabilities. It supports device-bound
 KeyPackage generation, create/Add/Remove prepare plus finalize/abort,
-device-targeted Welcome/Commit processing, and canonical application
-encrypt/decrypt. It never copies state between sibling devices. P4 membership,
-owner policy, service CAS and KeyPackage lease/consumption remain product and
-Group Host checks rather than local MLS checks.
+device-targeted Welcome/Commit processing, standard notice-native processing,
+and canonical application encrypt/decrypt. Notice-native Commit processing
+derives the originating sender, operation and exact affected Leaf from MLS AAD
+and verifies them against current DID documents; callers do not synthesize a
+second control metadata object. It never copies state between sibling devices.
+P4 membership, owner policy, service CAS and KeyPackage lease/consumption remain
+product and Group Host checks rather than local MLS checks.
+
+Because OpenMLS storage and SDK metadata use separate SQLite connections, the
+v2 facade uses a recoverable write-ahead journal rather than claiming one SQL
+transaction across both providers. `reconcile_pending_v2` rolls back an
+interrupted `preparing` operation, leaves `prepared` awaiting the service
+decision, and completes `accepted` to `finalized` idempotently after restart.
+Finalize and abort can be retried; the journal never contains exported MLS
+private state or epoch secrets.
 
 ## P6 v2 real-cryptography gate
 
@@ -87,9 +98,9 @@ with the public P6 v2 binding verifier. It establishes that:
 
 The second gate, `group_e2ee_v2_operations`, runs that lifecycle through the
 persistent v2 facade and independent SQLite stores, including one encrypted
-attachment Manifest shared by current Leaves. This adds no wire field. Public
-release remains blocked while the Profile uses the provisional extension
-codepoint.
+attachment Manifest shared by current Leaves, standard notice replay/binding,
+and crash-state reconciliation. This adds no wire field. Public release remains
+blocked while the Profile uses the provisional extension codepoint.
 
 ## Legacy runtime safety rules
 

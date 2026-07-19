@@ -8,23 +8,26 @@ use anp::authentication::{
     create_did_wba_document, validate_device_manifest, DidDocumentOptions, DidProfile,
 };
 use anp::group_e2ee::operations::v2::{
-    add_member_prepare_v2, create_group_prepare_v2, decrypt_v2, encrypt_v2, finalize_commit_v2,
-    generate_key_package_v2, process_commit_v2, process_welcome_v2, remove_member_prepare_v2,
-    V2AddMemberInput, V2CreateGroupInput, V2DecryptInput, V2DidDocument, V2EncryptInput,
-    V2FinalizeInput, V2GenerateKeyPackageInput, V2MembershipCommitMethod, V2ProcessCommitInput,
-    V2ProcessWelcomeInput, V2RemoveMemberInput,
+    abort_commit_v2, add_member_prepare_v2, create_group_prepare_v2, decrypt_v2, encrypt_v2,
+    finalize_commit_v2, generate_key_package_v2, process_commit_v2, process_notice_v2,
+    process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2, V2AddMemberInput,
+    V2CreateGroupInput, V2DecryptInput, V2DidDocument, V2EncryptInput, V2FinalizeInput,
+    V2GenerateKeyPackageInput, V2MembershipCommitMethod, V2ProcessCommitInput,
+    V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput,
 };
 use anp::group_e2ee::storage::ImCoreSqliteGroupMlsStore;
 use anp::group_e2ee::{
-    V2GroupApplicationPlaintext, V2GroupControlMetadata, V2GroupSendMetadata, V2GroupStateRef,
-    V2ServiceMetadata, V2Target, GROUP_CIPHER_CONTENT_TYPE_V2, GROUP_E2EE_PROFILE_V2,
-    GROUP_E2EE_SECURITY_PROFILE_V2,
+    V2E2eeNotice, V2GroupApplicationPlaintext, V2GroupControlMetadata, V2GroupNoticeMetadata,
+    V2GroupSendMetadata, V2GroupStateRef, V2ServiceMetadata, V2Target,
+    GROUP_CIPHER_CONTENT_TYPE_V2, GROUP_E2EE_PROFILE_V2, GROUP_E2EE_SECURITY_PROFILE_V2,
+    GROUP_E2EE_TRANSPORT_PROFILE_V2,
 };
 use anp::proof::{
     generate_w3c_proof, ProofGenerationOptions, CRYPTOSUITE_EDDSA_JCS_2022,
     PROOF_TYPE_DATA_INTEGRITY,
 };
 use anp::PrivateKeyMaterial;
+use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 const NOW: &str = "2026-07-20T00:00:00Z";
@@ -285,6 +288,51 @@ fn send_meta(did: &str, device_id: &str, suffix: &str) -> V2GroupSendMetadata {
     }
 }
 
+fn notice_meta(
+    recipient_did: &str,
+    recipient_device_id: &str,
+    operation_id: &str,
+) -> V2GroupNoticeMetadata {
+    V2GroupNoticeMetadata {
+        anp_version: Some("2.0".to_owned()),
+        profile: GROUP_E2EE_PROFILE_V2.to_owned(),
+        security_profile: GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned(),
+        sender_did: GROUP_DID.to_owned(),
+        target: V2Target {
+            kind: "agent".to_owned(),
+            did: recipient_did.to_owned(),
+        },
+        recipient_device_id: recipient_device_id.to_owned(),
+        operation_id: operation_id.to_owned(),
+        created_at: Some(NOW.to_owned()),
+    }
+}
+
+fn member_documents(owner: &DidFixture, member: &DidFixture) -> Vec<V2DidDocument> {
+    vec![
+        V2DidDocument {
+            did: owner.did.clone(),
+            document: owner.document.clone(),
+        },
+        V2DidDocument {
+            did: member.did.clone(),
+            document: member.document.clone(),
+        },
+    ]
+}
+
+fn force_pending_status(store: &ImCoreSqliteGroupMlsStore, pending_commit_id: &str, status: &str) {
+    let conn = Connection::open(store.state_db_path()).expect("open MLS test database");
+    assert_eq!(
+        conn.execute(
+            "UPDATE group_mls_pending_commits SET status = ?2 WHERE pending_commit_id = ?1",
+            params![pending_commit_id, status],
+        )
+        .expect("set simulated crash journal state"),
+        1
+    );
+}
+
 #[test]
 fn persistent_v2_operations_keep_same_did_devices_independent() {
     let directory = TestDirectory::new();
@@ -374,14 +422,57 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .expect("prepare group create");
     assert_eq!(created.body.epoch, "0");
-    finalize_commit_v2(
+    let prepared = reconcile_pending_v2(
         &owner_store,
-        V2FinalizeInput {
-            pending_commit_id: created.pending_commit_id,
-            request_id: "req-finalize-create".to_owned(),
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-prepared-create".to_owned(),
         },
     )
-    .expect("finalize group create");
+    .expect("prepared create survives restart reconciliation");
+    assert_eq!(prepared.pending_commits[0].status, "prepared");
+    assert_eq!(
+        prepared.pending_commits[0]
+            .prepared_response
+            .as_ref()
+            .and_then(|value| value.get("group_did"))
+            .and_then(Value::as_str),
+        Some(GROUP_DID)
+    );
+    assert_eq!(
+        prepared.pending_commits[0].action,
+        "awaiting-service-decision"
+    );
+    force_pending_status(&owner_store, &created.pending_commit_id, "accepted");
+    let restarted_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
+    let reconciled = reconcile_pending_v2(
+        &restarted_owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-accepted-create".to_owned(),
+        },
+    )
+    .expect("accepted create finalizes after restart");
+    assert_eq!(reconciled.pending_commits[0].status, "finalized");
+    assert_eq!(
+        finalize_commit_v2(
+            &owner_store,
+            V2FinalizeInput {
+                pending_commit_id: created.pending_commit_id,
+                request_id: "req-finalize-create-repeat".to_owned(),
+            },
+        )
+        .expect("finalize is idempotent after restart reconciliation")
+        .status,
+        "finalized"
+    );
+    assert!(reconcile_pending_v2(
+        &owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-finalized-create-repeat".to_owned(),
+        },
+    )
+    .expect("reconcile is idempotent after finalize")
+    .pending_commits
+    .is_empty());
 
     let add_a1_meta = control_meta(&owner.did, &owner_device.device_id, "op-add-a1");
     let add_a1 = add_member_prepare_v2(
@@ -398,14 +489,42 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("prepare A1 Add");
-    finalize_commit_v2(
-        &owner_store,
-        V2FinalizeInput {
-            pending_commit_id: add_a1.pending_commit_id,
-            request_id: "req-finalize-add-a1".to_owned(),
+    force_pending_status(&owner_store, &add_a1.pending_commit_id, "accepted");
+    let restarted_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
+    let reconciled = reconcile_pending_v2(
+        &restarted_owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-accepted-add-a1".to_owned(),
         },
     )
-    .expect("finalize A1 Add");
+    .expect("accepted membership Commit merges after restart");
+    assert_eq!(
+        reconciled.pending_commits[0].action,
+        "completed-accepted-commit"
+    );
+    // Simulate a second crash after the OpenMLS merge but before the final
+    // journal marker. Reconciliation must not attempt to merge twice.
+    force_pending_status(&owner_store, &add_a1.pending_commit_id, "accepted");
+    let post_merge_reconciled = reconcile_pending_v2(
+        &restarted_owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-post-merge-add-a1".to_owned(),
+        },
+    )
+    .expect("already merged accepted Commit finalizes idempotently");
+    assert_eq!(post_merge_reconciled.pending_commits[0].status, "finalized");
+    assert_eq!(
+        finalize_commit_v2(
+            &owner_store,
+            V2FinalizeInput {
+                pending_commit_id: add_a1.pending_commit_id.clone(),
+                request_id: "req-finalize-add-a1-repeat".to_owned(),
+            },
+        )
+        .expect("membership finalize is idempotent after restart")
+        .status,
+        "finalized"
+    );
     let welcome_a1 = V2ProcessWelcomeInput {
         recipient_did: alice.did.clone(),
         recipient_device_id: a1_device.device_id.clone(),
@@ -501,6 +620,59 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     .expect_err("wrong device binding must fail");
     assert_eq!(error.code, "group.e2ee.did_binding_invalid");
 
+    let interrupted_add = add_member_prepare_v2(
+        &owner_store,
+        V2AddMemberInput {
+            meta: control_meta(&owner.did, &owner_device.device_id, "op-add-a2-crash"),
+            group_state_ref: state_ref(3),
+            group_key_package: a2_package.clone(),
+            member_did_document: alice.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-add-a2-crash".to_owned(),
+            request_id: "req-add-a2-crash".to_owned(),
+        },
+    )
+    .expect("prepare A2 Add before simulated process crash");
+    // Simulate a crash after OpenMLS persisted its pending Commit but before
+    // the write-ahead journal advanced from preparing to prepared.
+    force_pending_status(
+        &owner_store,
+        &interrupted_add.pending_commit_id,
+        "preparing",
+    );
+    let restarted_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
+    let reconciled = reconcile_pending_v2(
+        &restarted_owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-interrupted-add".to_owned(),
+        },
+    )
+    .expect("restart rolls back interrupted Add");
+    assert_eq!(reconciled.pending_commits[0].previous_status, "preparing");
+    assert_eq!(reconciled.pending_commits[0].status, "aborted");
+    assert_eq!(
+        abort_commit_v2(
+            &owner_store,
+            V2FinalizeInput {
+                pending_commit_id: interrupted_add.pending_commit_id,
+                request_id: "req-abort-interrupted-add-repeat".to_owned(),
+            },
+        )
+        .expect("abort remains idempotent after restart")
+        .status,
+        "aborted"
+    );
+    assert!(reconcile_pending_v2(
+        &owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-interrupted-add-repeat".to_owned(),
+        },
+    )
+    .expect("reconcile is idempotent after abort")
+    .pending_commits
+    .is_empty());
+
     let add_a2_meta = control_meta(&owner.did, &owner_device.device_id, "op-add-a2");
     let add_a2 = add_member_prepare_v2(
         &owner_store,
@@ -516,27 +688,56 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("prepare A2 Add");
-    process_commit_v2(
-        &a1_store,
-        V2ProcessCommitInput {
-            recipient_did: alice.did.clone(),
-            recipient_device_id: a1_device.device_id.clone(),
-            meta: add_a2_meta,
+    let add_a2_commit_notice = V2ProcessNoticeInput {
+        recipient_did: alice.did.clone(),
+        recipient_device_id: a1_device.device_id.clone(),
+        meta: notice_meta(&alice.did, &a1_device.device_id, "notice-add-a2-a1"),
+        notice: V2E2eeNotice {
+            notice_id: Some("notice-add-a2-a1".to_owned()),
+            notice_type: "commit-delivery".to_owned(),
+            group_did: GROUP_DID.to_owned(),
             group_state_ref: add_a2.body.group_state_ref.clone(),
             crypto_group_id_b64u: add_a2.body.crypto_group_id_b64u.clone(),
             epoch: add_a2.body.epoch.clone(),
-            member_did: alice.did.clone(),
-            member_device_id: a2_device.device_id.clone(),
-            commit_b64u: add_a2.body.commit_b64u.clone(),
-            method: V2MembershipCommitMethod::Add,
-            sender_did_document: owner.document.clone(),
-            member_did_document: alice.document.clone(),
-            now: NOW.to_owned(),
-            draft_extension_negotiated: true,
-            request_id: "req-commit-add-a2-a1".to_owned(),
+            subject_did: alice.did.clone(),
+            subject_device_id: a2_device.device_id.clone(),
+            subject_status: "active".to_owned(),
+            commit_b64u: Some(add_a2.body.commit_b64u.clone()),
+            welcome_b64u: None,
+            ratchet_tree_b64u: None,
+            epoch_authenticator: None,
+            group_receipt: None,
         },
-    )
-    .expect("A1 processes A2 Add");
+        member_documents: member_documents(&owner, &alice),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-notice-add-a2-a1".to_owned(),
+    };
+    let notice_output = process_notice_v2(&a1_store, add_a2_commit_notice.clone())
+        .expect("A1 processes A2 Add from the standard notice");
+    assert_eq!(
+        notice_output.source_operation_id.as_deref(),
+        Some("op-add-a2")
+    );
+    let mut repeated_notice = add_a2_commit_notice.clone();
+    repeated_notice.request_id = "req-notice-add-a2-a1-repeat".to_owned();
+    assert_eq!(
+        process_notice_v2(
+            &store(directory.path(), &alice.did, &a1_device.device_id),
+            repeated_notice,
+        )
+        .expect("exact Commit notice replay is idempotent"),
+        notice_output
+    );
+    let mut conflicting_notice = add_a2_commit_notice;
+    conflicting_notice.notice.subject_device_id = a1_device.device_id.clone();
+    conflicting_notice.request_id = "req-notice-add-a2-a1-conflict".to_owned();
+    assert_eq!(
+        process_notice_v2(&a1_store, conflicting_notice)
+            .expect_err("same notice operation with different binding must fail")
+            .code,
+        "group.e2ee.commit_invalid"
+    );
     finalize_commit_v2(
         &owner_store,
         V2FinalizeInput {
@@ -545,33 +746,52 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("finalize A2 Add");
-    process_welcome_v2(
-        &a2_store,
-        V2ProcessWelcomeInput {
-            recipient_did: alice.did.clone(),
-            recipient_device_id: a2_device.device_id.clone(),
+    let welcome_a2_notice = V2ProcessNoticeInput {
+        recipient_did: alice.did.clone(),
+        recipient_device_id: a2_device.device_id.clone(),
+        meta: notice_meta(&alice.did, &a2_device.device_id, "notice-welcome-a2"),
+        notice: V2E2eeNotice {
+            notice_id: Some("notice-welcome-a2".to_owned()),
+            notice_type: "welcome-delivery".to_owned(),
             group_did: GROUP_DID.to_owned(),
             group_state_ref: add_a2.body.group_state_ref.clone(),
             crypto_group_id_b64u: add_a2.body.crypto_group_id_b64u.clone(),
             epoch: add_a2.body.epoch.clone(),
-            welcome_b64u: add_a2.body.welcome_b64u.clone(),
-            ratchet_tree_b64u: add_a2.body.ratchet_tree_b64u.clone(),
-            member_documents: vec![
-                V2DidDocument {
-                    did: owner.did.clone(),
-                    document: owner.document.clone(),
-                },
-                V2DidDocument {
-                    did: alice.did.clone(),
-                    document: alice.document.clone(),
-                },
-            ],
-            now: NOW.to_owned(),
-            draft_extension_negotiated: true,
-            request_id: "req-welcome-a2".to_owned(),
+            subject_did: alice.did.clone(),
+            subject_device_id: a2_device.device_id.clone(),
+            subject_status: "active".to_owned(),
+            commit_b64u: None,
+            welcome_b64u: Some(add_a2.body.welcome_b64u.clone()),
+            ratchet_tree_b64u: Some(add_a2.body.ratchet_tree_b64u.clone()),
+            epoch_authenticator: None,
+            group_receipt: None,
         },
-    )
-    .expect("A2 processes its own Welcome");
+        member_documents: member_documents(&owner, &alice),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-notice-welcome-a2".to_owned(),
+    };
+    let mut wrong_welcome_target = welcome_a2_notice.clone();
+    wrong_welcome_target.recipient_device_id = a1_device.device_id.clone();
+    wrong_welcome_target.request_id = "req-notice-welcome-a2-wrong-target".to_owned();
+    assert_eq!(
+        process_notice_v2(&a2_store, wrong_welcome_target)
+            .expect_err("Welcome cannot target a sibling device")
+            .code,
+        "group.e2ee.did_binding_invalid"
+    );
+    let welcome_output = process_notice_v2(&a2_store, welcome_a2_notice.clone())
+        .expect("A2 processes its own standard Welcome notice");
+    let mut repeated_welcome_notice = welcome_a2_notice;
+    repeated_welcome_notice.request_id = "req-notice-welcome-a2-repeat".to_owned();
+    assert_eq!(
+        process_notice_v2(
+            &store(directory.path(), &alice.did, &a2_device.device_id),
+            repeated_welcome_notice,
+        )
+        .expect("exact Welcome notice replay is idempotent"),
+        welcome_output
+    );
 
     assert!(decrypt_v2(
         &a2_store,
