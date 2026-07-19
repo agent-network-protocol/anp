@@ -1,4 +1,4 @@
-# ANP SDK / anp-mls Group E2EE
+# ANP SDK Group E2EE / OpenMLS
 
 ## Status
 
@@ -7,97 +7,110 @@
 - The side-by-side vNext wire/binding SDK is documented in
   [P6 vNext SDK wire and binding helpers](group-e2ee-p6-v2-sdk.md).
 - Harness map: [Group E2EE cross-repo feature map](../../../../awiki-harness/features/group-e2ee.md).
-- Public discovery must remain disabled until a separate security-reviewed enablement PR.
+- Public discovery remains disabled until a separate security-reviewed enablement change.
+
+The historical `anp-mls` subprocess and JSON command surface has been removed.
+Rust callers use the typed library API; this file name is retained so existing
+documentation links remain stable. Do not reconstruct or depend on the removed
+binary.
 
 ## Owned surface
 
 ANP SDK owns reusable P6 contracts and local MLS execution primitives:
 
-- Rust P6 helpers: `rust/src/group_e2ee/`.
-- Rust one-shot binary: `rust/src/bin/anp-mls.rs`.
-- Rust real OpenMLS tests: `rust/tests/group_e2ee_real_mls_tests.rs`.
-- Rust/Go contract tests and proof vectors: `rust/tests/group_e2ee_contract_tests.rs`, `rust/tests/proof_tests.rs`, `golang/group_e2ee/`, `golang/proof/`, `testdata/group_e2ee/`.
-- Go SDK provider contract: `golang/group_e2ee/exec_provider.go` and P6 models.
+- Rust P6 models/helpers: `rust/src/group_e2ee/`.
+- Rust typed OpenMLS operations: `rust/src/group_e2ee/operations/typed.rs`.
+- Rust local-state adapters: `rust/src/group_e2ee/storage.rs`.
+- Legacy typed-operation regression: `rust/tests/group_e2ee_typed_operations_tests.rs`.
+- Real vNext multi-device OpenMLS gate: `rust/tests/group_e2ee_v2_multi_device_mls.rs`.
+- Rust/Go wire and proof vectors: `rust/tests/group_e2ee_v2_wire_vectors.rs`,
+  `rust/tests/proof_tests.rs`, `golang/group_e2ee/`, `golang/proof/`, and
+  `testdata/group_e2ee/`.
 
-The SDK does not own message-service storage, public discovery, or CLI UX. It supplies wire models, canonicalization helpers, DID WBA binding/proof utilities, and the local cryptographic engine used by clients.
+The SDK does not own message-service storage, public discovery, or CLI UX. It
+supplies wire models, canonicalization helpers, DID WBA binding/proof utilities,
+and local cryptographic primitives used by clients.
 
-## One-shot `anp-mls` contract
+## Typed Rust library contract
 
-`anp-mls` is designed for command-driven clients without a resident process:
+`anp::group_e2ee::operations` exposes one-call typed functions for:
 
-- JSON request is read from stdin (`--json-in -`).
-- JSON response is written to stdout.
-- logs/errors go to stderr.
-- The Go CLI remains pure Go / no CGO.
-- Default real mode requires `--data-dir`.
-- Local state is persisted under agent/device-scoped directories, typically `<workspace>/mls/agents/<agent-hash>/<device>/state.db`.
-- A sibling `state.lock` guards mutations.
-- Operation records must redact decrypted plaintext and avoid persisting application plaintext or MLS private data in command logs.
+- KeyPackage generation;
+- group create/add/remove preparation;
+- local leave terminal-state handling;
+- member update/recovery preparation;
+- pending commit finalize/abort;
+- Welcome and commit-notice processing;
+- application encrypt/decrypt;
+- local group status.
 
-State held by `anp-mls` includes OpenMLS private state, KeyPackage private material, group bindings, epoch summaries, idempotency/operation records, and pending membership/update/remove commits.
+Callers select a `GroupMlsStore`. `CompatDataDirStore` preserves the legacy
+`state.db` layout; `ImCoreSqliteGroupMlsStore` scopes state from an im-core local
+state root. OpenMLS private state, KeyPackage private material, group bindings,
+epoch summaries, idempotency records and pending commits remain local. They are
+not emitted in service-facing P6 objects.
 
-## Implemented command families
-
-Real OpenMLS mode covers:
-
-- `system version` for packaging/doctor compatibility checks.
-- `key-package generate` with `purpose=normal|recovery|update`.
-- `group create`.
-- `group add-member`.
-- `welcome process`.
-- `message encrypt` / `message decrypt` with P6 AAD binding.
-- `group commit process/finalize/abort` for missed commit repair.
-- `group remove-member prepare/finalize/abort`.
-- `group recover-member prepare/finalize/abort` for same-DID/device active-member recovery.
-- `group update-member prepare/finalize/abort` for hidden update-key leaf replacement.
-- `group status` / local binding summaries.
-
-Contract-test artifacts remain explicit test fixtures only. They must stay marked non-cryptographic and must not be used to claim real security.
-
-These commands and persisted records implement the legacy P6 v1 execution
-surface. They do not yet emit the vNext `0xF0A1` LeafNode binding extension and
-required capability declarations, so callers must not relabel their output as
+These typed operations implement the legacy P6 v1 execution surface. They do
+not emit the vNext `0xF0A1` LeafNode binding extension or its Leaf/GroupContext
+capability declarations, and callers must not relabel their output as
 `anp.group.e2ee.v2`.
 
-## P6 binding and safety rules
+## P6 v2 real-cryptography gate
 
-- `group.e2ee.send` AAD is bound to canonical P6 metadata: content type, sender DID, group DID, crypto group ID, `group_state_ref.group_state_version`, epoch/state ref, security profile, message ID, and operation ID.
-- Decrypt reconstructs expected AAD and rejects tampering before returning plaintext.
-- Welcome processing validates the outer `group_state_ref`, `group_did`, `group_state_version`, crypto group ID / OpenMLS group ID, and epoch before persisting state.
-- KeyPackage trust boundary: real product flows must feed `anp-mls` only KeyPackages obtained through `message-service` `group.e2ee.publish_key_package` / `get_key_package`, because the service is the authoritative DID WBA proof verifier and lease/consume gate. `anp-mls` still validates owner/agent DID, device ID, MLS BasicCredential identity, leaf signature key, validity window, and group/device context as a local defense-in-depth check, but it does not resolve DID documents or independently verify remote object proofs for arbitrary direct inputs.
-- Hidden update-member uses OpenMLS `swap_members` with a `purpose=update` KeyPackage and finalizes only after service acceptance.
-- Recover-member is only for active P4 members; removed/left rejoin uses add/welcome with a fresh normal KeyPackage.
-- A Handle-backed DID rebind does not add a P6 method. After P4 accepts
-  `group.rebind_member`, the current owner uses the existing typed
-  `group.e2ee.add` primitive for the new DID and then the existing
-  `group.e2ee.remove` primitive for the old DID. Both operations carry the
-  same P4 `GroupStateRef`.
-- The SDK validates and transports that state reference, but it does not decide
-  whether a P4 rebind is authorized and it does not own the rebind phase. The
-  Group Host serializes the two operations and pauses application messages
-  between them; the owner/client persists retry and repair state.
-- `group.e2ee.recover_member` remains a same-DID/device MLS recovery primitive
-  and must not be used as a DID-rebind shortcut.
+The vNext integration test uses the pinned OpenMLS 0.8 implementation together
+with the public P6 v2 binding verifier. It establishes that:
+
+- two devices of one business DID use distinct MLS Leaf signature keys,
+  KeyPackages, providers and private state;
+- an eligible owner verifies the actual TLS KeyPackage/Leaf/binding chain before
+  adding the second device;
+- adding a sibling Leaf does not add another business-level DID member;
+- both sibling devices decrypt post-join applications, while the new device
+  cannot decrypt pre-join history;
+- removal targets the verified device Leaf and advances the epoch without
+  removing its sibling;
+- the removed device cannot decrypt future applications;
+- wrong-device/key substitution, Welcome/private-state interchange and
+  KeyPackage reuse fail in the verifier or OpenMLS rather than through test-only
+  flags.
+
+This is a development conformance gate, not a new wire field or a production
+v2 operation facade. Public release remains blocked while the Profile uses the
+provisional extension codepoint.
+
+## Legacy runtime safety rules
+
+- Group application AAD is bound to the group/message operation fields expected
+  by the legacy P6 surface, including `group_state_ref.group_state_version`.
+- Decrypt rejects group ID, epoch or state claims that disagree with the local
+  group binding before returning plaintext.
+- Product flows must obtain add/update/recovery KeyPackages through the
+  authoritative message-service lease/consume path. The legacy local runtime
+  validates the decoded MLS package and local binding shape but does not resolve
+  arbitrary remote DID documents.
+- A Handle-backed DID rebind does not add a P6 method. After P4 authorization,
+  the Group Host serializes the existing add-new-DID and remove-old-DID
+  operations and pauses applications between them.
+- `recover_member` is a same-DID/device MLS recovery primitive, not a DID-rebind
+  shortcut.
 
 ## Non-goals
 
 - Public discovery enablement.
-- Multi-device sync.
-- k1 DID compatibility.
-- External Commit.
-- Cloud snapshot / backup.
-- Required `anp-mls serve` daemon.
+- A replacement `anp-mls` binary or daemon.
+- Cloud snapshot or backup.
 - Service-side decryption or service-side MLS private state.
+- Claiming the legacy typed runtime is P6 v2.
 
 ## Validation
 
-Focused commands used during Group E2EE development:
-
 ```bash
-cd anp/anp
 cargo fmt --manifest-path rust/Cargo.toml --check
-cargo test --manifest-path rust/Cargo.toml group_e2ee --all-targets
-cargo test --manifest-path rust/Cargo.toml proof --all-targets
+cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_typed_operations_tests
+cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_wire_vectors
+cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_multi_device_mls
+cargo test --manifest-path rust/Cargo.toml --locked --test proof_tests
 ```
 
-Keep Rust and Go proof/vector tests aligned before any discovery-readiness claim.
+Keep Rust/Go proof and wire-vector tests aligned before any discovery-readiness
+claim.

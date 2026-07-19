@@ -5,8 +5,8 @@
 This SDK slice implements the frozen cross-domain surface of
 [`anp.group.e2ee.v2`](../../../AgentNetworkProtocol/message/vnext/06-group-end-to-end-encryption.md)
 from `AgentNetworkProtocol@25bfbc59a5a925141b565c4bc6c24195736382b5b`.
-It is side-by-side with the existing `anp.group.e2ee.v1` models and OpenMLS
-commands; no v1 wire object is silently reinterpreted as v2.
+It is side-by-side with the existing `anp.group.e2ee.v1` models and typed
+OpenMLS library operations; no v1 wire object is silently reinterpreted as v2.
 
 Rust exposes the v2 helpers under `anp::group_e2ee`; Go exposes them from
 `golang/group_e2ee`. Both SDKs include:
@@ -47,8 +47,27 @@ It then follows the current Manifest entry to the device `signing_key_id` and
 verifies the P1 Ed25519 Object Proof. Device-ID, leaf-key, credential, extension
 or capability substitution fails closed.
 
-The existing v1 `anp-mls` operation path does not currently emit this complete
-v2 extension/capability profile and must not be advertised as P6 v2.
+The existing v1 typed OpenMLS operation path does not currently emit this
+complete v2 extension/capability profile and must not be advertised as P6 v2.
+
+## Real OpenMLS multi-device gate
+
+`rust/tests/group_e2ee_v2_multi_device_mls.rs` is a development integration
+gate over real OpenMLS 0.8 cryptography. It creates independent providers,
+signers, KeyPackages and group state for two devices of the same business DID,
+then verifies the frozen v2 binding before exercising Add/Commit/Welcome,
+post-join application decryption, exact-device Remove, epoch advancement and
+future-message exclusion. It also proves that a new device cannot decrypt
+pre-join history, another device's storage cannot consume its Welcome, a
+consumed KeyPackage cannot be added again, and an authenticated binding cannot
+be substituted around another device's actual TLS KeyPackage.
+
+The test deliberately projects the business member count by de-duplicating MLS
+credential DIDs; it does not change MLS credentials or add an internal counter
+to the cross-domain P6 model. This gate proves that the frozen semantics are
+expressible with the pinned OpenMLS version. It is not a product runtime API,
+does not upgrade the legacy typed operation path to v2, and does not bypass the
+draft extension release gate.
 
 ## Draft extension release gate
 
@@ -64,6 +83,7 @@ updated together with its vectors.
 
 ```bash
 cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_wire_vectors
+cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_v2_multi_device_mls
 cargo test --manifest-path rust/Cargo.toml --locked --test group_e2ee_typed_operations_tests
 (cd golang && go test ./group_e2ee)
 ```
