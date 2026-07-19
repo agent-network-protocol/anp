@@ -2,7 +2,7 @@
 
 ## Status
 
-- ANP-P5 v1 session support remains unchanged. The vNext wire contract is exposed side by side as explicit `v2` Rust, Python, Go, and Dart models/builders/validators; no v1 Session or Ratchet state is implicitly upgraded or reused.
+- ANP-P5 v1 session support remains unchanged. The vNext wire contract is exposed side by side as explicit `v2` Rust, Python, Go, and Dart models/builders/validators. Rust additionally exposes the P5 v2 exact-device session runtime; no v1 Session or Ratchet state is implicitly upgraded or reused.
 - Frozen protocol authority: `AgentNetworkProtocol@25bfbc59a5a925141b565c4bc6c24195736382b5b`, [P5 Direct End-to-End Encryption](../../../AgentNetworkProtocol/message/vnext/05-direct-end-to-end-encryption.md).
 - Harness map: [Direct E2EE cross-repo feature map](../../../../awiki-harness/features/direct-e2ee.md).
 - Public discovery is controlled by product services and remains off until a separate discovery/security decision enables it.
@@ -36,6 +36,15 @@ The SDK-owned boundary includes:
 - Double Ratchet-like send/receive chains, replay protection, skipped-key handling, and max-skip behavior.
 - file-backed reference stores for sessions, signed prekeys, OPKs, and pending outbox records.
 
+The Rust v2 runtime is the explicit `V2DirectE2eeSession` surface. Its
+persisted `V2DirectSessionState` and `V2PendingOutboundRecord` use separate v2
+format identifiers and bind the complete
+`(local_did, local_device_id, peer_did, peer_device_id, session_id, suite,
+local_e2ee_key_id, peer_e2ee_key_id)` index. Every send/decrypt call also takes
+the expected `V2SessionBinding`, so a current device/key mismatch fails closed.
+Session state contains private ratchet material and must be stored encrypted;
+its `Debug` implementation redacts secrets.
+
 P5 rules that product integrations rely on:
 
 - `prekey_bundle` must not embed `one_time_prekey`; OPK is a top-level sidecar from `direct.e2ee.get_prekey_bundle`.
@@ -59,6 +68,9 @@ The v2 surface additionally fixes these interoperability rules:
 - Dart uses the same RFC 8785 numeric serialization and Appendix-B `z...` base58-btc Ed25519 Object Proof as Rust, Python, and Go; the generic legacy Dart W3C-proof encoding is not reused for Bundle proofs.
 - error allocations are the normative `4000` through `4012` table.
 - AWiki root-transfer metadata, Registry/version fields, role/readiness state, and other same-domain control fields are not ANP P5 wire members.
+- Same-DID own-device sessions are supported when the two opaque device IDs and E2EE key references differ. The identical DID/device endpoint is rejected.
+- `select_default_outbound_session_v2` selects only an established, enabled session within one exact binding from a caller-provided newest-first slice. `disable_peer_device_sessions_v2` disables only the selected peer device; it is a local primitive and does not implement a product Registry.
+- A matching skipped message key follows P5 section 10.2.3.2 and is consumed even when AEAD authentication fails. Ordinary unmatched-message failures remain tentative and do not advance session state.
 
 For ordinary structured JSON, products should use `application/json` as the inner
 `application_content_type` and put the JSON object directly in `payload`:
@@ -75,13 +87,22 @@ For ordinary structured JSON, products should use `application/json` as the inne
 }
 ```
 
-In Rust this is represented with the existing helper:
+In the Rust v2 runtime this is represented by the typed plaintext model:
 
 ```rust
-ApplicationPlaintext::new_json(
-    "application/json",
-    serde_json::json!({"type": "example", "data": {"hello": "world"}}),
-)
+let plaintext = V2ApplicationPlaintext {
+    application_content_type: "application/json".to_owned(),
+    logical_message_id: Some("logical-123".to_owned()),
+    conversation_id: None,
+    reply_to_message_id: None,
+    annotations: None,
+    text: None,
+    payload: Some(serde_json::json!({
+        "type": "example",
+        "data": {"hello": "world"}
+    })),
+    payload_b64u: None,
+};
 ```
 
 The SDK does not define command/status/task/result schemas; those are product
@@ -116,6 +137,7 @@ Focused SDK checks:
 cd anp/anp
 go test ./golang/direct_e2ee ./golang/integration
 cargo test --manifest-path rust/Cargo.toml direct_e2ee --all-targets
+cargo test --manifest-path rust/Cargo.toml --lib direct_e2ee::v2_session
 uv run pytest anp/unittest/direct_e2ee -q
 (cd dart && dart analyze && dart test test/codec/codec_test.dart test/proof/proof_test.dart test/direct_e2ee/v2_wire_vectors_test.dart)
 ```

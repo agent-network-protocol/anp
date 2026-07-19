@@ -11,6 +11,7 @@ pub mod v2_aad;
 pub mod v2_bundle;
 pub mod v2_errors;
 pub mod v2_models;
+pub mod v2_session;
 pub mod v2_wire;
 pub mod x3dh;
 
@@ -53,6 +54,13 @@ pub use v2_models::{
     V2KeyServiceMetadata, V2OneTimePrekey, V2PrekeyBundle, V2RatchetHeader, V2SignedPrekey,
     V2Target, CONTENT_TYPE_DIRECT_CIPHER_V2, CONTENT_TYPE_DIRECT_INIT_V2, DIRECT_E2EE_PROFILE_V2,
     DIRECT_E2EE_SECURITY_PROFILE, MTI_DIRECT_E2EE_SUITE_V2, TRANSPORT_PROTECTED_SECURITY_PROFILE,
+};
+pub use v2_session::{
+    deserialize_pending_outbound_v2, deserialize_session_state_v2, disable_peer_device_sessions_v2,
+    select_default_outbound_session_v2, serialize_pending_outbound_v2, serialize_session_state_v2,
+    V2DirectE2eeSession, V2DirectSessionState, V2PendingOutboundRecord, V2SessionBinding,
+    V2SkippedMessageKey, DIRECT_E2EE_V2_PENDING_STATE_FORMAT, DIRECT_E2EE_V2_SESSION_STATE_FORMAT,
+    V2_SESSION_STATUS_ESTABLISHED, V2_SESSION_STATUS_PENDING_CONFIRMATION,
 };
 pub use v2_wire::{
     direct_send_request_v2, get_prekey_bundle_request_v2, parse_direct_send_request_v2,
