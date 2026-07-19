@@ -66,6 +66,10 @@ and canonical application encrypt/decrypt. Notice-native Commit processing
 derives the originating sender, operation and exact affected Leaf from MLS AAD
 and verifies them against current DID documents; callers do not synthesize a
 second control metadata object. It never copies state between sibling devices.
+An actor's post-finalize Commit echo is receipt-only: it is accepted after
+restart only when the finalized local journal exactly matches actor device,
+operation, group/state/epoch, subject and Commit digest, so the Commit is never
+merged twice.
 P4 membership, owner policy, service CAS and KeyPackage lease/consumption remain
 product and Group Host checks rather than local MLS checks.
 

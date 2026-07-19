@@ -1424,6 +1424,9 @@ fn process_notice_commit(
         ));
     }
     let target_epoch = parse_epoch(&input.notice.epoch, &input.request_id)?;
+    if target_epoch == local_binding.epoch {
+        return process_finalized_self_echo(scope, input, &group, target_epoch);
+    }
     if target_epoch
         != local_binding.epoch.checked_add(1).ok_or_else(|| {
             operation_error(
@@ -1568,6 +1571,195 @@ fn process_notice_commit(
     )
     .map_err(GroupMlsOperationError::from)?;
     Ok(output)
+}
+
+#[derive(Debug)]
+struct V2FinalizedSelfEchoRecord {
+    operation_id: String,
+    commit_b64u: String,
+    response_json: String,
+}
+
+fn process_finalized_self_echo(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessNoticeInput,
+    group: &MlsGroup,
+    target_epoch: u64,
+) -> GroupMlsOperationResult<V2ProcessNoticeOutput> {
+    if group.pending_commit().is_some() {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "a same-epoch Commit notice cannot match an unmerged local pending commit",
+            &input.request_id,
+        ));
+    }
+    let from_epoch = target_epoch.checked_sub(1).ok_or_else(|| {
+        operation_error(
+            "group.e2ee.epoch_conflict",
+            "a membership Commit echo cannot target epoch zero",
+            &input.request_id,
+        )
+    })?;
+    let command = match input.notice.subject_status.as_str() {
+        "active" => "group add-member",
+        "removed" => "group remove-member",
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "notice subject_status cannot identify Add or Remove",
+                &input.request_id,
+            ))
+        }
+    };
+    let mut statement = scope
+        .app_conn
+        .prepare(
+            "SELECT operation_id, commit_b64u, response_json
+             FROM pending_commits
+             WHERE status = 'finalized'
+               AND command = ?1
+               AND agent_did = ?2
+               AND device_id = ?3
+               AND group_did = ?4
+               AND crypto_group_id_b64u = ?5
+               AND subject_did = ?6
+               AND subject_status = ?7
+               AND from_epoch = ?8
+               AND to_epoch = ?9",
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let records = statement
+        .query_map(
+            params![
+                command,
+                input.recipient_did,
+                input.recipient_device_id,
+                input.notice.group_did,
+                input.notice.crypto_group_id_b64u,
+                input.notice.subject_did,
+                input.notice.subject_status,
+                from_epoch as i64,
+                target_epoch as i64,
+            ],
+            |row| {
+                Ok(V2FinalizedSelfEchoRecord {
+                    operation_id: row.get(0)?,
+                    commit_b64u: row.get(1)?,
+                    response_json: row.get(2)?,
+                })
+            },
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if records.len() != 1 {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "same-epoch Commit notice has no unique finalized local operation",
+            &input.request_id,
+        ));
+    }
+    let record = &records[0];
+    let notice_commit = input.notice.commit_b64u.as_deref().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.commit_invalid",
+            "commit-delivery is missing commit_b64u",
+            &input.request_id,
+        )
+    })?;
+    if record.commit_b64u != notice_commit
+        || commit_digest(&record.commit_b64u, &input.request_id)?
+            != commit_digest(notice_commit, &input.request_id)?
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "same-epoch Commit notice does not match the finalized commit digest",
+            &input.request_id,
+        ));
+    }
+    validate_finalized_self_echo_body(record, &input.notice, command, &input.request_id)?;
+    if let Some(expected) = input.notice.epoch_authenticator.as_deref() {
+        if encode_b64u(group.epoch_authenticator().as_slice()) != expected {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "same-epoch Commit notice has a conflicting epoch authenticator",
+                &input.request_id,
+            ));
+        }
+    }
+    Ok(V2ProcessNoticeOutput {
+        notice_operation_id: input.meta.operation_id.clone(),
+        source_operation_id: Some(record.operation_id.clone()),
+        notice_type: input.notice.notice_type.clone(),
+        crypto_group_id_b64u: input.notice.crypto_group_id_b64u.clone(),
+        from_epoch: from_epoch.to_string(),
+        epoch: target_epoch.to_string(),
+        self_removed: false,
+    })
+}
+
+fn validate_finalized_self_echo_body(
+    record: &V2FinalizedSelfEchoRecord,
+    notice: &V2E2eeNotice,
+    command: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let journal: V2PrepareJournalResponse<Value> = serde_json::from_str(&record.response_json)
+        .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+    if journal.journal_version != "p6-v2-prepare-journal-v1" {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "finalized self-echo journal version is unsupported",
+            request_id,
+        ));
+    }
+    let prepared = journal.prepared_response.ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "finalized self-echo journal has no prepared public body",
+            request_id,
+        )
+    })?;
+    let matches = match command {
+        "group add-member" => {
+            let body: V2GroupAddBody = serde_json::from_value(prepared)
+                .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+            body.validate()
+                .map_err(|err| v2_error("group.e2ee.commit_invalid", err, request_id))?;
+            body.member_did == notice.subject_did
+                && body.member_device_id == notice.subject_device_id
+                && body.group_state_ref == notice.group_state_ref
+                && body.crypto_group_id_b64u == notice.crypto_group_id_b64u
+                && body.epoch == notice.epoch
+                && body.commit_b64u == record.commit_b64u
+        }
+        "group remove-member" => {
+            let body: V2GroupRemoveBody = serde_json::from_value(prepared)
+                .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+            body.validate()
+                .map_err(|err| v2_error("group.e2ee.commit_invalid", err, request_id))?;
+            body.member_did == notice.subject_did
+                && body.member_device_id == notice.subject_device_id
+                && body.group_state_ref == notice.group_state_ref
+                && body.crypto_group_id_b64u == notice.crypto_group_id_b64u
+                && body.epoch == notice.epoch
+                && body.commit_b64u == record.commit_b64u
+        }
+        _ => false,
+    };
+    if !matches {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "same-epoch Commit notice conflicts with the finalized public request body",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn commit_digest(commit_b64u: &str, request_id: &str) -> GroupMlsOperationResult<String> {
+    let commit = decode_b64u(commit_b64u, request_id).map_err(GroupMlsOperationError::from)?;
+    Ok(encode_b64u(&Sha256::digest(commit)))
 }
 
 enum NoticeReceiptState {

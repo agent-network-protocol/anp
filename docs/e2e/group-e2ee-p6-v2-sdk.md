@@ -82,6 +82,14 @@ requires the outer recipient to equal the added subject device. Exact replay of
 the same notice operation and bytes returns the persisted result; reusing the
 operation ID with different bytes fails closed.
 
+The Group Host may broadcast a Commit back to the device that prepared it.
+After that device has finalized locally, the echo is accepted only when one
+unique finalized journal entry matches the local actor DID/device, Add/Remove
+method, group and state reference, crypto group, exact subject device,
+from/target epochs, and exact Commit bytes/digest. The SDK records a normal
+notice receipt without applying the Commit twice. Missing, ambiguous, stale or
+conflicting journal/notice data fails closed, including after restart.
+
 OpenMLS storage and SDK metadata use separate SQLite connections, so the SDK
 does not claim that prepare/finalize is one cross-provider SQL transaction.
 Instead, create/Add/Remove use a recoverable write-ahead journal:

@@ -729,6 +729,16 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         .expect("exact Commit notice replay is idempotent"),
         notice_output
     );
+    let mut non_actor_same_epoch = add_a2_commit_notice.clone();
+    non_actor_same_epoch.meta.operation_id = "notice-add-a2-a1-new-delivery".to_owned();
+    non_actor_same_epoch.notice.notice_id = Some("notice-add-a2-a1-new-delivery".to_owned());
+    non_actor_same_epoch.request_id = "req-notice-add-a2-a1-new-delivery".to_owned();
+    assert_eq!(
+        process_notice_v2(&a1_store, non_actor_same_epoch)
+            .expect_err("a non-actor cannot use the finalized-actor same-epoch path")
+            .code,
+        "group.e2ee.commit_invalid"
+    );
     let mut conflicting_notice = add_a2_commit_notice;
     conflicting_notice.notice.subject_device_id = a1_device.device_id.clone();
     conflicting_notice.request_id = "req-notice-add-a2-a1-conflict".to_owned();
@@ -741,11 +751,81 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     finalize_commit_v2(
         &owner_store,
         V2FinalizeInput {
-            pending_commit_id: add_a2.pending_commit_id,
+            pending_commit_id: add_a2.pending_commit_id.clone(),
             request_id: "req-finalize-add-a2".to_owned(),
         },
     )
     .expect("finalize A2 Add");
+    let add_a2_self_echo = V2ProcessNoticeInput {
+        recipient_did: owner.did.clone(),
+        recipient_device_id: owner_device.device_id.clone(),
+        meta: notice_meta(
+            &owner.did,
+            &owner_device.device_id,
+            "notice-add-a2-owner-echo",
+        ),
+        notice: V2E2eeNotice {
+            notice_id: Some("notice-add-a2-owner-echo".to_owned()),
+            notice_type: "commit-delivery".to_owned(),
+            group_did: GROUP_DID.to_owned(),
+            group_state_ref: add_a2.body.group_state_ref.clone(),
+            crypto_group_id_b64u: add_a2.body.crypto_group_id_b64u.clone(),
+            epoch: add_a2.body.epoch.clone(),
+            subject_did: alice.did.clone(),
+            subject_device_id: a2_device.device_id.clone(),
+            subject_status: "active".to_owned(),
+            commit_b64u: Some(add_a2.body.commit_b64u.clone()),
+            welcome_b64u: None,
+            ratchet_tree_b64u: None,
+            epoch_authenticator: None,
+            group_receipt: None,
+        },
+        member_documents: member_documents(&owner, &alice),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-notice-add-a2-owner-echo".to_owned(),
+    };
+    let self_echo_output = process_notice_v2(
+        &store(directory.path(), &owner.did, &owner_device.device_id),
+        add_a2_self_echo.clone(),
+    )
+    .expect("finalized Add actor accepts its exact Commit echo after restart");
+    assert_eq!(
+        self_echo_output.source_operation_id.as_deref(),
+        Some("op-add-a2")
+    );
+    assert_eq!(self_echo_output.from_epoch, "1");
+    assert_eq!(self_echo_output.epoch, "2");
+    let mut repeated_self_echo = add_a2_self_echo.clone();
+    repeated_self_echo.request_id = "req-notice-add-a2-owner-echo-repeat".to_owned();
+    assert_eq!(
+        process_notice_v2(
+            &store(directory.path(), &owner.did, &owner_device.device_id),
+            repeated_self_echo,
+        )
+        .expect("finalized Add actor echo replay is receipt-idempotent"),
+        self_echo_output
+    );
+    let mut conflicting_self_echo = add_a2_self_echo.clone();
+    conflicting_self_echo.notice.subject_device_id = a1_device.device_id.clone();
+    conflicting_self_echo.request_id = "req-notice-add-a2-owner-echo-conflict".to_owned();
+    assert_eq!(
+        process_notice_v2(&owner_store, conflicting_self_echo)
+            .expect_err("reusing the self-echo notice operation with changed content must fail")
+            .code,
+        "group.e2ee.commit_invalid"
+    );
+    let mut wrong_commit_self_echo = add_a2_self_echo;
+    wrong_commit_self_echo.meta.operation_id = "notice-add-a2-owner-wrong-commit".to_owned();
+    wrong_commit_self_echo.notice.notice_id = Some("notice-add-a2-owner-wrong-commit".to_owned());
+    wrong_commit_self_echo.notice.commit_b64u = Some(add_a1.body.commit_b64u.clone());
+    wrong_commit_self_echo.request_id = "req-notice-add-a2-owner-wrong-commit".to_owned();
+    assert_eq!(
+        process_notice_v2(&owner_store, wrong_commit_self_echo)
+            .expect_err("same-epoch echo with a different Commit must fail")
+            .code,
+        "group.e2ee.commit_invalid"
+    );
     let welcome_a2_notice = V2ProcessNoticeInput {
         recipient_did: alice.did.clone(),
         recipient_device_id: a2_device.device_id.clone(),
@@ -912,11 +992,48 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     finalize_commit_v2(
         &owner_store,
         V2FinalizeInput {
-            pending_commit_id: remove_a2.pending_commit_id,
+            pending_commit_id: remove_a2.pending_commit_id.clone(),
             request_id: "req-finalize-remove-a2".to_owned(),
         },
     )
     .expect("finalize A2 Remove");
+    let remove_a2_self_echo = V2ProcessNoticeInput {
+        recipient_did: owner.did.clone(),
+        recipient_device_id: owner_device.device_id.clone(),
+        meta: notice_meta(
+            &owner.did,
+            &owner_device.device_id,
+            "notice-remove-a2-owner-echo",
+        ),
+        notice: V2E2eeNotice {
+            notice_id: Some("notice-remove-a2-owner-echo".to_owned()),
+            notice_type: "commit-delivery".to_owned(),
+            group_did: GROUP_DID.to_owned(),
+            group_state_ref: remove_a2.body.group_state_ref.clone(),
+            crypto_group_id_b64u: remove_a2.body.crypto_group_id_b64u.clone(),
+            epoch: remove_a2.body.epoch.clone(),
+            subject_did: alice.did.clone(),
+            subject_device_id: a2_device.device_id.clone(),
+            subject_status: "removed".to_owned(),
+            commit_b64u: Some(remove_a2.body.commit_b64u.clone()),
+            welcome_b64u: None,
+            ratchet_tree_b64u: None,
+            epoch_authenticator: None,
+            group_receipt: None,
+        },
+        member_documents: member_documents(&owner, &alice),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-notice-remove-a2-owner-echo".to_owned(),
+    };
+    let remove_echo_output = process_notice_v2(&owner_store, remove_a2_self_echo)
+        .expect("finalized Remove actor accepts its exact Commit echo");
+    assert_eq!(
+        remove_echo_output.source_operation_id.as_deref(),
+        Some("op-remove-a2")
+    );
+    assert_eq!(remove_echo_output.from_epoch, "2");
+    assert_eq!(remove_echo_output.epoch, "3");
 
     let future_meta = send_meta(&owner.did, &owner_device.device_id, "future");
     let future = encrypt_v2(
