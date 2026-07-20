@@ -651,6 +651,16 @@ fn expired_prepared_publish_rotates_once_and_accepts_the_new_wire_attempt() {
     .expect("the new attempt retries byte-for-byte");
     assert_eq!(replay, rotated);
 
+    let conn = Connection::open(rotated_store.state_db_path()).expect("inspect rotated WAL");
+    assert_eq!(
+        conn.execute(
+            "INSERT INTO group_mls_operations(\n                 owner_identity_id, device_id, operation_id, command, input_digest,\n                 response_json, redaction_version, contains_sensitive, status, created_at, updated_at\n             )\n             SELECT owner_identity_id, device_id, 'legacy-superseded-accept-duplicate', command, input_digest,\n                    response_json, redaction_version, contains_sensitive, 'superseded', created_at, updated_at\n             FROM group_mls_operations WHERE operation_id = ?1",
+            params![operation_id],
+        )
+        .unwrap(),
+        1
+    );
+
     let accepted_result = V2PublishKeyPackageResult {
         published: true,
         owner_did: owner.did.clone(),
@@ -668,8 +678,17 @@ fn expired_prepared_publish_rotates_once_and_accepts_the_new_wire_attempt() {
             request_id: "req-publish-rotated-accept".to_owned(),
         },
     )
-    .expect("accept locates the family by its attempt-specific wire ID");
+    .expect("a terminal duplicate cannot make the active wire ID ambiguous");
     assert_eq!(accepted.status, V2KeyPackagePublishStatus::Accepted);
+    assert_eq!(
+        conn.execute(
+            "DELETE FROM group_mls_operations WHERE operation_id = 'legacy-superseded-accept-duplicate'",
+            [],
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
 
     let mut accepted_after_expiry = rotation_retry;
     accepted_after_expiry.now = "2026-10-01T00:00:00Z".to_owned();
@@ -947,6 +966,61 @@ fn publish_wire_ids_are_unique_across_current_and_historical_families() {
     );
     drop(conn);
 
+    let conn = Connection::open(probe_store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.execute(
+            "UPDATE group_mls_operations SET status = 'superseded' WHERE operation_id = ?1",
+            params![base_operation_id],
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    let superseded_family_conflicts = [
+        (
+            "superseded-current-operation",
+            generation_two.meta.operation_id.as_str(),
+            "unique-superseded-current-operation-package",
+        ),
+        (
+            "superseded-current-key",
+            "unique-superseded-current-key-operation",
+            generation_two
+                .body
+                .group_key_package
+                .key_package_id
+                .as_str(),
+        ),
+        (
+            "superseded-history-operation",
+            generation_one.meta.operation_id.as_str(),
+            "unique-superseded-history-operation-package",
+        ),
+        (
+            "superseded-history-key",
+            "unique-superseded-history-key-operation",
+            generation_one
+                .body
+                .group_key_package
+                .key_package_id
+                .as_str(),
+        ),
+    ];
+    for (label, operation_id, key_package_id) in superseded_family_conflicts {
+        let error = prepare_or_resume_key_package_publish_v2(
+            &probe_store,
+            make_input(
+                operation_id,
+                key_package_id,
+                &format!("req-family-conflict-{label}"),
+            ),
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect_err("a superseded family must keep all current and historical wire IDs reserved");
+        assert_eq!(error.code, "group.e2ee.commit_invalid");
+    }
+
     for (label, other_operation_id, other_key_package_id) in [
         (
             "operation",
@@ -983,6 +1057,16 @@ fn publish_wire_ids_are_unique_across_current_and_historical_families() {
             &signing_key(device),
         )
         .expect("the other family does not collide with generation zero");
+        let conn = Connection::open(case_store.state_db_path()).unwrap();
+        assert_eq!(
+            conn.execute(
+                "UPDATE group_mls_operations SET status = 'superseded' WHERE operation_id = ?1",
+                params![other_operation_id],
+            )
+            .unwrap(),
+            1
+        );
+        drop(conn);
         let mut expired = base_input.clone();
         expired.issued_at = "2026-08-20T00:00:00Z".to_owned();
         expired.expires_at = "2026-09-20T00:00:00Z".to_owned();
@@ -994,7 +1078,7 @@ fn publish_wire_ids_are_unique_across_current_and_historical_families() {
             &owner.document,
             &signing_key(device),
         )
-        .expect_err("rotation cannot claim another family's current wire ID");
+        .expect_err("rotation cannot claim a superseded family's current wire ID");
         assert_eq!(error.code, "group.e2ee.commit_invalid");
         let conn = Connection::open(case_store.state_db_path()).unwrap();
         assert_eq!(
@@ -1543,7 +1627,19 @@ fn legacy_publish_recovery_serializes_conflicting_family_ownership() {
         )
         .unwrap();
     assert!(serde_json::from_str::<Value>(&owner_journal).unwrap()["body"].is_object());
-    assert!(serde_json::from_str::<Value>(&loser_journal).unwrap()["body"].is_null());
+    let loser_journal: Value = serde_json::from_str(&loser_journal).unwrap();
+    assert!(loser_journal["body"].is_null());
+    assert_eq!(
+        loser_journal["base_key_package_id"],
+        json!(shared_key_package_id)
+    );
+    assert_eq!(
+        loser_journal["base_operation_id"],
+        json!(loser_input.meta.operation_id)
+    );
+    assert!(loser_journal["family_digest"]
+        .as_str()
+        .is_some_and(|digest| !digest.is_empty()));
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
             row.get::<_, i64>(0)
@@ -1613,8 +1709,28 @@ fn legacy_publish_recovery_serializes_conflicting_family_ownership() {
     .unwrap();
     let conn = Connection::open(completed_store.state_db_path()).unwrap();
     insert_legacy_loser(&conn);
+    conn.execute(
+        "UPDATE group_mls_operations SET status = 'superseded' WHERE operation_id = ?1",
+        params![loser_input.meta.operation_id],
+    )
+    .unwrap();
     drop(conn);
-    let mut loser_again = loser_input;
+    let unrelated_before_hydration = make_input(
+        "unrelated-before-terminal-hydration",
+        "req-unrelated-before-terminal-hydration",
+    );
+    let mut unrelated_before_hydration = unrelated_before_hydration;
+    unrelated_before_hydration.key_package_id = "unrelated-before-package".to_owned();
+    let error = prepare_or_resume_key_package_publish_v2(
+        &completed_store,
+        unrelated_before_hydration,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("an unresolved superseded legacy reservation fails closed");
+    assert_eq!(error.code, "group.e2ee.state_not_ready");
+
+    let mut loser_again = loser_input.clone();
     loser_again.request_id = "req-legacy-loser-against-completed".to_owned();
     let error = prepare_or_resume_key_package_publish_v2(
         &completed_store,
@@ -1622,19 +1738,43 @@ fn legacy_publish_recovery_serializes_conflicting_family_ownership() {
         &owner.document,
         &signing_key(device),
     )
-    .expect_err("an unknown legacy family cannot claim a completed family's package");
-    assert_eq!(error.code, "group.e2ee.commit_invalid");
+    .expect_err("the original base retry hydrates but cannot revive a superseded family");
+    assert_eq!(error.code, "group.e2ee.state_not_ready");
     let conn = Connection::open(completed_store.state_db_path()).unwrap();
-    assert_eq!(
-        conn.query_row(
-            "SELECT status FROM group_mls_operations WHERE operation_id = ?1",
-            params!["legacy-loser-operation"],
-            |row| row.get::<_, String>(0),
+    let (loser_status, loser_response): (String, String) = conn
+        .query_row(
+            "SELECT status, response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![loser_input.meta.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .unwrap(),
-        "superseded"
+        .unwrap();
+    assert_eq!(loser_status, "superseded");
+    let loser_response: Value = serde_json::from_str(&loser_response).unwrap();
+    assert_eq!(
+        loser_response["base_key_package_id"],
+        json!(shared_key_package_id)
     );
+    assert_eq!(
+        loser_response["base_operation_id"],
+        json!(loser_input.meta.operation_id)
+    );
+    assert!(loser_response["family_digest"]
+        .as_str()
+        .is_some_and(|digest| !digest.is_empty()));
+    assert!(loser_response["body"].is_null());
     drop(conn);
+    let mut unrelated_after_hydration = make_input(
+        "unrelated-after-terminal-hydration",
+        "req-unrelated-after-terminal-hydration",
+    );
+    unrelated_after_hydration.key_package_id = "unrelated-after-package".to_owned();
+    prepare_or_resume_key_package_publish_v2(
+        &completed_store,
+        unrelated_after_hydration,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("hydrating the terminal reservation unblocks unrelated families");
     let mut completed_retry = owner_input;
     completed_retry.request_id = "req-completed-owner-retry".to_owned();
     let cached = prepare_or_resume_key_package_publish_v2(

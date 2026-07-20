@@ -483,8 +483,33 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
             && journal.generation == 0
             && journal.body.is_none()
             && journal.base_key_package_id.is_empty();
+        let needs_legacy_terminal_hydration = status == "superseded"
+            && journal.generation == 0
+            && journal.body.is_none()
+            && journal.base_key_package_id.is_empty();
         hydrate_key_package_publish_family(&mut journal, &input, &stored_digest, &family_digest)?;
         validate_key_package_publish_family(&journal, &input, &family_digest)?;
+        if needs_legacy_terminal_hydration {
+            if stored_digest != input_digest {
+                return Err(operation_error(
+                    "group.e2ee.commit_invalid",
+                    "superseded legacy KeyPackage family was retried with different stable input",
+                    &input.request_id,
+                ));
+            }
+            persist_hydrated_legacy_superseded_family(
+                &mut scope,
+                &input,
+                &stored_digest,
+                &response_json,
+                &journal,
+            )?;
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "legacy KeyPackage publish family is terminally superseded",
+                &input.request_id,
+            ));
+        }
         if status == "accepted" {
             return validate_key_package_publish_journal(
                 &scope,
@@ -1182,6 +1207,9 @@ fn load_key_package_publish_operation_by_wire_id(
     drop(statement);
     let mut matches = Vec::new();
     for row in rows {
+        if row.4 == "superseded" {
+            continue;
+        }
         let journal = parse_key_package_publish_journal(&row.3, request_id)?;
         if journal.meta.operation_id == wire_operation_id {
             matches.push(row);
@@ -1225,14 +1253,21 @@ fn key_package_publish_wire_ids_bound_elsewhere(
         if excluded_family_operation_id == Some(family_operation_id.as_str()) {
             continue;
         }
-        if status == "superseded" {
-            continue;
-        }
         let journal = parse_key_package_publish_journal(&response_json, request_id)?;
+        if journal.meta.operation_id == wire_operation_id
+            || journal
+                .superseded_attempts
+                .iter()
+                .any(|attempt| attempt.operation_id == wire_operation_id)
+        {
+            return Ok(true);
+        }
         let current_key_package_matches = if let Some(body) = journal.body.as_ref() {
             body.group_key_package.key_package_id == wire_key_package_id
         } else if journal.base_key_package_id.is_empty() {
-            if unresolved_legacy_policy == UnresolvedLegacyFamilyPolicy::FailClosed {
+            if status == "superseded"
+                || unresolved_legacy_policy == UnresolvedLegacyFamilyPolicy::FailClosed
+            {
                 return Err(operation_error(
                     "group.e2ee.state_not_ready",
                     format!(
@@ -1251,12 +1286,11 @@ fn key_package_publish_wire_ids_bound_elsewhere(
                 request_id,
             )? == wire_key_package_id
         };
-        if journal.meta.operation_id == wire_operation_id
-            || current_key_package_matches
-            || journal.superseded_attempts.iter().any(|attempt| {
-                attempt.operation_id == wire_operation_id
-                    || attempt.key_package_id == wire_key_package_id
-            })
+        if current_key_package_matches
+            || journal
+                .superseded_attempts
+                .iter()
+                .any(|attempt| attempt.key_package_id == wire_key_package_id)
         {
             return Ok(true);
         }
@@ -1338,25 +1372,6 @@ fn claim_legacy_key_package_publish_family(
         .app_conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    let current: Option<(String, String, String)> = transaction
-        .query_row(
-            "SELECT input_digest, response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
-            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    if current
-        .as_ref()
-        .map(|(digest, response, status)| (digest.as_str(), response.as_str(), status.as_str()))
-        != Some((stored_digest, stored_response_json, "preparing"))
-    {
-        return Err(operation_error(
-            "state_locked",
-            "legacy KeyPackage publish family changed during recovery",
-            &input.request_id,
-        ));
-    }
     let conflict = key_package_publish_wire_ids_bound_elsewhere(
         &transaction,
         &journal.meta.operation_id,
@@ -1365,48 +1380,112 @@ fn claim_legacy_key_package_publish_family(
         UnresolvedLegacyFamilyPolicy::Ignore,
         &input.request_id,
     )?;
-    let (next_response_json, next_status) = if conflict {
-        (stored_response_json.to_owned(), "superseded")
-    } else {
-        (
-            serialize_key_package_publish_journal(journal, &input.request_id)?,
-            "preparing",
-        )
-    };
-    transaction
-        .execute(
-            "UPDATE operations\n             SET response_json = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
-            params![
-                &journal.base_operation_id,
-                &next_response_json,
-                next_status,
-                KEY_PACKAGE_PUBLISH_COMMAND,
-            ],
-        )
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    let persisted: Option<(String, String)> = transaction
-        .query_row(
-            "SELECT response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
-            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    if persisted
-        .as_ref()
-        .map(|(response, status)| (response.as_str(), status.as_str()))
-        != Some((next_response_json.as_str(), next_status))
-    {
-        return Err(operation_error(
-            "group.e2ee.state_not_ready",
-            "legacy KeyPackage publish recovery was not persisted",
-            &input.request_id,
-        ));
-    }
+    let next_response_json = serialize_key_package_publish_journal(journal, &input.request_id)?;
+    let next_status = if conflict { "superseded" } else { "preparing" };
+    cas_persist_legacy_key_package_publish_family(
+        &transaction,
+        &journal.base_operation_id,
+        stored_digest,
+        stored_response_json,
+        "preparing",
+        &next_response_json,
+        next_status,
+        &input.request_id,
+    )?;
     transaction
         .commit()
         .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
     Ok(!conflict)
+}
+
+fn persist_hydrated_legacy_superseded_family(
+    scope: &mut GroupMlsOperationScope,
+    input: &V2PrepareKeyPackagePublishInput,
+    stored_digest: &str,
+    stored_response_json: &str,
+    journal: &V2KeyPackagePublishJournal,
+) -> GroupMlsOperationResult<()> {
+    let transaction = scope
+        .app_conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let next_response_json = serialize_key_package_publish_journal(journal, &input.request_id)?;
+    cas_persist_legacy_key_package_publish_family(
+        &transaction,
+        &journal.base_operation_id,
+        stored_digest,
+        stored_response_json,
+        "superseded",
+        &next_response_json,
+        "superseded",
+        &input.request_id,
+    )?;
+    transaction
+        .commit()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cas_persist_legacy_key_package_publish_family(
+    transaction: &rusqlite::Transaction<'_>,
+    family_operation_id: &str,
+    expected_digest: &str,
+    expected_response_json: &str,
+    expected_status: &str,
+    next_response_json: &str,
+    next_status: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let current: Option<(String, String, String)> = transaction
+        .query_row(
+            "SELECT input_digest, response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![family_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if current
+        .as_ref()
+        .map(|(digest, response, status)| (digest.as_str(), response.as_str(), status.as_str()))
+        != Some((expected_digest, expected_response_json, expected_status))
+    {
+        return Err(operation_error(
+            "state_locked",
+            "legacy KeyPackage publish family changed during recovery",
+            request_id,
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE operations\n             SET response_json = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
+            params![
+                family_operation_id,
+                next_response_json,
+                next_status,
+                KEY_PACKAGE_PUBLISH_COMMAND,
+            ],
+        )
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let persisted: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![family_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if persisted
+        .as_ref()
+        .map(|(response, status)| (response.as_str(), status.as_str()))
+        != Some((next_response_json, next_status))
+    {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "legacy KeyPackage publish recovery was not persisted",
+            request_id,
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
