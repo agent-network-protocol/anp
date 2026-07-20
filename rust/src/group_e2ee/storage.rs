@@ -642,6 +642,14 @@ fn install_im_core_compat_views(
                 status = excluded.status,
                 consumed_at = excluded.consumed_at;
          END;
+         CREATE TEMP TRIGGER key_packages_delete
+         INSTEAD OF DELETE ON key_packages
+         BEGIN
+            DELETE FROM group_mls_key_packages
+            WHERE owner_identity_id = (SELECT owner_identity_id FROM temp.group_mls_scope)
+              AND device_id = (SELECT device_id FROM temp.group_mls_scope)
+              AND key_package_id = OLD.key_package_id;
+         END;
 
          CREATE TEMP VIEW group_bindings AS
             SELECT owner_did AS agent_did,

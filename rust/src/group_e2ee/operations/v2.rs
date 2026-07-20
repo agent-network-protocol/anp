@@ -28,6 +28,7 @@ use crate::group_e2ee::{
 };
 use crate::PrivateKeyMaterial;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::DateTime;
 use openmls::prelude::{
     tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize},
     *,
@@ -111,12 +112,34 @@ pub struct V2AcceptKeyPackagePublishInput {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct V2KeyPackagePublishJournal {
     journal_version: String,
+    #[serde(default)]
+    generation: u64,
+    #[serde(default)]
+    base_operation_id: String,
+    #[serde(default)]
+    base_key_package_id: String,
+    #[serde(default)]
+    family_digest: String,
     meta: V2ServiceMetadata,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<V2PublishKeyPackageBody>,
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted_result: Option<V2PublishKeyPackageResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    superseded_attempts: Vec<V2SupersededKeyPackagePublishAttempt>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct V2SupersededKeyPackagePublishAttempt {
+    generation: u64,
+    operation_id: String,
+    key_package_id: String,
+    input_digest: String,
+    status: String,
+    superseded_at: String,
+}
+
+type LoadedKeyPackagePublishOperation = (String, String, String, String, String);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V2CreateGroupInput {
@@ -432,7 +455,8 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
 ) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
     validate_key_package_publish_input(store.owner_scope().as_ref(), &input)?;
     let input_digest = key_package_publish_input_digest(&input)?;
-    let scope = open_scope(store, &input.request_id)?;
+    let family_digest = key_package_publish_family_digest(&input)?;
+    let mut scope = open_scope(store, &input.request_id)?;
     let existing = load_key_package_publish_operation(
         &scope.app_conn,
         &input.meta.operation_id,
@@ -448,15 +472,10 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                 &input.request_id,
             ));
         }
-        if stored_digest != input_digest {
-            return Err(operation_error(
-                "group.e2ee.commit_invalid",
-                "KeyPackage publish operation_id was replayed with different stable input",
-                &input.request_id,
-            ));
-        }
-        let journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
-        if status == "prepared" || status == "accepted" {
+        let mut journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
+        hydrate_key_package_publish_family(&mut journal, &input, &stored_digest, &family_digest)?;
+        validate_key_package_publish_family(&journal, &input, &family_digest)?;
+        if status == "accepted" {
             return validate_key_package_publish_journal(
                 &scope,
                 journal,
@@ -465,15 +484,52 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                 did_document,
             );
         }
-        if status != "preparing" {
-            return Err(operation_error(
-                "group.e2ee.state_not_ready",
-                "KeyPackage publish journal has an unsupported state",
-                &input.request_id,
-            ));
+        if status == "prepared" {
+            if !key_package_publish_attempt_expired(&scope, &journal, &input, did_document)? {
+                if stored_digest != input_digest {
+                    return Err(operation_error(
+                        "group.e2ee.commit_invalid",
+                        "KeyPackage publish operation_id was replayed with different stable input",
+                        &input.request_id,
+                    ));
+                }
+                return validate_key_package_publish_journal(
+                    &scope,
+                    journal,
+                    &status,
+                    &input,
+                    did_document,
+                );
+            }
+            journal = rotate_expired_key_package_publish_attempt(
+                &mut scope,
+                &input,
+                &stored_digest,
+                &response_json,
+                input_digest.as_str(),
+                family_digest.as_str(),
+                journal,
+            )?;
+            resumes_preparing = true;
+            journal
+        } else {
+            if status != "preparing" {
+                return Err(operation_error(
+                    "group.e2ee.state_not_ready",
+                    "KeyPackage publish journal has an unsupported state",
+                    &input.request_id,
+                ));
+            }
+            if stored_digest != input_digest {
+                return Err(operation_error(
+                    "group.e2ee.commit_invalid",
+                    "KeyPackage publish operation_id was replayed with different stable input",
+                    &input.request_id,
+                ));
+            }
+            resumes_preparing = true;
+            journal
         }
-        resumes_preparing = true;
-        journal
     } else {
         if key_package_id_exists(&scope, &input.key_package_id, &input.request_id)? {
             return Err(operation_error(
@@ -484,9 +540,14 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
         }
         let journal = V2KeyPackagePublishJournal {
             journal_version: KEY_PACKAGE_PUBLISH_JOURNAL_VERSION.to_owned(),
+            generation: 0,
+            base_operation_id: input.meta.operation_id.clone(),
+            base_key_package_id: input.key_package_id.clone(),
+            family_digest,
             meta: input.meta.clone(),
             body: None,
             accepted_result: None,
+            superseded_attempts: Vec::new(),
         };
         scope
             .app_conn
@@ -507,10 +568,17 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
         remove_unreferenced_openmls_key_packages(&scope, journal.body.as_ref(), &input.request_id)?;
     }
 
+    let current_key_package_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.key-package.v1",
+        "kp-attempt-",
+        &journal.base_key_package_id,
+        journal.generation,
+        &input.request_id,
+    )?;
     let package = if let Some(body) = journal.body.as_ref() {
         body.group_key_package.clone()
     } else if let Some(package) =
-        load_public_key_package(&scope, &input.key_package_id, &input.request_id)?
+        load_public_key_package(&scope, &current_key_package_id, &input.request_id)?
     {
         if !resumes_preparing {
             return Err(operation_error(
@@ -527,7 +595,7 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                 owner_did: input.owner_did.clone(),
                 owner_device_id: input.owner_device_id.clone(),
                 verification_method: input.verification_method.clone(),
-                key_package_id: input.key_package_id.clone(),
+                key_package_id: current_key_package_id,
                 issued_at: input.issued_at.clone(),
                 expires_at: input.expires_at.clone(),
                 now: input.now.clone(),
@@ -544,7 +612,7 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
     journal.accepted_result = None;
     persist_key_package_publish_journal(
         &scope.app_conn,
-        &input.meta.operation_id,
+        &journal.base_operation_id,
         &journal,
         "prepared",
         &input.request_id,
@@ -571,11 +639,12 @@ pub fn accept_key_package_publish_v2<S: GroupMlsStore>(
         .validate()
         .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
     let scope = open_scope(store, &input.request_id)?;
-    let Some((command, _, response_json, status)) = load_key_package_publish_operation(
-        &scope.app_conn,
-        &input.operation_id,
-        &input.request_id,
-    )?
+    let Some((family_operation_id, command, _, response_json, status)) =
+        load_key_package_publish_operation_by_wire_id(
+            &scope.app_conn,
+            &input.operation_id,
+            &input.request_id,
+        )?
     else {
         return Err(operation_error(
             "group.e2ee.state_not_ready",
@@ -598,6 +667,7 @@ pub fn accept_key_package_publish_v2<S: GroupMlsStore>(
         ));
     }
     let mut journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
+    validate_key_package_publish_family_structure(&journal, &input.request_id)?;
     let body = journal.body.as_ref().ok_or_else(|| {
         operation_error(
             "group.e2ee.state_not_ready",
@@ -605,6 +675,13 @@ pub fn accept_key_package_publish_v2<S: GroupMlsStore>(
             &input.request_id,
         )
     })?;
+    if journal.meta.operation_id != input.operation_id {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "KeyPackage publish acceptance does not identify the current wire attempt",
+            &input.request_id,
+        ));
+    }
     if input.owner_did != journal.meta.sender_did
         || input.owner_device_id != journal.meta.sender_device_id
         || input.owner_did != body.group_key_package.owner_did
@@ -626,7 +703,7 @@ pub fn accept_key_package_publish_v2<S: GroupMlsStore>(
         journal.accepted_result = Some(input.result);
         persist_key_package_publish_journal(
             &scope.app_conn,
-            &input.operation_id,
+            &family_operation_id,
             &journal,
             "accepted",
             &input.request_id,
@@ -778,6 +855,254 @@ fn key_package_publish_input_digest(
     Ok(encode_b64u(&Sha256::digest(canonical)))
 }
 
+fn key_package_publish_family_digest(
+    input: &V2PrepareKeyPackagePublishInput,
+) -> GroupMlsOperationResult<String> {
+    let canonical = crate::canonical_json::canonicalize_json(&json!({
+        "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
+        "anp_version": input.meta.anp_version,
+        "profile": input.meta.profile,
+        "security_profile": input.meta.security_profile,
+        "sender_did": input.meta.sender_did,
+        "sender_device_id": input.meta.sender_device_id,
+        "target_kind": input.meta.target.kind,
+        "target_did": input.meta.target.did,
+        "base_operation_id": input.meta.operation_id,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "base_key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    Ok(encode_b64u(&Sha256::digest(canonical)))
+}
+
+fn key_package_publish_attempt_id(
+    domain: &str,
+    prefix: &str,
+    base_id: &str,
+    generation: u64,
+    request_id: &str,
+) -> GroupMlsOperationResult<String> {
+    if generation == 0 {
+        return Ok(base_id.to_owned());
+    }
+    let mut digest = Sha256::new();
+    for value in [domain.as_bytes(), base_id.as_bytes()] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value);
+    }
+    digest.update(generation.to_be_bytes());
+    let derived = format!("{prefix}{}", URL_SAFE_NO_PAD.encode(digest.finalize()));
+    require_non_empty("derived_attempt_id", &derived, request_id)?;
+    Ok(derived)
+}
+
+fn key_package_publish_attempt_meta(
+    base: &V2ServiceMetadata,
+    generation: u64,
+    request_id: &str,
+) -> GroupMlsOperationResult<V2ServiceMetadata> {
+    let mut meta = base.clone();
+    meta.operation_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.operation.v1",
+        "kp-op-attempt-",
+        &base.operation_id,
+        generation,
+        request_id,
+    )?;
+    Ok(meta)
+}
+
+fn hydrate_key_package_publish_family(
+    journal: &mut V2KeyPackagePublishJournal,
+    input: &V2PrepareKeyPackagePublishInput,
+    stored_digest: &str,
+    family_digest: &str,
+) -> GroupMlsOperationResult<()> {
+    if journal.base_operation_id.is_empty() {
+        if journal.generation != 0 || journal.meta.operation_id != input.meta.operation_id {
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "legacy KeyPackage publish journal cannot be rebound to another family",
+                &input.request_id,
+            ));
+        }
+        journal.base_operation_id = journal.meta.operation_id.clone();
+    }
+    if journal.base_key_package_id.is_empty() {
+        let persisted = journal
+            .body
+            .as_ref()
+            .map(|body| body.group_key_package.key_package_id.as_str())
+            .unwrap_or(input.key_package_id.as_str());
+        journal.base_key_package_id = persisted.to_owned();
+    }
+    if journal.family_digest.is_empty() {
+        if stored_digest != key_package_publish_input_digest(input)? {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "legacy KeyPackage publish journal was replayed with different stable input",
+                &input.request_id,
+            ));
+        }
+        journal.family_digest = family_digest.to_owned();
+    }
+    Ok(())
+}
+
+fn validate_key_package_publish_family(
+    journal: &V2KeyPackagePublishJournal,
+    input: &V2PrepareKeyPackagePublishInput,
+    family_digest: &str,
+) -> GroupMlsOperationResult<()> {
+    if journal.base_operation_id != input.meta.operation_id
+        || journal.base_key_package_id != input.key_package_id
+        || journal.family_digest != family_digest
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "KeyPackage publish family was replayed with different identity input",
+            &input.request_id,
+        ));
+    }
+    let expected_meta =
+        key_package_publish_attempt_meta(&input.meta, journal.generation, &input.request_id)?;
+    if journal.meta.operation_id != expected_meta.operation_id
+        || journal.meta.anp_version != input.meta.anp_version
+        || journal.meta.profile != input.meta.profile
+        || journal.meta.security_profile != input.meta.security_profile
+        || journal.meta.sender_did != input.meta.sender_did
+        || journal.meta.sender_device_id != input.meta.sender_device_id
+        || journal.meta.target.kind != input.meta.target.kind
+        || journal.meta.target.did != input.meta.target.did
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "persisted KeyPackage publish attempt is not bound to its family",
+            &input.request_id,
+        ));
+    }
+    validate_key_package_publish_family_structure(journal, &input.request_id)
+}
+
+fn validate_key_package_publish_family_structure(
+    journal: &V2KeyPackagePublishJournal,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "KeyPackage publish journal version is unsupported",
+            request_id,
+        ));
+    }
+    let legacy_generation_zero = journal.generation == 0 && journal.superseded_attempts.is_empty();
+    let base_operation_id = if journal.base_operation_id.is_empty() && legacy_generation_zero {
+        journal.meta.operation_id.as_str()
+    } else {
+        require_non_empty("base_operation_id", &journal.base_operation_id, request_id)?;
+        journal.base_operation_id.as_str()
+    };
+    let base_key_package_id = if journal.base_key_package_id.is_empty() && legacy_generation_zero {
+        journal
+            .body
+            .as_ref()
+            .map(|body| body.group_key_package.key_package_id.as_str())
+            .ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.state_not_ready",
+                    "legacy KeyPackage publish journal has no public body",
+                    request_id,
+                )
+            })?
+    } else {
+        require_non_empty(
+            "base_key_package_id",
+            &journal.base_key_package_id,
+            request_id,
+        )?;
+        journal.base_key_package_id.as_str()
+    };
+    if journal.generation > 0 {
+        require_non_empty("family_digest", &journal.family_digest, request_id)?;
+    }
+    if journal.superseded_attempts.len() as u64 != journal.generation {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish attempt history is incomplete",
+            request_id,
+        ));
+    }
+    let mut operation_ids = HashSet::new();
+    let mut key_package_ids = HashSet::new();
+    for (expected_generation, attempt) in journal.superseded_attempts.iter().enumerate() {
+        let expected_generation = expected_generation as u64;
+        let expected_operation_id = key_package_publish_attempt_id(
+            "awiki.group-e2ee.key-package-publish.operation.v1",
+            "kp-op-attempt-",
+            base_operation_id,
+            expected_generation,
+            request_id,
+        )?;
+        let expected_key_package_id = key_package_publish_attempt_id(
+            "awiki.group-e2ee.key-package-publish.key-package.v1",
+            "kp-attempt-",
+            base_key_package_id,
+            expected_generation,
+            request_id,
+        )?;
+        if attempt.generation != expected_generation
+            || attempt.operation_id != expected_operation_id
+            || attempt.key_package_id != expected_key_package_id
+            || attempt.status != "superseded"
+            || !operation_ids.insert(attempt.operation_id.as_str())
+            || !key_package_ids.insert(attempt.key_package_id.as_str())
+        {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "KeyPackage publish attempt history contains a duplicate or invalid binding",
+                request_id,
+            ));
+        }
+    }
+    let expected_current_operation_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.operation.v1",
+        "kp-op-attempt-",
+        base_operation_id,
+        journal.generation,
+        request_id,
+    )?;
+    let current_key_package_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.key-package.v1",
+        "kp-attempt-",
+        base_key_package_id,
+        journal.generation,
+        request_id,
+    )?;
+    if journal.meta.operation_id != expected_current_operation_id
+        || !operation_ids.insert(journal.meta.operation_id.as_str())
+        || !key_package_ids.insert(current_key_package_id.as_str())
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "current KeyPackage publish attempt duplicates its history",
+            request_id,
+        ));
+    }
+    if let Some(body) = journal.body.as_ref() {
+        if body.group_key_package.key_package_id != current_key_package_id {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "current KeyPackage is not bound to its publish generation",
+                request_id,
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn load_key_package_publish_operation(
     conn: &rusqlite::Connection,
     operation_id: &str,
@@ -790,6 +1115,48 @@ fn load_key_package_publish_operation(
     )
     .optional()
     .map_err(|err| sqlite_operation_error(err, request_id))
+}
+
+fn load_key_package_publish_operation_by_wire_id(
+    conn: &rusqlite::Connection,
+    wire_operation_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Option<LoadedKeyPackagePublishOperation>> {
+    let mut statement = conn
+        .prepare(
+            "SELECT operation_id, command, input_digest, response_json, status\n             FROM operations WHERE command = ?1",
+        )
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let rows = statement
+        .query_map(params![KEY_PACKAGE_PUBLISH_COMMAND], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|err| sqlite_operation_error(err, request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    drop(statement);
+    let mut matches = Vec::new();
+    for row in rows {
+        let journal = parse_key_package_publish_journal(&row.3, request_id)?;
+        if journal.meta.operation_id == wire_operation_id {
+            matches.push(row);
+        }
+    }
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.pop()),
+        _ => Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "wire operation_id is ambiguously bound to multiple publish families",
+            request_id,
+        )),
+    }
 }
 
 fn parse_key_package_publish_journal(
@@ -814,6 +1181,218 @@ fn serialize_key_package_publish_journal(
 ) -> GroupMlsOperationResult<String> {
     serde_json::to_string(journal)
         .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))
+}
+
+fn key_package_publish_attempt_expired(
+    scope: &GroupMlsOperationScope,
+    journal: &V2KeyPackagePublishJournal,
+    input: &V2PrepareKeyPackagePublishInput,
+    did_document: &Value,
+) -> GroupMlsOperationResult<bool> {
+    let body = journal.body.as_ref().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "prepared KeyPackage publish has no public body",
+            &input.request_id,
+        )
+    })?;
+    let package = &body.group_key_package;
+    parse_and_validate_key_package(
+        &scope.provider,
+        package,
+        did_document,
+        package.did_wba_binding.issued_at.as_str(),
+        input.draft_extension_negotiated,
+        &input.request_id,
+    )?;
+    let now = DateTime::parse_from_rfc3339(&input.now)
+        .map_err(|err| operation_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    let binding_expires = DateTime::parse_from_rfc3339(&package.did_wba_binding.expires_at)
+        .map_err(|err| operation_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    let public_expires = package
+        .expires_at
+        .as_deref()
+        .map(DateTime::parse_from_rfc3339)
+        .transpose()
+        .map_err(|err| operation_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    Ok(now >= binding_expires || public_expires.is_some_and(|expires| now >= expires))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rotate_expired_key_package_publish_attempt(
+    scope: &mut GroupMlsOperationScope,
+    input: &V2PrepareKeyPackagePublishInput,
+    stored_digest: &str,
+    stored_response_json: &str,
+    next_input_digest: &str,
+    next_family_digest: &str,
+    mut journal: V2KeyPackagePublishJournal,
+) -> GroupMlsOperationResult<V2KeyPackagePublishJournal> {
+    let old_body = journal.body.as_ref().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "expired KeyPackage publish has no public body",
+            &input.request_id,
+        )
+    })?;
+    let old_package = old_body.group_key_package.clone();
+    let old_private_ref = openmls_key_package_ref_bytes(
+        &scope.provider,
+        &old_package.mls_key_package_b64u,
+        &input.request_id,
+    )?;
+    if load_public_key_package(scope, &old_package.key_package_id, &input.request_id)?.as_ref()
+        != Some(&old_package)
+    {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "expired KeyPackage public row does not match its journal",
+            &input.request_id,
+        ));
+    }
+    let next_generation = journal.generation.checked_add(1).ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish generation overflow",
+            &input.request_id,
+        )
+    })?;
+    let next_meta =
+        key_package_publish_attempt_meta(&input.meta, next_generation, &input.request_id)?;
+    let next_key_package_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.key-package.v1",
+        "kp-attempt-",
+        &journal.base_key_package_id,
+        next_generation,
+        &input.request_id,
+    )?;
+    if journal.superseded_attempts.iter().any(|attempt| {
+        attempt.operation_id == next_meta.operation_id
+            || attempt.key_package_id == next_key_package_id
+    }) || journal.meta.operation_id == next_meta.operation_id
+        || old_package.key_package_id == next_key_package_id
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "derived KeyPackage publish attempt collides with an existing binding",
+            &input.request_id,
+        ));
+    }
+    journal
+        .superseded_attempts
+        .push(V2SupersededKeyPackagePublishAttempt {
+            generation: journal.generation,
+            operation_id: journal.meta.operation_id.clone(),
+            key_package_id: old_package.key_package_id.clone(),
+            input_digest: stored_digest.to_owned(),
+            status: "superseded".to_owned(),
+            superseded_at: input.now.clone(),
+        });
+    journal.generation = next_generation;
+    journal.family_digest = next_family_digest.to_owned();
+    journal.meta = next_meta;
+    journal.body = None;
+    journal.accepted_result = None;
+    let next_response_json = serialize_key_package_publish_journal(&journal, &input.request_id)?;
+
+    let transaction = scope
+        .app_conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let current: Option<(String, String, String)> = transaction
+        .query_row(
+            "SELECT input_digest, response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if current
+        .as_ref()
+        .map(|(digest, response, status)| (digest.as_str(), response.as_str(), status.as_str()))
+        != Some((stored_digest, stored_response_json, "prepared"))
+    {
+        return Err(operation_error(
+            "state_locked",
+            "KeyPackage publish attempt changed during rotation",
+            &input.request_id,
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE operations\n             SET input_digest = ?2, response_json = ?3, status = 'preparing', updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
+            params![
+                &journal.base_operation_id,
+                next_input_digest,
+                next_response_json,
+                KEY_PACKAGE_PUBLISH_COMMAND,
+            ],
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let updated: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT input_digest, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if updated
+        .as_ref()
+        .map(|(digest, status)| (digest.as_str(), status.as_str()))
+        != Some((next_input_digest, "preparing"))
+    {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish attempt did not enter preparing state",
+            &input.request_id,
+        ));
+    }
+    transaction
+        .execute(
+            "DELETE FROM key_packages\n             WHERE agent_did = ?1 AND device_id = ?2 AND key_package_id = ?3",
+            params![
+                &old_package.owner_did,
+                &old_package.owner_device_id,
+                &old_package.key_package_id,
+            ],
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let public_remaining: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM key_packages\n             WHERE agent_did = ?1 AND device_id = ?2 AND key_package_id = ?3",
+            params![
+                &old_package.owner_did,
+                &old_package.owner_device_id,
+                &old_package.key_package_id,
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if public_remaining != 0 {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "expired KeyPackage public row disappeared during rotation",
+            &input.request_id,
+        ));
+    }
+    let private_deleted = transaction
+        .execute(
+            "DELETE FROM openmls_key_packages WHERE key_package_ref = ?1",
+            params![old_private_ref],
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if private_deleted != 1 {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "expired OpenMLS KeyPackage disappeared during rotation",
+            &input.request_id,
+        ));
+    }
+    transaction
+        .commit()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    Ok(journal)
 }
 
 fn persist_key_package_publish_journal(
@@ -982,7 +1561,12 @@ fn validate_key_package_publish_journal(
     input: &V2PrepareKeyPackagePublishInput,
     did_document: &Value,
 ) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
-    if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION || journal.meta != input.meta
+    let family_digest = key_package_publish_family_digest(input)?;
+    validate_key_package_publish_family(&journal, input, &family_digest)?;
+    let expected_meta =
+        key_package_publish_attempt_meta(&input.meta, journal.generation, &input.request_id)?;
+    if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION
+        || (status != "accepted" && journal.meta != expected_meta)
     {
         return Err(operation_error(
             "group.e2ee.commit_invalid",
@@ -998,12 +1582,19 @@ fn validate_key_package_publish_journal(
         )
     })?;
     let package = &body.group_key_package;
+    let expected_key_package_id = key_package_publish_attempt_id(
+        "awiki.group-e2ee.key-package-publish.key-package.v1",
+        "kp-attempt-",
+        &journal.base_key_package_id,
+        journal.generation,
+        &input.request_id,
+    )?;
     package
         .validate_structure()
         .map_err(|err| v2_error("group.e2ee.invalid_key_package", err, &input.request_id))?;
     if package.owner_did != input.owner_did
         || package.owner_device_id != input.owner_device_id
-        || package.key_package_id != input.key_package_id
+        || package.key_package_id != expected_key_package_id
         || package.did_wba_binding.verification_method != input.verification_method
     {
         return Err(operation_error(

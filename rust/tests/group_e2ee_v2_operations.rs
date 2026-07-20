@@ -463,18 +463,6 @@ fn key_package_publish_wal_resumes_exactly_and_caches_typed_acceptance() {
     assert!(!response_json.contains("private_encryption_key"));
     drop(conn);
 
-    let mut expired_prepared_retry = retry_input.clone();
-    expired_prepared_retry.now = "2026-08-21T00:00:00Z".to_owned();
-    expired_prepared_retry.request_id = "req-publish-prepared-after-expiry".to_owned();
-    let error = prepare_or_resume_key_package_publish_v2(
-        &restarted_store,
-        expired_prepared_retry,
-        &owner.document,
-        &signing_key(device),
-    )
-    .expect_err("an unaccepted prepared package must still be fresh on retry");
-    assert_eq!(error.code, "group.e2ee.did_binding_invalid");
-
     let result = V2PublishKeyPackageResult {
         published: true,
         owner_did: owner.did.clone(),
@@ -561,6 +549,347 @@ fn key_package_publish_wal_resumes_exactly_and_caches_typed_acceptance() {
     )
     .expect("equivalent Host acceptance returns the first cached result");
     assert_eq!(equivalent_replay, replay);
+}
+
+#[test]
+fn expired_prepared_publish_rotates_once_and_accepts_the_new_wire_attempt() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-expired-rotate", &["publish-rotate-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-expired-rotate-operation";
+    let key_package_id = "join-kp-expired-rotate-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-expired-initial".to_owned(),
+    };
+    let initial_store = store(directory.path(), &owner.did, &device.device_id);
+    let first = prepare_or_resume_key_package_publish_v2(
+        &initial_store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("prepare the attempt whose Host response is lost");
+    drop(initial_store);
+
+    let mut changed_route = input.clone();
+    changed_route.meta.target.did = "did:wba:p6-rotated.example:services:message".to_owned();
+    changed_route.request_id = "req-publish-route-change-before-expiry".to_owned();
+    let unexpired_store = store(directory.path(), &owner.did, &device.device_id);
+    let error = prepare_or_resume_key_package_publish_v2(
+        &unexpired_store,
+        changed_route.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("an unexpired attempt cannot be rebound to another route");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+    drop(unexpired_store);
+
+    changed_route.issued_at = "2026-08-21T00:00:00Z".to_owned();
+    changed_route.expires_at = "2026-09-21T00:00:00Z".to_owned();
+    changed_route.now = "2026-08-21T00:00:00Z".to_owned();
+    changed_route.request_id = "req-publish-route-change-after-expiry".to_owned();
+    let rotated_store = store(directory.path(), &owner.did, &device.device_id);
+    let error = prepare_or_resume_key_package_publish_v2(
+        &rotated_store,
+        changed_route,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("expiry must not permit rebinding the publish family route");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+
+    let mut rotation_retry = input.clone();
+    rotation_retry.issued_at = "2026-08-21T00:00:00Z".to_owned();
+    rotation_retry.expires_at = "2026-09-21T00:00:00Z".to_owned();
+    rotation_retry.now = "2026-08-21T00:00:00Z".to_owned();
+    rotation_retry.request_id = "req-publish-rotate-after-expiry".to_owned();
+    let rotated = prepare_or_resume_key_package_publish_v2(
+        &rotated_store,
+        rotation_retry.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("expired response-loss attempt rotates exactly once");
+    assert_eq!(rotated.status, V2KeyPackagePublishStatus::Prepared);
+    assert_ne!(rotated.meta.operation_id, first.meta.operation_id);
+    assert_ne!(
+        rotated.body.group_key_package.key_package_id,
+        first.body.group_key_package.key_package_id
+    );
+    assert!(rotated.meta.operation_id.starts_with("kp-op-attempt-"));
+    assert!(rotated
+        .body
+        .group_key_package
+        .key_package_id
+        .starts_with("kp-attempt-"));
+    assert_eq!(rotated.meta.target, rotation_retry.meta.target);
+
+    let mut exact_retry = rotation_retry.clone();
+    exact_retry.issued_at = "2026-08-22T00:00:00Z".to_owned();
+    exact_retry.expires_at = "2026-09-22T00:00:00Z".to_owned();
+    exact_retry.now = "2026-08-22T00:00:00Z".to_owned();
+    exact_retry.request_id = "req-publish-rotated-exact-retry".to_owned();
+    let replay = prepare_or_resume_key_package_publish_v2(
+        &rotated_store,
+        exact_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("the new attempt retries byte-for-byte");
+    assert_eq!(replay, rotated);
+
+    let accepted_result = V2PublishKeyPackageResult {
+        published: true,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        key_package_id: rotated.body.group_key_package.key_package_id.clone(),
+        published_at: "2026-08-22T00:00:00Z".to_owned(),
+    };
+    let accepted = accept_key_package_publish_v2(
+        &rotated_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: rotated.meta.operation_id.clone(),
+            result: accepted_result,
+            request_id: "req-publish-rotated-accept".to_owned(),
+        },
+    )
+    .expect("accept locates the family by its attempt-specific wire ID");
+    assert_eq!(accepted.status, V2KeyPackagePublishStatus::Accepted);
+
+    let mut accepted_after_expiry = rotation_retry;
+    accepted_after_expiry.now = "2026-10-01T00:00:00Z".to_owned();
+    accepted_after_expiry.request_id = "req-publish-accepted-after-expiry".to_owned();
+    let terminal = prepare_or_resume_key_package_publish_v2(
+        &rotated_store,
+        accepted_after_expiry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("accepted attempt never rotates after expiry");
+    assert_eq!(terminal, accepted);
+
+    let conn = Connection::open(rotated_store.state_db_path()).expect("inspect rotated WAL");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_operations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    let (status, response_json, contains_sensitive): (String, String, i64) = conn
+        .query_row(
+            "SELECT status, response_json, contains_sensitive FROM group_mls_operations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(status, "accepted");
+    assert_eq!(contains_sensitive, 0);
+    assert!(response_json.contains("superseded_attempts"));
+    for forbidden in [
+        "private_key",
+        "private_ref",
+        "private_init_key",
+        "private_encryption_key",
+    ] {
+        assert!(!response_json.contains(forbidden));
+    }
+}
+
+#[test]
+fn rotated_publish_recovers_after_atomic_switch_and_rejects_ambiguous_bindings() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-rotate-crash", &["publish-rotate-crash-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-rotate-crash-operation";
+    let key_package_id = "join-kp-rotate-crash-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-rotate-crash-initial".to_owned(),
+    };
+    let initial_store = store(directory.path(), &owner.did, &device.device_id);
+    prepare_or_resume_key_package_publish_v2(
+        &initial_store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    drop(initial_store);
+
+    let mut retry = input;
+    retry.issued_at = "2026-08-21T00:00:00Z".to_owned();
+    retry.expires_at = "2026-09-21T00:00:00Z".to_owned();
+    retry.now = "2026-08-21T00:00:00Z".to_owned();
+    retry.request_id = "req-publish-rotate-crash-switch".to_owned();
+    let rotated_store = store(directory.path(), &owner.did, &device.device_id);
+    let rotated = prepare_or_resume_key_package_publish_v2(
+        &rotated_store,
+        retry.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let conn = Connection::open(rotated_store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.execute(
+            "INSERT INTO group_mls_operations(\n                 owner_identity_id, device_id, operation_id, command, input_digest,\n                 response_json, redaction_version, contains_sensitive, status, created_at, updated_at\n             )\n             SELECT owner_identity_id, device_id, 'ambiguous-family', command, input_digest,\n                    response_json, redaction_version, contains_sensitive, status, created_at, updated_at\n             FROM group_mls_operations WHERE operation_id = ?1",
+            params![operation_id],
+        )
+        .unwrap(),
+        1
+    );
+    let ambiguous = accept_key_package_publish_v2(
+        &rotated_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: rotated.meta.operation_id.clone(),
+            result: V2PublishKeyPackageResult {
+                published: true,
+                owner_did: owner.did.clone(),
+                owner_device_id: device.device_id.clone(),
+                key_package_id: rotated.body.group_key_package.key_package_id.clone(),
+                published_at: "2026-08-21T00:00:01Z".to_owned(),
+            },
+            request_id: "req-publish-ambiguous-wire-id".to_owned(),
+        },
+    )
+    .expect_err("wire IDs must resolve to exactly one family");
+    assert_eq!(ambiguous.code, "group.e2ee.commit_invalid");
+    conn.execute(
+        "DELETE FROM group_mls_operations WHERE operation_id = 'ambiguous-family'",
+        [],
+    )
+    .unwrap();
+
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut preparing: Value = serde_json::from_str(&response_json).unwrap();
+    preparing.as_object_mut().unwrap().remove("body");
+    preparing.as_object_mut().unwrap().remove("accepted_result");
+    conn.execute(
+        "UPDATE group_mls_operations SET response_json = ?2, status = 'preparing'\n         WHERE operation_id = ?1",
+        params![operation_id, preparing.to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "DELETE FROM group_mls_key_packages WHERE key_package_id = ?1",
+        params![rotated.body.group_key_package.key_package_id],
+    )
+    .unwrap();
+    conn.execute("DELETE FROM openmls_key_packages", [])
+        .unwrap();
+    drop(conn);
+    drop(rotated_store);
+
+    retry.now = "2026-08-22T00:00:00Z".to_owned();
+    retry.request_id = "req-publish-rotate-crash-resume".to_owned();
+    let recovered_store = store(directory.path(), &owner.did, &device.device_id);
+    let recovered = prepare_or_resume_key_package_publish_v2(
+        &recovered_store,
+        retry.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("preparing journal after the atomic switch regenerates its current attempt");
+    assert_eq!(recovered.meta.operation_id, rotated.meta.operation_id);
+    assert_eq!(
+        recovered.body.group_key_package.key_package_id,
+        rotated.body.group_key_package.key_package_id
+    );
+
+    let conn = Connection::open(recovered_store.state_db_path()).unwrap();
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut collision: Value = serde_json::from_str(&response_json).unwrap();
+    collision["superseded_attempts"][0]["operation_id"] =
+        Value::String(recovered.meta.operation_id.clone());
+    conn.execute(
+        "UPDATE group_mls_operations SET response_json = ?2 WHERE operation_id = ?1",
+        params![operation_id, collision.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+    drop(recovered_store);
+    retry.request_id = "req-publish-rotate-collision".to_owned();
+    let collision_store = store(directory.path(), &owner.did, &device.device_id);
+    let error = accept_key_package_publish_v2(
+        &collision_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: recovered.meta.operation_id.clone(),
+            result: V2PublishKeyPackageResult {
+                published: true,
+                owner_did: owner.did.clone(),
+                owner_device_id: device.device_id.clone(),
+                key_package_id: recovered.body.group_key_package.key_package_id.clone(),
+                published_at: "2026-08-22T00:00:00Z".to_owned(),
+            },
+            request_id: "req-publish-accept-collision".to_owned(),
+        },
+    )
+    .expect_err("acceptance must reject a history/current wire ID collision");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+    let error = prepare_or_resume_key_package_publish_v2(
+        &collision_store,
+        retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("history/current wire ID collision must fail closed");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
 }
 
 #[test]
@@ -784,6 +1113,103 @@ fn key_package_publish_validation_failure_does_not_retain_private_orphan() {
     )
     .expect("retry after validation failure creates exactly one private bundle");
     let conn = Connection::open(retry_store.state_db_path()).expect("reopen SDK state");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn concurrent_expired_publish_rotation_converges_on_one_attempt() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-concurrent-rotate", &["publish-rotate-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-concurrent-rotate-operation";
+    let key_package_id = "join-kp-concurrent-rotate-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-concurrent-rotate-initial".to_owned(),
+    };
+    let initial_store = store(directory.path(), &owner.did, &device.device_id);
+    prepare_or_resume_key_package_publish_v2(
+        &initial_store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    drop(initial_store);
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let mut handles = Vec::new();
+    for index in 0..2 {
+        let root = directory.path().to_path_buf();
+        let did = owner.did.clone();
+        let device_id = device.device_id.clone();
+        let document = owner.document.clone();
+        let key = signing_key(device);
+        let barrier = barrier.clone();
+        let mut retry = input.clone();
+        retry.issued_at = "2026-08-21T00:00:00Z".to_owned();
+        retry.expires_at = "2026-09-21T00:00:00Z".to_owned();
+        retry.now = "2026-08-21T00:00:00Z".to_owned();
+        retry.request_id = format!("req-publish-concurrent-rotate-{index}");
+        handles.push(std::thread::spawn(move || {
+            let store = store(&root, &did, &device_id);
+            barrier.wait();
+            for _ in 0..100 {
+                match prepare_or_resume_key_package_publish_v2(
+                    &store,
+                    retry.clone(),
+                    &document,
+                    &key,
+                ) {
+                    Ok(output) => return output,
+                    Err(error) if error.code == "state_locked" => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("unexpected concurrent rotate error: {error:?}"),
+                }
+            }
+            panic!("concurrent rotate did not acquire the device store lock")
+        }));
+    }
+    let first = handles.remove(0).join().expect("first rotate thread");
+    let second = handles.remove(0).join().expect("second rotate thread");
+    assert_eq!(first, second);
+    assert_ne!(first.meta.operation_id, operation_id);
+    assert_ne!(first.body.group_key_package.key_package_id, key_package_id);
+
+    let store = store(directory.path(), &owner.did, &device.device_id);
+    let conn = Connection::open(store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_operations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
             row.get::<_, i64>(0)
