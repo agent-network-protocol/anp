@@ -21,8 +21,9 @@ use crate::group_e2ee::{
     V2GroupAddBody, V2GroupApplicationPlaintext, V2GroupCipherObject, V2GroupControlMetadata,
     V2GroupCreateBody, V2GroupKeyPackage, V2GroupNoticeMetadata, V2GroupRemoveBody,
     V2GroupSendMetadata, V2GroupStateRef, V2KeyPackageBindingEvidence, V2LeafBindingEvidence,
-    V2LeafExtension, V2LeafIdentity, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2,
-    GROUP_E2EE_MTI_SUITE_V2, GROUP_E2EE_SECURITY_PROFILE_V2, METHOD_GROUP_ADD_V2,
+    V2LeafExtension, V2LeafIdentity, V2PublishKeyPackageBody, V2PublishKeyPackageResult,
+    V2ServiceMetadata, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2, GROUP_E2EE_MTI_SUITE_V2,
+    GROUP_E2EE_SECURITY_PROFILE_V2, GROUP_E2EE_TRANSPORT_PROFILE_V2, METHOD_GROUP_ADD_V2,
     METHOD_GROUP_REMOVE_V2,
 };
 use crate::PrivateKeyMaterial;
@@ -36,10 +37,13 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 use super::typed::{GroupMlsOperationError, GroupMlsOperationResult};
 
 const CRYPTO_GROUP_ID_LEN: usize = 32;
+const KEY_PACKAGE_PUBLISH_COMMAND: &str = "group.e2ee.publish-key-package.v2";
+const KEY_PACKAGE_PUBLISH_JOURNAL_VERSION: &str = "v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V2DidDocument {
@@ -58,6 +62,60 @@ pub struct V2GenerateKeyPackageInput {
     pub now: String,
     pub draft_extension_negotiated: bool,
     pub request_id: String,
+}
+
+/// Stable input for preparing or resuming one device-scoped P6 publish.
+///
+/// `issued_at`, `expires_at`, `now`, and `request_id` are retry-time inputs.
+/// The first generated public package is persisted and wins; later retries
+/// return that exact package rather than regenerating it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V2PrepareKeyPackagePublishInput {
+    pub meta: V2ServiceMetadata,
+    pub owner_did: String,
+    pub owner_device_id: String,
+    pub verification_method: String,
+    pub key_package_id: String,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub now: String,
+    pub draft_extension_negotiated: bool,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum V2KeyPackagePublishStatus {
+    Prepared,
+    Accepted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2PreparedKeyPackagePublish {
+    pub meta: V2ServiceMetadata,
+    pub body: V2PublishKeyPackageBody,
+    pub status: V2KeyPackagePublishStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_result: Option<V2PublishKeyPackageResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2AcceptKeyPackagePublishInput {
+    pub owner_did: String,
+    pub owner_device_id: String,
+    pub operation_id: String,
+    pub result: V2PublishKeyPackageResult,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct V2KeyPackagePublishJournal {
+    journal_version: String,
+    meta: V2ServiceMetadata,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<V2PublishKeyPackageBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted_result: Option<V2PublishKeyPackageResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -361,6 +419,228 @@ pub fn generate_key_package_v2<S: GroupMlsStore>(
             &input.request_id,
         ));
     }
+    generate_key_package_in_scope(&scope, &input, did_document, device_signing_private_key)
+}
+
+/// Persist the public P6 publish before any host/network call and resume it
+/// byte-for-byte after a retry or process restart.
+pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2PrepareKeyPackagePublishInput,
+    did_document: &Value,
+    device_signing_private_key: &PrivateKeyMaterial,
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    validate_key_package_publish_input(store.owner_scope().as_ref(), &input)?;
+    let input_digest = key_package_publish_input_digest(&input)?;
+    let scope = open_scope(store, &input.request_id)?;
+    let existing = load_key_package_publish_operation(
+        &scope.app_conn,
+        &input.meta.operation_id,
+        &input.request_id,
+    )?;
+
+    let mut resumes_preparing = false;
+    let mut journal = if let Some((command, stored_digest, response_json, status)) = existing {
+        if command != KEY_PACKAGE_PUBLISH_COMMAND {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "operation_id is already bound to another group E2EE command",
+                &input.request_id,
+            ));
+        }
+        if stored_digest != input_digest {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "KeyPackage publish operation_id was replayed with different stable input",
+                &input.request_id,
+            ));
+        }
+        let journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
+        if status == "prepared" || status == "accepted" {
+            return validate_key_package_publish_journal(
+                &scope,
+                journal,
+                &status,
+                &input,
+                did_document,
+            );
+        }
+        if status != "preparing" {
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "KeyPackage publish journal has an unsupported state",
+                &input.request_id,
+            ));
+        }
+        resumes_preparing = true;
+        journal
+    } else {
+        if key_package_id_exists(&scope, &input.key_package_id, &input.request_id)? {
+            return Err(operation_error(
+                "group.e2ee.key_package_consumed",
+                "key_package_id already belongs to another local publish operation",
+                &input.request_id,
+            ));
+        }
+        let journal = V2KeyPackagePublishJournal {
+            journal_version: KEY_PACKAGE_PUBLISH_JOURNAL_VERSION.to_owned(),
+            meta: input.meta.clone(),
+            body: None,
+            accepted_result: None,
+        };
+        scope
+            .app_conn
+            .execute(
+                "INSERT INTO operations(operation_id, command, input_digest, response_json, status, updated_at)\n                 VALUES (?1, ?2, ?3, ?4, 'preparing', CURRENT_TIMESTAMP)",
+                params![
+                    input.meta.operation_id,
+                    KEY_PACKAGE_PUBLISH_COMMAND,
+                    input_digest,
+                    serialize_key_package_publish_journal(&journal, &input.request_id)?
+                ],
+            )
+            .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+        journal
+    };
+
+    if resumes_preparing {
+        remove_unreferenced_openmls_key_packages(&scope, journal.body.as_ref(), &input.request_id)?;
+    }
+
+    let package = if let Some(body) = journal.body.as_ref() {
+        body.group_key_package.clone()
+    } else if let Some(package) =
+        load_public_key_package(&scope, &input.key_package_id, &input.request_id)?
+    {
+        if !resumes_preparing {
+            return Err(operation_error(
+                "group.e2ee.key_package_consumed",
+                "key_package_id already belongs to another local publish operation",
+                &input.request_id,
+            ));
+        }
+        package
+    } else {
+        generate_key_package_in_scope(
+            &scope,
+            &V2GenerateKeyPackageInput {
+                owner_did: input.owner_did.clone(),
+                owner_device_id: input.owner_device_id.clone(),
+                verification_method: input.verification_method.clone(),
+                key_package_id: input.key_package_id.clone(),
+                issued_at: input.issued_at.clone(),
+                expires_at: input.expires_at.clone(),
+                now: input.now.clone(),
+                draft_extension_negotiated: input.draft_extension_negotiated,
+                request_id: input.request_id.clone(),
+            },
+            did_document,
+            device_signing_private_key,
+        )?
+    };
+    journal.body = Some(V2PublishKeyPackageBody {
+        group_key_package: package,
+    });
+    journal.accepted_result = None;
+    persist_key_package_publish_journal(
+        &scope.app_conn,
+        &input.meta.operation_id,
+        &journal,
+        "prepared",
+        &input.request_id,
+    )?;
+    validate_key_package_publish_journal(&scope, journal, "prepared", &input, did_document)
+}
+
+/// Record the typed host acceptance for a previously prepared P6 publish.
+/// Repeating a semantically equivalent acceptance returns the first cached
+/// result; a different owner, device, or KeyPackage fails closed.
+pub fn accept_key_package_publish_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2AcceptKeyPackagePublishInput,
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("operation_id", &input.operation_id, &input.request_id)?;
+    input
+        .result
+        .validate()
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    let scope = open_scope(store, &input.request_id)?;
+    let Some((command, _, response_json, status)) = load_key_package_publish_operation(
+        &scope.app_conn,
+        &input.operation_id,
+        &input.request_id,
+    )?
+    else {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish operation is not prepared",
+            &input.request_id,
+        ));
+    };
+    if command != KEY_PACKAGE_PUBLISH_COMMAND {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "operation_id is already bound to another group E2EE command",
+            &input.request_id,
+        ));
+    }
+    if status != "prepared" && status != "accepted" {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish must be prepared before acceptance",
+            &input.request_id,
+        ));
+    }
+    let mut journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
+    let body = journal.body.as_ref().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "prepared KeyPackage publish has no public body",
+            &input.request_id,
+        )
+    })?;
+    if input.owner_did != journal.meta.sender_did
+        || input.owner_device_id != journal.meta.sender_device_id
+        || input.owner_did != body.group_key_package.owner_did
+        || input.owner_device_id != body.group_key_package.owner_device_id
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "acceptance owner/device does not match the prepared publish",
+            &input.request_id,
+        ));
+    }
+    validate_publish_result_matches(
+        &input.result,
+        &journal.meta,
+        &body.group_key_package,
+        &input.request_id,
+    )?;
+    if journal.accepted_result.is_none() {
+        journal.accepted_result = Some(input.result);
+        persist_key_package_publish_journal(
+            &scope.app_conn,
+            &input.operation_id,
+            &journal,
+            "accepted",
+            &input.request_id,
+        )?;
+    }
+    key_package_publish_output(journal, "accepted", &input.request_id)
+}
+
+fn generate_key_package_in_scope(
+    scope: &GroupMlsOperationScope,
+    input: &V2GenerateKeyPackageInput,
+    did_document: &Value,
+    device_signing_private_key: &PrivateKeyMaterial,
+) -> GroupMlsOperationResult<V2GroupKeyPackage> {
     let (credential, signer) = ensure_agent(
         &scope.provider,
         &scope.app_conn,
@@ -373,13 +653,13 @@ pub fn generate_key_package_v2<S: GroupMlsStore>(
         V2DidWbaBindingUnsigned {
             agent_did: input.owner_did.clone(),
             device_id: input.owner_device_id.clone(),
-            verification_method: input.verification_method,
+            verification_method: input.verification_method.clone(),
             leaf_signature_key_b64u: URL_SAFE_NO_PAD.encode(signer.to_public_vec()),
             issued_at: input.issued_at.clone(),
             expires_at: input.expires_at.clone(),
         },
         device_signing_private_key,
-        Some(input.issued_at),
+        Some(input.issued_at.clone()),
     )
     .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
     let bundle = KeyPackage::builder()
@@ -389,53 +669,444 @@ pub fn generate_key_package_v2<S: GroupMlsStore>(
         .map_err(|err| {
             mls_operation_error("group.e2ee.invalid_key_package", err, &input.request_id)
         })?;
-    let bytes = bundle
-        .key_package()
-        .tls_serialize_detached()
-        .map_err(|err| {
-            mls_operation_error("group.e2ee.invalid_key_package", err, &input.request_id)
-        })?;
-    let package = V2GroupKeyPackage {
-        key_package_id: input.key_package_id,
-        owner_did: input.owner_did,
-        owner_device_id: input.owner_device_id,
-        suite: GROUP_E2EE_MTI_SUITE_V2.to_owned(),
-        mls_key_package_b64u: URL_SAFE_NO_PAD.encode(&bytes),
-        did_wba_binding: binding,
-        expires_at: Some(input.expires_at),
-    };
-    let (_, evidence) = parse_and_validate_key_package(
-        &scope.provider,
-        &package,
-        did_document,
-        &input.now,
-        input.draft_extension_negotiated,
+    let result = (|| {
+        let bytes = bundle
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|err| {
+                mls_operation_error("group.e2ee.invalid_key_package", err, &input.request_id)
+            })?;
+        let package = V2GroupKeyPackage {
+            key_package_id: input.key_package_id.clone(),
+            owner_did: input.owner_did.clone(),
+            owner_device_id: input.owner_device_id.clone(),
+            suite: GROUP_E2EE_MTI_SUITE_V2.to_owned(),
+            mls_key_package_b64u: URL_SAFE_NO_PAD.encode(&bytes),
+            did_wba_binding: binding,
+            expires_at: Some(input.expires_at.clone()),
+        };
+        let (_, evidence) = parse_and_validate_key_package(
+            &scope.provider,
+            &package,
+            did_document,
+            &input.now,
+            input.draft_extension_negotiated,
+            &input.request_id,
+        )?;
+        if evidence.leaf.leaf_signature_key_b64u != URL_SAFE_NO_PAD.encode(signer.to_public_vec()) {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "generated KeyPackage leaf does not use this device's persisted MLS signer",
+                &input.request_id,
+            ));
+        }
+        scope
+            .app_conn
+            .execute(
+                "INSERT INTO key_packages(agent_did, device_id, key_package_id, public_json, status)\n             VALUES (?1, ?2, ?3, ?4, 'published')",
+                params![
+                    &package.owner_did,
+                    &package.owner_device_id,
+                    &package.key_package_id,
+                    serde_json::to_string(&package).map_err(|err| operation_error(
+                        "group.e2ee.invalid_key_package",
+                        err,
+                        &input.request_id,
+                    ))?
+                ],
+            )
+            .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+        Ok(package)
+    })();
+    if result.is_err() {
+        remove_unreferenced_openmls_key_packages(scope, None, &input.request_id)?;
+    }
+    result
+}
+
+fn validate_key_package_publish_input(
+    scope: Option<&GroupMlsOwnerScope>,
+    input: &V2PrepareKeyPackagePublishInput,
+) -> GroupMlsOperationResult<()> {
+    input
+        .meta
+        .validate(GROUP_E2EE_TRANSPORT_PROFILE_V2)
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    validate_store_scope(
+        scope,
+        &input.owner_did,
+        &input.owner_device_id,
         &input.request_id,
     )?;
-    if evidence.leaf.leaf_signature_key_b64u != URL_SAFE_NO_PAD.encode(signer.to_public_vec()) {
+    if input.meta.sender_did != input.owner_did
+        || input.meta.sender_device_id != input.owner_device_id
+    {
         return Err(operation_error(
             "group.e2ee.did_binding_invalid",
-            "generated KeyPackage leaf does not use this device's persisted MLS signer",
+            "publish metadata must identify the exact owner device",
             &input.request_id,
         ));
     }
-    scope
-        .app_conn
-        .execute(
-            "INSERT INTO key_packages(agent_did, device_id, key_package_id, public_json, status)\n             VALUES (?1, ?2, ?3, ?4, 'published')",
+    for (field, value) in [
+        ("verification_method", input.verification_method.as_str()),
+        ("key_package_id", input.key_package_id.as_str()),
+        ("issued_at", input.issued_at.as_str()),
+        ("expires_at", input.expires_at.as_str()),
+        ("now", input.now.as_str()),
+    ] {
+        require_non_empty(field, value, &input.request_id)?;
+    }
+    Ok(())
+}
+
+fn key_package_publish_input_digest(
+    input: &V2PrepareKeyPackagePublishInput,
+) -> GroupMlsOperationResult<String> {
+    // Retry clocks and request IDs deliberately stay out of the digest. The
+    // first persisted public package owns its binding timestamps; all stable
+    // identity, routing, and authorization inputs remain bound here.
+    let canonical = crate::canonical_json::canonicalize_json(&json!({
+        "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
+        "meta": input.meta,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    Ok(encode_b64u(&Sha256::digest(canonical)))
+}
+
+fn load_key_package_publish_operation(
+    conn: &rusqlite::Connection,
+    operation_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Option<(String, String, String, String)>> {
+    conn.query_row(
+        "SELECT command, input_digest, response_json, status\n         FROM operations WHERE operation_id = ?1",
+        params![operation_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .optional()
+    .map_err(|err| sqlite_operation_error(err, request_id))
+}
+
+fn parse_key_package_publish_journal(
+    response_json: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<V2KeyPackagePublishJournal> {
+    let journal: V2KeyPackagePublishJournal = serde_json::from_str(response_json)
+        .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+    if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "unsupported KeyPackage publish journal version",
+            request_id,
+        ));
+    }
+    Ok(journal)
+}
+
+fn serialize_key_package_publish_journal(
+    journal: &V2KeyPackagePublishJournal,
+    request_id: &str,
+) -> GroupMlsOperationResult<String> {
+    serde_json::to_string(journal)
+        .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))
+}
+
+fn persist_key_package_publish_journal(
+    conn: &rusqlite::Connection,
+    operation_id: &str,
+    journal: &V2KeyPackagePublishJournal,
+    status: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    conn.execute(
+            "UPDATE operations\n             SET response_json = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
             params![
-                package.owner_did,
-                package.owner_device_id,
-                package.key_package_id,
-                serde_json::to_string(&package).map_err(|err| operation_error(
-                    "group.e2ee.invalid_key_package",
-                    err,
-                    &input.request_id,
-                ))?
+                operation_id,
+                serialize_key_package_publish_journal(journal, request_id)?,
+                status,
+                KEY_PACKAGE_PUBLISH_COMMAND
             ],
         )
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    Ok(package)
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let persisted_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    if persisted_status.as_deref() != Some(status) {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish journal disappeared during processing",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn load_public_key_package(
+    scope: &GroupMlsOperationScope,
+    key_package_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Option<V2GroupKeyPackage>> {
+    let public_json: Option<String> = scope
+        .app_conn
+        .query_row(
+            "SELECT public_json FROM key_packages WHERE key_package_id = ?1",
+            params![key_package_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    public_json
+        .map(|value| {
+            serde_json::from_str(&value)
+                .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))
+        })
+        .transpose()
+}
+
+/// Removes OpenMLS KeyPackage bundles that have no public SDK row.
+///
+/// OpenMLS persists the private bundle as part of `KeyPackage::build`, while
+/// the public SDK row is written immediately afterwards through another SQLite
+/// connection. A process can therefore stop between those writes. Only the
+/// serialized public hash references are inspected here; private bundle bytes
+/// never leave the OpenMLS table.
+fn remove_unreferenced_openmls_key_packages(
+    scope: &GroupMlsOperationScope,
+    journal_body: Option<&V2PublishKeyPackageBody>,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    let mut referenced = HashSet::new();
+    let mut statement = scope
+        .app_conn
+        .prepare("SELECT public_json FROM key_packages")
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let public_rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|err| sqlite_operation_error(err, request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    drop(statement);
+    for public_json in public_rows {
+        let value: Value = serde_json::from_str(&public_json)
+            .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))?;
+        let encoded = value
+            .get("mls_key_package_b64u")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.state_not_ready",
+                    "persisted KeyPackage public row has no MLS package",
+                    request_id,
+                )
+            })?;
+        referenced.insert(openmls_key_package_ref_bytes(
+            &scope.provider,
+            encoded,
+            request_id,
+        )?);
+    }
+    if let Some(body) = journal_body {
+        referenced.insert(openmls_key_package_ref_bytes(
+            &scope.provider,
+            &body.group_key_package.mls_key_package_b64u,
+            request_id,
+        )?);
+    }
+
+    let mut statement = scope
+        .app_conn
+        .prepare("SELECT key_package_ref FROM openmls_key_packages")
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let stored_refs = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|err| sqlite_operation_error(err, request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    drop(statement);
+    for stored_ref in stored_refs {
+        if !referenced.contains(&stored_ref) {
+            scope
+                .app_conn
+                .execute(
+                    "DELETE FROM openmls_key_packages WHERE key_package_ref = ?1",
+                    params![stored_ref],
+                )
+                .map_err(|err| sqlite_operation_error(err, request_id))?;
+        }
+    }
+    Ok(())
+}
+
+fn openmls_key_package_ref_bytes(
+    provider: &super::super::storage::SqliteMlsProvider,
+    encoded: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Vec<u8>> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|err| operation_error("group.e2ee.invalid_key_package", err, request_id))?;
+    let mut reader = bytes.as_slice();
+    let package = KeyPackageIn::tls_deserialize(&mut reader)
+        .map_err(|err| mls_operation_error("group.e2ee.invalid_key_package", err, request_id))?;
+    if !reader.is_empty() {
+        return Err(operation_error(
+            "group.e2ee.invalid_key_package",
+            "trailing bytes after MLS KeyPackage",
+            request_id,
+        ));
+    }
+    let package = package
+        .validate(provider.crypto(), ProtocolVersion::Mls10)
+        .map_err(|err| mls_operation_error("group.e2ee.invalid_key_package", err, request_id))?;
+    let hash_ref = package
+        .hash_ref(provider.crypto())
+        .map_err(|err| mls_operation_error("group.e2ee.invalid_key_package", err, request_id))?;
+    serde_json::to_vec(&hash_ref)
+        .map_err(|err| operation_error("group.e2ee.state_not_ready", err, request_id))
+}
+
+fn validate_key_package_publish_journal(
+    scope: &GroupMlsOperationScope,
+    journal: V2KeyPackagePublishJournal,
+    status: &str,
+    input: &V2PrepareKeyPackagePublishInput,
+    did_document: &Value,
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION || journal.meta != input.meta
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "persisted KeyPackage publish metadata does not match its operation",
+            &input.request_id,
+        ));
+    }
+    let body = journal.body.as_ref().ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "prepared KeyPackage publish has no public body",
+            &input.request_id,
+        )
+    })?;
+    let package = &body.group_key_package;
+    package
+        .validate_structure()
+        .map_err(|err| v2_error("group.e2ee.invalid_key_package", err, &input.request_id))?;
+    if package.owner_did != input.owner_did
+        || package.owner_device_id != input.owner_device_id
+        || package.key_package_id != input.key_package_id
+        || package.did_wba_binding.verification_method != input.verification_method
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "persisted KeyPackage does not match the exact publish owner/device/key",
+            &input.request_id,
+        ));
+    }
+    // An accepted journal is a cached terminal fact, not a request to publish
+    // the package again.  Revalidate its public MLS/DID binding at the
+    // persisted binding's issuance time so a later retry cannot turn a
+    // successful publish into a failure solely because the package expired.
+    // A merely prepared publish still has to be fresh at the caller's current
+    // time before it may be sent to the Host.
+    let validation_time = if status == "accepted" {
+        package.did_wba_binding.issued_at.as_str()
+    } else {
+        input.now.as_str()
+    };
+    parse_and_validate_key_package(
+        &scope.provider,
+        package,
+        did_document,
+        validation_time,
+        input.draft_extension_negotiated,
+        &input.request_id,
+    )?;
+    match status {
+        "prepared" if journal.accepted_result.is_none() => {}
+        "accepted" => {
+            let result = journal.accepted_result.as_ref().ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.state_not_ready",
+                    "accepted KeyPackage publish has no typed host result",
+                    &input.request_id,
+                )
+            })?;
+            validate_publish_result_matches(result, &journal.meta, package, &input.request_id)?;
+        }
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "KeyPackage publish journal status/result is inconsistent",
+                &input.request_id,
+            ))
+        }
+    }
+    key_package_publish_output(journal, status, &input.request_id)
+}
+
+fn validate_publish_result_matches(
+    result: &V2PublishKeyPackageResult,
+    meta: &V2ServiceMetadata,
+    package: &V2GroupKeyPackage,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    result
+        .validate()
+        .map_err(|err| v2_error("group.e2ee.state_not_ready", err, request_id))?;
+    if result.owner_did != meta.sender_did
+        || result.owner_device_id != meta.sender_device_id
+        || result.owner_did != package.owner_did
+        || result.owner_device_id != package.owner_device_id
+        || result.key_package_id != package.key_package_id
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "host publish result does not match the prepared owner/device/key",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn key_package_publish_output(
+    journal: V2KeyPackagePublishJournal,
+    status: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    let body = journal.body.ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish journal has no public body",
+            request_id,
+        )
+    })?;
+    let status = match status {
+        "prepared" => V2KeyPackagePublishStatus::Prepared,
+        "accepted" => V2KeyPackagePublishStatus::Accepted,
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                "KeyPackage publish journal has an unsupported state",
+                request_id,
+            ))
+        }
+    };
+    Ok(V2PreparedKeyPackagePublish {
+        meta: journal.meta,
+        body,
+        status,
+        accepted_result: journal.accepted_result,
+    })
 }
 
 pub fn create_group_prepare_v2<S: GroupMlsStore>(

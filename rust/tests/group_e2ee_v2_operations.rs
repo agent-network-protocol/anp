@@ -2,25 +2,28 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anp::authentication::{
     create_did_wba_document, validate_device_manifest, DidDocumentOptions, DidProfile,
 };
 use anp::group_e2ee::operations::v2::{
-    abort_commit_v2, add_member_prepare_v2, create_group_prepare_v2, decrypt_v2, encrypt_v2,
-    finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
-    list_local_group_member_endpoints_v2, process_commit_v2, process_notice_v2, process_welcome_v2,
-    reconcile_pending_v2, remove_member_prepare_v2, V2AddMemberInput, V2CreateGroupInput,
+    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2, create_group_prepare_v2,
+    decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
+    list_local_group_member_endpoints_v2, prepare_or_resume_key_package_publish_v2,
+    process_commit_v2, process_notice_v2, process_welcome_v2, reconcile_pending_v2,
+    remove_member_prepare_v2, V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput,
     V2DecryptInput, V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
-    V2InspectLocalGroupInput, V2LocalGroupMemberEndpoint, V2LocalGroupReadiness,
-    V2MembershipCommitMethod, V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput,
-    V2ReconcilePendingInput, V2RemoveMemberInput,
+    V2InspectLocalGroupInput, V2KeyPackagePublishStatus, V2LocalGroupMemberEndpoint,
+    V2LocalGroupReadiness, V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput,
+    V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput,
+    V2RemoveMemberInput,
 };
-use anp::group_e2ee::storage::ImCoreSqliteGroupMlsStore;
+use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{
     V2E2eeNotice, V2GroupApplicationPlaintext, V2GroupControlMetadata, V2GroupNoticeMetadata,
-    V2GroupSendMetadata, V2GroupStateRef, V2ServiceMetadata, V2Target,
+    V2GroupSendMetadata, V2GroupStateRef, V2PublishKeyPackageResult, V2ServiceMetadata, V2Target,
     GROUP_CIPHER_CONTENT_TYPE_V2, GROUP_E2EE_PROFILE_V2, GROUP_E2EE_SECURITY_PROFILE_V2,
     GROUP_E2EE_TRANSPORT_PROFILE_V2,
 };
@@ -36,6 +39,7 @@ const NOW: &str = "2026-07-20T00:00:00Z";
 const ISSUED_AT: &str = "2026-07-19T00:00:00Z";
 const EXPIRES_AT: &str = "2026-08-19T00:00:00Z";
 const GROUP_DID: &str = "did:wba:p6-runtime.example:groups:operations";
+static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 struct DeviceFixture {
@@ -60,8 +64,9 @@ impl TestDirectory {
             .expect("clock after epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "anp-p6-v2-operations-{}-{nonce}",
-            std::process::id()
+            "anp-p6-v2-operations-{}-{nonce}-{}",
+            std::process::id(),
+            TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&path).expect("create test directory");
         Self(path)
@@ -365,6 +370,498 @@ fn force_pending_status(store: &ImCoreSqliteGroupMlsStore, pending_commit_id: &s
         .expect("set simulated crash journal state"),
         1
     );
+}
+
+#[test]
+fn key_package_publish_wal_resumes_exactly_and_caches_typed_acceptance() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-wal", &["publish-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-publish-operation";
+    let key_package_id = "join-kp-publish-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let first_input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-prepare-first".to_owned(),
+    };
+    let first_store = store(directory.path(), &owner.did, &device.device_id);
+    let first = prepare_or_resume_key_package_publish_v2(
+        &first_store,
+        first_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("prepare persisted KeyPackage publish");
+    assert_eq!(first.status, V2KeyPackagePublishStatus::Prepared);
+    assert!(first.accepted_result.is_none());
+    drop(first_store);
+
+    let mut retry_input = first_input.clone();
+    retry_input.issued_at = "2026-07-19T01:00:00Z".to_owned();
+    retry_input.expires_at = "2026-08-20T00:00:00Z".to_owned();
+    retry_input.now = "2026-07-20T00:01:00Z".to_owned();
+    retry_input.request_id = "req-publish-prepare-after-restart".to_owned();
+    let restarted_store = store(directory.path(), &owner.did, &device.device_id);
+    let resumed = prepare_or_resume_key_package_publish_v2(
+        &restarted_store,
+        retry_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("resume exact persisted KeyPackage publish");
+    assert_eq!(resumed, first);
+    assert_eq!(
+        serde_json::to_vec(&resumed).expect("serialize resumed publish"),
+        serde_json::to_vec(&first).expect("serialize first publish")
+    );
+
+    let conn = Connection::open(restarted_store.state_db_path()).expect("open SDK state database");
+    let package_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM group_mls_key_packages\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND key_package_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                key_package_id
+            ],
+            |row| row.get(0),
+        )
+        .expect("count persisted public KeyPackages");
+    assert_eq!(package_count, 1);
+    let openmls_package_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get(0)
+        })
+        .expect("count persisted private OpenMLS KeyPackages");
+    assert_eq!(openmls_package_count, 1);
+    let (journal_status, response_json, contains_sensitive): (String, String, i64) = conn
+        .query_row(
+            "SELECT status, response_json, contains_sensitive FROM group_mls_operations\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND operation_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                operation_id
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("load public publish journal");
+    assert_eq!(journal_status, "prepared");
+    assert_eq!(contains_sensitive, 0);
+    assert!(!response_json.contains("private_key"));
+    assert!(!response_json.contains("private_ref"));
+    assert!(!response_json.contains("private_init_key"));
+    assert!(!response_json.contains("private_encryption_key"));
+    drop(conn);
+
+    let mut expired_prepared_retry = retry_input.clone();
+    expired_prepared_retry.now = "2026-08-21T00:00:00Z".to_owned();
+    expired_prepared_retry.request_id = "req-publish-prepared-after-expiry".to_owned();
+    let error = prepare_or_resume_key_package_publish_v2(
+        &restarted_store,
+        expired_prepared_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("an unaccepted prepared package must still be fresh on retry");
+    assert_eq!(error.code, "group.e2ee.did_binding_invalid");
+
+    let result = V2PublishKeyPackageResult {
+        published: true,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        published_at: NOW.to_owned(),
+    };
+    let accepted = accept_key_package_publish_v2(
+        &restarted_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: operation_id.to_owned(),
+            result: result.clone(),
+            request_id: "req-publish-accept".to_owned(),
+        },
+    )
+    .expect("persist typed host acceptance");
+    assert_eq!(accepted.status, V2KeyPackagePublishStatus::Accepted);
+    assert_eq!(accepted.accepted_result.as_ref(), Some(&result));
+    drop(restarted_store);
+
+    let replay_store = store(directory.path(), &owner.did, &device.device_id);
+    let replay = prepare_or_resume_key_package_publish_v2(
+        &replay_store,
+        retry_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("accepted publish replay returns cached result");
+    assert_eq!(replay.status, V2KeyPackagePublishStatus::Accepted);
+    assert_eq!(replay.meta, first.meta);
+    assert_eq!(replay.body, first.body);
+    assert_eq!(replay.accepted_result.as_ref(), Some(&result));
+
+    let mut expired_retry = retry_input.clone();
+    expired_retry.now = "2026-08-21T00:00:00Z".to_owned();
+    expired_retry.request_id = "req-publish-accepted-after-expiry".to_owned();
+    let expired_replay = prepare_or_resume_key_package_publish_v2(
+        &replay_store,
+        expired_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("terminal accepted publish remains replayable after package expiry");
+    assert_eq!(expired_replay, replay);
+
+    let accepted_replay = accept_key_package_publish_v2(
+        &replay_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: operation_id.to_owned(),
+            result: result.clone(),
+            request_id: "req-publish-accept-replay".to_owned(),
+        },
+    )
+    .expect("same typed acceptance is idempotent");
+    assert_eq!(accepted_replay, replay);
+
+    let mut conflict = retry_input;
+    conflict.key_package_id = "different-key-package".to_owned();
+    conflict.request_id = "req-publish-conflict".to_owned();
+    let error = prepare_or_resume_key_package_publish_v2(
+        &replay_store,
+        conflict,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("same operation ID with another stable input must fail closed");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+
+    let mut equivalent_result = result;
+    equivalent_result.published_at = "2026-07-20T00:02:00Z".to_owned();
+    let equivalent_replay = accept_key_package_publish_v2(
+        &replay_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: operation_id.to_owned(),
+            result: equivalent_result,
+            request_id: "req-publish-accept-equivalent".to_owned(),
+        },
+    )
+    .expect("equivalent Host acceptance returns the first cached result");
+    assert_eq!(equivalent_replay, replay);
+}
+
+#[test]
+fn unscoped_publish_acceptance_still_binds_the_exact_owner_device() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-unscoped-owner", &["publish-owner-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-unscoped-owner-operation";
+    let key_package_id = "join-kp-unscoped-owner-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-unscoped-prepare".to_owned(),
+    };
+    let store = CompatDataDirStore::new(directory.path().join("compat-store"));
+    prepare_or_resume_key_package_publish_v2(
+        &store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("prepare publish in an unscoped compatibility store");
+
+    let result = V2PublishKeyPackageResult {
+        published: true,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        published_at: NOW.to_owned(),
+    };
+    let error = accept_key_package_publish_v2(
+        &store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: "did:wba:p6-runtime.example:users:other".to_owned(),
+            owner_device_id: "other-device".to_owned(),
+            operation_id: operation_id.to_owned(),
+            result,
+            request_id: "req-publish-unscoped-wrong-owner".to_owned(),
+        },
+    )
+    .expect_err("unscoped stores must not weaken exact owner/device binding");
+    assert_eq!(error.code, "group.e2ee.did_binding_invalid");
+
+    let unchanged = prepare_or_resume_key_package_publish_v2(
+        &store,
+        V2PrepareKeyPackagePublishInput {
+            request_id: "req-publish-unscoped-after-rejection".to_owned(),
+            ..input
+        },
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("rejected acceptance leaves the prepared journal unchanged");
+    assert_eq!(unchanged.status, V2KeyPackagePublishStatus::Prepared);
+    assert!(unchanged.accepted_result.is_none());
+}
+
+#[test]
+fn key_package_publish_preparing_recovery_removes_orphan_private_bundles() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-preparing-crash", &["publish-crash-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-preparing-crash-operation";
+    let key_package_id = "join-kp-preparing-crash-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: key_package_id.to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-before-simulated-crash".to_owned(),
+    };
+    let first_store = store(directory.path(), &owner.did, &device.device_id);
+    prepare_or_resume_key_package_publish_v2(
+        &first_store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("prepare initial KeyPackage");
+
+    let conn = Connection::open(first_store.state_db_path()).expect("open SDK state database");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.execute(
+            "DELETE FROM group_mls_key_packages\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND key_package_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                key_package_id
+            ],
+        )
+        .unwrap(),
+        1
+    );
+    let preparing_journal = json!({
+        "journal_version": "v1",
+        "meta": input.meta,
+    });
+    assert_eq!(
+        conn.execute(
+            "UPDATE group_mls_operations\n             SET response_json = ?4, status = 'preparing'\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND operation_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                operation_id,
+                preparing_journal.to_string()
+            ],
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    drop(first_store);
+
+    let mut retry_input = input;
+    retry_input.request_id = "req-publish-after-simulated-crash".to_owned();
+    let restarted_store = store(directory.path(), &owner.did, &device.device_id);
+    let resumed = prepare_or_resume_key_package_publish_v2(
+        &restarted_store,
+        retry_input,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("remove orphan private bundle and prepare one replacement");
+    assert_eq!(resumed.status, V2KeyPackagePublishStatus::Prepared);
+    let conn = Connection::open(restarted_store.state_db_path()).expect("reopen SDK state");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM group_mls_key_packages\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND key_package_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                key_package_id
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn key_package_publish_validation_failure_does_not_retain_private_orphan() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-validation-cleanup", &["publish-invalid-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-validation-cleanup-operation";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let mut input = V2PrepareKeyPackagePublishInput {
+        meta,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        verification_method: device.signing_key_id.clone(),
+        key_package_id: "join-kp-validation-cleanup-package".to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: EXPIRES_AT.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-invalid-time".to_owned(),
+    };
+    let first_store = store(directory.path(), &owner.did, &device.device_id);
+    assert!(prepare_or_resume_key_package_publish_v2(
+        &first_store,
+        input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .is_err());
+    let conn = Connection::open(first_store.state_db_path()).expect("open SDK state database");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
+    drop(conn);
+    drop(first_store);
+
+    input.now = NOW.to_owned();
+    input.request_id = "req-publish-valid-time-retry".to_owned();
+    let retry_store = store(directory.path(), &owner.did, &device.device_id);
+    prepare_or_resume_key_package_publish_v2(
+        &retry_store,
+        input,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("retry after validation failure creates exactly one private bundle");
+    let conn = Connection::open(retry_store.state_db_path()).expect("reopen SDK state");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn concurrent_equivalent_key_package_acceptances_share_first_cached_result() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-concurrent-accept", &["publish-concurrent-device"]);
+    let device = &owner.devices[0];
+    let operation_id = "join-kp-concurrent-accept-operation";
+    let key_package_id = "join-kp-concurrent-accept-package";
+    let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+    meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    meta.created_at = None;
+    let initial_store = store(directory.path(), &owner.did, &device.device_id);
+    prepare_or_resume_key_package_publish_v2(
+        &initial_store,
+        V2PrepareKeyPackagePublishInput {
+            meta,
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            verification_method: device.signing_key_id.clone(),
+            key_package_id: key_package_id.to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-publish-concurrent-prepare".to_owned(),
+        },
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("prepare concurrent acceptance fixture");
+    drop(initial_store);
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let mut handles = Vec::new();
+    for (index, published_at) in [NOW, "2026-07-20T00:00:01Z"].into_iter().enumerate() {
+        let root = directory.path().to_path_buf();
+        let did = owner.did.clone();
+        let device_id = device.device_id.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            let store = store(&root, &did, &device_id);
+            let input = V2AcceptKeyPackagePublishInput {
+                owner_did: did.clone(),
+                owner_device_id: device_id.clone(),
+                operation_id: operation_id.to_owned(),
+                result: V2PublishKeyPackageResult {
+                    published: true,
+                    owner_did: did,
+                    owner_device_id: device_id,
+                    key_package_id: key_package_id.to_owned(),
+                    published_at: published_at.to_owned(),
+                },
+                request_id: format!("req-publish-concurrent-accept-{index}"),
+            };
+            barrier.wait();
+            for _ in 0..100 {
+                match accept_key_package_publish_v2(&store, input.clone()) {
+                    Ok(output) => return output,
+                    Err(error) if error.code == "state_locked" => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("unexpected concurrent accept error: {}", error.code),
+                }
+            }
+            panic!("concurrent accept did not acquire the device store lock")
+        }));
+    }
+    let first = handles.remove(0).join().expect("first accept thread");
+    let second = handles.remove(0).join().expect("second accept thread");
+    assert_eq!(first, second);
 }
 
 #[test]
