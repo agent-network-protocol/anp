@@ -3,6 +3,7 @@ package directe2ee
 import (
 	"context"
 	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -279,7 +280,7 @@ func TestSkippedMessageKeySurvivesFailedAuthentication(t *testing.T) {
 	}
 	beforeFailedMsg3 := cloneDirectSessionState(&bobSession)
 	corruptedMsg3 := msg3Body
-	corruptedMsg3.CiphertextB64U = corruptB64UTail(corruptedMsg3.CiphertextB64U)
+	corruptedMsg3.CiphertextB64U = corruptB64UBytes(t, corruptedMsg3.CiphertextB64U)
 	if _, err := sessionBuilder.DecryptFollowUp(&bobSession, msg3Metadata, corruptedMsg3); err == nil {
 		t.Fatalf("DecryptFollowUp(corrupted msg-3) unexpectedly succeeded")
 	}
@@ -294,7 +295,7 @@ func TestSkippedMessageKeySurvivesFailedAuthentication(t *testing.T) {
 	}
 
 	corruptedMsg2 := msg2Body
-	corruptedMsg2.CiphertextB64U = corruptB64UTail(corruptedMsg2.CiphertextB64U)
+	corruptedMsg2.CiphertextB64U = corruptB64UBytes(t, corruptedMsg2.CiphertextB64U)
 	if _, err := sessionBuilder.DecryptFollowUp(&bobSession, msg2Metadata, corruptedMsg2); err == nil {
 		t.Fatalf("DecryptFollowUp(corrupted msg-2) unexpectedly succeeded")
 	}
@@ -416,15 +417,14 @@ func TestClientSendAndPendingHistoryProcessing(t *testing.T) {
 	}
 }
 
-func corruptB64UTail(value string) string {
-	if value == "" {
-		return "A"
+func corruptB64UBytes(t *testing.T, value string) string {
+	t.Helper()
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) == 0 {
+		t.Fatalf("ciphertext fixture is not non-empty base64url: %v", err)
 	}
-	replacement := byte('A')
-	if value[len(value)-1] == replacement {
-		replacement = 'B'
-	}
-	return value[:len(value)-1] + string(replacement)
+	decoded[len(decoded)-1] ^= 0x01
+	return base64.RawURLEncoding.EncodeToString(decoded)
 }
 
 func TestClientFallsBackToSignedPrekeyWhenOPKUnavailable(t *testing.T) {
