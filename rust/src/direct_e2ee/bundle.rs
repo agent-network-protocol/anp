@@ -78,6 +78,7 @@ pub fn prekey_bundle_publish_request(
     local_service_did: &str,
     bundle: &PrekeyBundle,
     one_time_prekeys: &[OneTimePrekey],
+    operation_id: &str,
 ) -> Value {
     json!({
         "method": "direct.e2ee.publish_prekey_bundle",
@@ -91,7 +92,7 @@ pub fn prekey_bundle_publish_request(
                     "kind": "service",
                     "did": local_service_did,
                 },
-                "operation_id": format!("op-publish-{}", bundle.bundle_id),
+                "operation_id": operation_id,
             },
             "body": prekey_bundle_publish_body(bundle, one_time_prekeys),
         },
@@ -402,6 +403,7 @@ mod tests {
             "did:wba:b.example:services:message:e1_service",
             &bundle,
             &opks,
+            "op-publish-bundle-bob-001-opks-a1b2c3",
         );
 
         assert_eq!(
@@ -419,7 +421,7 @@ mod tests {
                     "kind": "service",
                     "did": "did:wba:b.example:services:message:e1_service",
                 },
-                "operation_id": "op-publish-bundle-bob-001",
+                "operation_id": "op-publish-bundle-bob-001-opks-a1b2c3",
             }))
         );
         assert_eq!(

@@ -38,6 +38,7 @@ The SDK-owned boundary includes:
 P5 rules that product integrations rely on:
 
 - `prekey_bundle` must not embed `one_time_prekey`; OPK is a top-level sidecar from `direct.e2ee.get_prekey_bundle`.
+- A prekey-bundle publish `operation_id` identifies the complete publish payload, not only the stable `bundle_id`. Callers must reuse it when retrying the same payload and create a new one when the OPK sidecar changes.
 - Direct E2EE `direct.send` requires `operation_id == message_id`.
 - Current phase-1 direct-e2ee wire omits `params.auth` unless a future extension/capability explicitly changes that.
 - Direct init/cipher AAD uses JCS/RFC8785 and P5 `content_type` bindings.
