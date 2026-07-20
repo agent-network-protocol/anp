@@ -2,8 +2,10 @@ package directe2ee
 
 import (
 	"crypto/ecdh"
+	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	anp "github.com/agent-network-protocol/anp/golang"
@@ -84,6 +86,10 @@ func (m *PrekeyManager) BuildPrekeyBundle(signedPrekey SignedPrekey, bundleID st
 }
 
 // PublishPrekeyBundle publishes a prekey bundle over the RPC boundary.
+// The publish operation ID identifies the complete publish payload: it is
+// derived from the bundle ID plus a digest of the OPK sidecar key IDs, so an
+// exact retry of the same payload reuses the ID while a replenished OPK
+// sidecar produces a new one.
 func (m *PrekeyManager) PublishPrekeyBundle(bundle PrekeyBundle) (map[string]any, error) {
 	if m.rpcClient == nil {
 		return nil, &Error{Code: "rpc_unavailable", Message: "RPC client is not configured"}
@@ -96,7 +102,22 @@ func (m *PrekeyManager) PublishPrekeyBundle(bundle PrekeyBundle) (map[string]any
 	if len(oneTimePrekeys) > 0 {
 		body["one_time_prekeys"] = oneTimePrekeysToAny(oneTimePrekeys)
 	}
-	return m.rpcClient("direct.e2ee.publish_prekey_bundle", map[string]any{"meta": map[string]any{"anp_version": "1.0", "profile": "anp.direct.e2ee.v1", "security_profile": "transport-protected", "sender_did": m.localDID, "target": map[string]any{"kind": "service", "did": m.localServiceDID}, "operation_id": "op-publish-" + bundle.BundleID}, "body": body})
+	return m.rpcClient("direct.e2ee.publish_prekey_bundle", map[string]any{"meta": map[string]any{"anp_version": "1.0", "profile": "anp.direct.e2ee.v1", "security_profile": "transport-protected", "sender_did": m.localDID, "target": map[string]any{"kind": "service", "did": m.localServiceDID}, "operation_id": publishOperationID(bundle.BundleID, oneTimePrekeys)}, "body": body})
+}
+
+// publishOperationID derives the publish operation ID from the complete
+// publish payload rather than the stable bundle ID alone. oneTimePrekeys must
+// be sorted by key ID (listOneTimePrekeys already guarantees this).
+func publishOperationID(bundleID string, oneTimePrekeys []OneTimePrekey) string {
+	if len(oneTimePrekeys) == 0 {
+		return "op-publish-" + bundleID
+	}
+	keyIDs := make([]string, 0, len(oneTimePrekeys))
+	for _, oneTimePrekey := range oneTimePrekeys {
+		keyIDs = append(keyIDs, oneTimePrekey.KeyID)
+	}
+	digest := sha256.Sum256([]byte(strings.Join(keyIDs, ",")))
+	return fmt.Sprintf("op-publish-%s-opks-%x", bundleID, digest[:4])
 }
 
 // EnsureFreshPrekeyBundle returns the latest prekey bundle or creates one.
