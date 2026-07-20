@@ -795,13 +795,12 @@ pub fn remove_member_prepare_v2<S: GroupMlsStore>(
         &input.group_state_ref.group_did,
         &input.request_id,
     )?;
-    let leaf = find_exact_leaf(
+    let leaf = find_exact_accepted_leaf(
         &scope,
         &group,
         &input.member_did,
         &input.member_device_id,
         &input.member_did_document,
-        &input.now,
         input.draft_extension_negotiated,
         &input.request_id,
     )?;
@@ -2828,13 +2827,12 @@ fn validate_staged_membership_delta(
             )?;
         }
         V2MembershipCommitMethod::Remove => {
-            let exact = find_exact_leaf(
+            let exact = find_exact_accepted_leaf(
                 scope,
                 group,
                 member_did,
                 member_device_id,
                 member_document,
-                now,
                 draft_extension_negotiated,
                 request_id,
             )?;
@@ -2946,19 +2944,44 @@ fn validate_all_group_leaves(
     Ok(identities)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn find_exact_leaf(
+/// Selects one endpoint from the authenticated, locally accepted MLS tree.
+///
+/// A Remove target may already be absent from the current P2 Manifest: loss of
+/// Manifest eligibility is itself a protocol trigger for Remove.  Therefore
+/// this check revalidates the immutable DID/device/credential/leaf-key binding
+/// carried by the accepted tree, but deliberately does not require the target's
+/// old Manifest entry, Object Proof key or validity window to remain current.
+/// The supplied document must still identify the requested DID. The product
+/// and Group Host remain responsible for current P4 state and the allowed
+/// trigger.
+fn find_exact_accepted_leaf(
     scope: &GroupMlsOperationScope,
     group: &MlsGroup,
     did: &str,
     device_id: &str,
     did_document: &Value,
-    now: &str,
     draft_extension_negotiated: bool,
     request_id: &str,
 ) -> GroupMlsOperationResult<Member> {
+    if did_document.get("id").and_then(Value::as_str) != Some(did) {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "Remove target DID document id does not match member_did",
+            request_id,
+        ));
+    }
+    if !draft_extension_negotiated {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "draft MLS binding extension requires explicit anp.group.e2ee.v2 negotiation",
+            request_id,
+        ));
+    }
     let public_group = load_public_group(scope, group, request_id)?;
     let required = required_extension_ids(group);
+    crate::group_e2ee::validate_group_required_capabilities_v2(&required)
+        .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, request_id))?;
+    let mut identities = Vec::new();
     let mut matches = Vec::new();
     for member in group.members() {
         let leaf = public_group.leaf(member.index).ok_or_else(|| {
@@ -2968,21 +2991,68 @@ fn find_exact_leaf(
                 request_id,
             )
         })?;
-        let (binding, _) = leaf_binding_evidence(leaf, request_id)?;
-        if binding.agent_did == did && binding.device_id == device_id {
-            validate_leaf_exact(
-                leaf,
-                did,
-                device_id,
-                did_document,
-                required.clone(),
-                now,
-                draft_extension_negotiated,
+        let (binding, evidence) = leaf_binding_evidence(leaf, request_id)?;
+        binding
+            .validate_structure()
+            .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, request_id))?;
+        if evidence.credential_identity.as_slice() != binding.agent_did.as_bytes() {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "MLS credential.identity must equal the accepted leaf agent_did",
                 request_id,
-            )?;
+            ));
+        }
+        if evidence.leaf_signature_key_b64u != binding.leaf_signature_key_b64u {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "accepted MLS leaf signature key does not match its device binding",
+                request_id,
+            ));
+        }
+        let canonical_binding = serde_json_canonicalizer::to_vec(&binding)
+            .map_err(|err| operation_error("group.e2ee.did_binding_invalid", err, request_id))?;
+        let binding_extension = evidence
+            .extensions
+            .iter()
+            .find(|extension| extension.extension_type == DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2)
+            .ok_or_else(|| {
+                operation_error(
+                    "group.e2ee.did_binding_invalid",
+                    "accepted MLS leaf is missing its device-binding extension",
+                    request_id,
+                )
+            })?;
+        if binding_extension.extension_data != canonical_binding {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "accepted MLS binding extension is not canonical",
+                request_id,
+            ));
+        }
+        if evidence
+            .leaf_capability_extensions
+            .iter()
+            .filter(|extension| **extension == DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2)
+            .count()
+            != 1
+        {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "accepted MLS leaf must advertise the device-binding extension exactly once",
+                request_id,
+            ));
+        }
+        identities.push(V2LeafIdentity {
+            agent_did: binding.agent_did.clone(),
+            device_id: binding.device_id.clone(),
+            leaf_signature_key_b64u: evidence.leaf_signature_key_b64u,
+        });
+        if binding.agent_did == did && binding.device_id == device_id {
             matches.push(member);
         }
     }
+    validate_leaf_identity_set_v2(&identities)
+        .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, request_id))?;
     if matches.len() != 1 {
         return Err(operation_error(
             "group.e2ee.did_binding_invalid",

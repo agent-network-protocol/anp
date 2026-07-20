@@ -67,11 +67,16 @@ material, Leaf state and epoch secrets. It provides typed operations for:
   delivery without reconstructing an originating control DTO;
 - one-shot MLS application encryption and device-local decryption.
 
-Every KeyPackage and current Leaf is checked against the exact DID/device
-binding extension and current DID document. Add rejects an existing sibling
-pair or leaf key, Remove selects exactly one DID/device Leaf, application
-decryption verifies both the frozen JCS `authenticated_data` and the sender
-Leaf binding, and no private MLS state appears in a returned wire object.
+Every KeyPackage, Add target and message sender is checked against the exact
+DID/device binding extension and current DID document. Add rejects an existing
+sibling pair or leaf key. Remove instead authenticates exactly one target Leaf
+from the locally accepted OpenMLS tree, so a device that has already lost P2
+Manifest eligibility (or whose old binding proof has expired) can still be
+removed without affecting a sibling Leaf. The product and Group Host must still
+verify current P4 state, the allowed Remove trigger and the current owner
+device's authorization. Application decryption verifies both the frozen JCS
+`authenticated_data` and the sender Leaf binding, and no private MLS state
+appears in a returned wire object.
 
 `process_notice_v2` verifies the exact recipient DID/device before touching
 local MLS state. For Commit delivery it obtains `subject_method`, the affected

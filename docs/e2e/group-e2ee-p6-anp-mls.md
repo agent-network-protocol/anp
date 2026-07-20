@@ -95,6 +95,15 @@ Leaf index, MLS signature key, epoch, authenticator, Commit, Welcome, or private
 state. Products must still obtain and verify current DID documents before
 planning each Add or Remove.
 
+For Remove, the target endpoint is authenticated from the locally accepted
+OpenMLS tree rather than required to remain in the current P2 Manifest. This is
+intentional: losing Manifest eligibility is itself a P6 Remove trigger, and the
+old binding proof may also have expired. The SDK still requires exactly one
+matching DID/device Leaf with a consistent credential, binding extension and
+Leaf signature key. Current P4 membership, the allowed Remove trigger, current
+owner-device eligibility and Host authorization remain product/Group Host
+checks.
+
 ## P6 v2 real-cryptography gate
 
 The vNext integration test uses the pinned OpenMLS 0.8 implementation together

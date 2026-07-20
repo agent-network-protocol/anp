@@ -323,6 +323,38 @@ fn member_documents(owner: &DidFixture, member: &DidFixture) -> Vec<V2DidDocumen
     ]
 }
 
+fn document_without_manifest_device(fixture: &DidFixture, device_id: &str) -> Value {
+    let mut document = fixture.document.clone();
+    document
+        .as_object_mut()
+        .expect("DID document object")
+        .remove("proof");
+    document["deviceManifest"]["devices"]
+        .as_array_mut()
+        .expect("Manifest devices")
+        .retain(|device| device["device_id"].as_str() != Some(device_id));
+    validate_device_manifest(&document).expect("updated device Manifest remains valid");
+    let document = generate_w3c_proof(
+        &document,
+        &signing_key(&fixture.devices[0]),
+        &format!("{}#key-1", fixture.did),
+        ProofGenerationOptions {
+            proof_purpose: Some("assertionMethod".to_owned()),
+            proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_owned()),
+            cryptosuite: Some(CRYPTOSUITE_EDDSA_JCS_2022.to_owned()),
+            created: Some(NOW.to_owned()),
+            ..Default::default()
+        },
+    )
+    .expect("sign current DID document after device removal");
+    assert!(document["deviceManifest"]["devices"]
+        .as_array()
+        .expect("Manifest devices")
+        .iter()
+        .all(|device| device["device_id"].as_str() != Some(device_id)));
+    document
+}
+
 fn force_pending_status(store: &ImCoreSqliteGroupMlsStore, pending_commit_id: &str, status: &str) {
     let conn = Connection::open(store.state_db_path()).expect("open MLS test database");
     assert_eq!(
@@ -1071,6 +1103,42 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         assert_eq!(output.application_plaintext, attachment_manifest);
     }
 
+    let alice_after_a2_revoke = document_without_manifest_device(&alice, &a2_device.device_id);
+
+    let wrong_endpoint_error = remove_member_prepare_v2(
+        &owner_store,
+        V2RemoveMemberInput {
+            meta: control_meta(
+                &owner.did,
+                &owner_device.device_id,
+                "op-remove-wrong-endpoint",
+            ),
+            group_state_ref: state_ref(4),
+            member_did: alice.did.clone(),
+            member_device_id: "alice-not-a-current-leaf".to_owned(),
+            member_did_document: alice_after_a2_revoke.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-remove-wrong-endpoint".to_owned(),
+            request_id: "req-remove-wrong-endpoint".to_owned(),
+        },
+    )
+    .expect_err("Remove cannot substitute another or unknown endpoint");
+    assert_eq!(wrong_endpoint_error.code, "group.e2ee.did_binding_invalid");
+    assert!(list_local_group_member_endpoints_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-list-after-wrong-remove".to_owned(),
+        },
+    )
+    .expect("failed Remove leaves the accepted tree unchanged")
+    .member_endpoints
+    .iter()
+    .any(|endpoint| endpoint.member_device_id == a2_device.device_id));
+
     let remove_meta = control_meta(&owner.did, &owner_device.device_id, "op-remove-a2");
     let remove_a2 = remove_member_prepare_v2(
         &owner_store,
@@ -1079,14 +1147,28 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             group_state_ref: state_ref(4),
             member_did: alice.did.clone(),
             member_device_id: a2_device.device_id.clone(),
-            member_did_document: alice.document.clone(),
+            member_did_document: alice_after_a2_revoke.clone(),
             now: NOW.to_owned(),
             draft_extension_negotiated: true,
             pending_commit_id: "pending-remove-a2".to_owned(),
             request_id: "req-remove-a2".to_owned(),
         },
     )
-    .expect("prepare exact A2 Remove");
+    .expect("prepare exact A2 Remove after A2 loses current Manifest eligibility");
+    let restarted_remove_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
+    let remove_after_restart = reconcile_pending_v2(
+        &restarted_remove_owner_store,
+        V2ReconcilePendingInput {
+            request_id: "req-reconcile-prepared-remove-after-restart".to_owned(),
+        },
+    )
+    .expect("prepared exact-device Remove survives restart");
+    assert_eq!(remove_after_restart.pending_commits.len(), 1);
+    assert_eq!(remove_after_restart.pending_commits[0].status, "prepared");
+    assert_eq!(
+        remove_after_restart.pending_commits[0].pending_commit_id,
+        remove_a2.pending_commit_id
+    );
     for (store, device) in [(&a1_store, a1_device), (&a2_store, a2_device)] {
         process_commit_v2(
             store,
@@ -1102,7 +1184,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
                 commit_b64u: remove_a2.body.commit_b64u.clone(),
                 method: V2MembershipCommitMethod::Remove,
                 sender_did_document: owner.document.clone(),
-                member_did_document: alice.document.clone(),
+                member_did_document: alice_after_a2_revoke.clone(),
                 now: NOW.to_owned(),
                 draft_extension_negotiated: true,
                 request_id: format!("req-commit-remove-a2-{}", device.device_id),
@@ -1111,7 +1193,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         .expect("existing Leaf processes exact A2 Remove");
     }
     finalize_commit_v2(
-        &owner_store,
+        &restarted_remove_owner_store,
         V2FinalizeInput {
             pending_commit_id: remove_a2.pending_commit_id.clone(),
             request_id: "req-finalize-remove-a2".to_owned(),
@@ -1147,14 +1229,25 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         draft_extension_negotiated: true,
         request_id: "req-notice-remove-a2-owner-echo".to_owned(),
     };
-    let remove_echo_output = process_notice_v2(&owner_store, remove_a2_self_echo)
-        .expect("finalized Remove actor accepts its exact Commit echo");
+    let remove_echo_output =
+        process_notice_v2(&restarted_remove_owner_store, remove_a2_self_echo.clone())
+            .expect("finalized Remove actor accepts its exact Commit echo");
     assert_eq!(
         remove_echo_output.source_operation_id.as_deref(),
         Some("op-remove-a2")
     );
     assert_eq!(remove_echo_output.from_epoch, "2");
     assert_eq!(remove_echo_output.epoch, "3");
+    let mut remove_a2_self_echo_replay = remove_a2_self_echo;
+    remove_a2_self_echo_replay.request_id = "req-notice-remove-a2-owner-echo-replay".to_owned();
+    assert_eq!(
+        process_notice_v2(
+            &store(directory.path(), &owner.did, &owner_device.device_id),
+            remove_a2_self_echo_replay,
+        )
+        .expect("exact Remove actor echo replays after restart"),
+        remove_echo_output
+    );
     assert_eq!(
         list_local_group_member_endpoints_v2(
             &owner_store,
