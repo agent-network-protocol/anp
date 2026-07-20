@@ -1336,6 +1336,30 @@ fn key_package_publish_preparing_recovery_removes_orphan_private_bundles() {
     drop(conn);
     drop(first_store);
 
+    let mut colliding_family = input.clone();
+    colliding_family.meta.operation_id = "join-kp-legacy-colliding-operation".to_owned();
+    colliding_family.request_id = "req-publish-legacy-colliding-family".to_owned();
+    let blocked_store = store(directory.path(), &owner.did, &device.device_id);
+    let error = prepare_or_resume_key_package_publish_v2(
+        &blocked_store,
+        colliding_family,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("an unknown legacy preparing key binding blocks a new family");
+    assert_eq!(error.code, "group.e2ee.state_not_ready");
+    let conn = Connection::open(blocked_store.state_db_path()).expect("inspect blocked family");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_operations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1,
+        "the rejected family must not create a second WAL row"
+    );
+    drop(conn);
+    drop(blocked_store);
+
     let mut retry_input = input;
     retry_input.request_id = "req-publish-after-simulated-crash".to_owned();
     let restarted_store = store(directory.path(), &owner.did, &device.device_id);
@@ -1368,6 +1392,19 @@ fn key_package_publish_preparing_recovery_removes_orphan_private_bundles() {
         .unwrap(),
         1
     );
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let recovered_journal: Value = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(
+        recovered_journal["base_key_package_id"],
+        json!(key_package_id)
+    );
+    assert!(recovered_journal["body"].is_object());
 }
 
 #[test]

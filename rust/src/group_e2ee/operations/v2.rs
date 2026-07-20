@@ -1180,17 +1180,21 @@ fn key_package_publish_wire_ids_bound_elsewhere(
     request_id: &str,
 ) -> GroupMlsOperationResult<bool> {
     let mut statement = conn
-        .prepare("SELECT operation_id, response_json FROM operations WHERE command = ?1")
+        .prepare("SELECT operation_id, response_json, status FROM operations WHERE command = ?1")
         .map_err(|err| sqlite_operation_error(err, request_id))?;
     let rows = statement
         .query_map(params![KEY_PACKAGE_PUBLISH_COMMAND], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(|err| sqlite_operation_error(err, request_id))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| sqlite_operation_error(err, request_id))?;
     drop(statement);
-    for (family_operation_id, response_json) in rows {
+    for (family_operation_id, response_json, status) in rows {
         if excluded_family_operation_id == Some(family_operation_id.as_str()) {
             continue;
         }
@@ -1198,7 +1202,13 @@ fn key_package_publish_wire_ids_bound_elsewhere(
         let current_key_package_matches = if let Some(body) = journal.body.as_ref() {
             body.group_key_package.key_package_id == wire_key_package_id
         } else if journal.base_key_package_id.is_empty() {
-            false
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                format!(
+                    "legacy {status} KeyPackage publish family has no recoverable key_package_id; retry its base operation before creating another family"
+                ),
+                request_id,
+            ));
         } else {
             key_package_publish_attempt_id(
                 "awiki.group-e2ee.key-package-publish.key-package.v1",
