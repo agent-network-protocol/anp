@@ -726,6 +726,314 @@ fn expired_prepared_publish_rotates_once_and_accepts_the_new_wire_attempt() {
 }
 
 #[test]
+fn expired_publish_rotation_rejects_missing_or_tampered_public_rows() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-public-row-guard", &["publish-public-row-device"]);
+    let device = &owner.devices[0];
+    for mutation in ["missing", "tampered"] {
+        let operation_id = format!("join-kp-public-{mutation}-operation");
+        let key_package_id = format!("join-kp-public-{mutation}-package");
+        let mut meta = service_meta(&owner.did, &device.device_id, &operation_id);
+        meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+        meta.created_at = None;
+        let input = V2PrepareKeyPackagePublishInput {
+            meta,
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            verification_method: device.signing_key_id.clone(),
+            key_package_id: key_package_id.clone(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: format!("req-publish-public-{mutation}-prepare"),
+        };
+        let case_root = directory.path().join(mutation);
+        let case_store = store(&case_root, &owner.did, &device.device_id);
+        prepare_or_resume_key_package_publish_v2(
+            &case_store,
+            input.clone(),
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect("prepare public-row guard fixture");
+        let conn = Connection::open(case_store.state_db_path()).unwrap();
+        let original_journal: String = conn
+            .query_row(
+                "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+                params![operation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if mutation == "missing" {
+            assert_eq!(
+                conn.execute(
+                    "DELETE FROM group_mls_key_packages WHERE key_package_id = ?1",
+                    params![key_package_id],
+                )
+                .unwrap(),
+                1
+            );
+        } else {
+            let public_json: String = conn
+                .query_row(
+                    "SELECT public_json FROM group_mls_key_packages WHERE key_package_id = ?1",
+                    params![key_package_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let mut public: Value = serde_json::from_str(&public_json).unwrap();
+            public["expires_at"] = json!("2026-08-18T00:00:00Z");
+            assert_eq!(
+                conn.execute(
+                    "UPDATE group_mls_key_packages SET public_json = ?2 WHERE key_package_id = ?1",
+                    params![key_package_id, public.to_string()],
+                )
+                .unwrap(),
+                1
+            );
+        }
+        drop(conn);
+
+        let mut expired = input;
+        expired.issued_at = "2026-08-20T00:00:00Z".to_owned();
+        expired.expires_at = "2026-09-20T00:00:00Z".to_owned();
+        expired.now = "2026-08-20T00:00:00Z".to_owned();
+        expired.request_id = format!("req-publish-public-{mutation}-rotate");
+        let error = prepare_or_resume_key_package_publish_v2(
+            &case_store,
+            expired,
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect_err("rotation requires the exact journal public object");
+        assert_eq!(error.code, "group.e2ee.state_not_ready");
+
+        let conn = Connection::open(case_store.state_db_path()).unwrap();
+        let (journal, status): (String, String) = conn
+            .query_row(
+                "SELECT response_json, status FROM group_mls_operations WHERE operation_id = ?1",
+                params![operation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(journal, original_journal);
+        assert_eq!(status, "prepared");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn publish_wire_ids_are_unique_across_current_and_historical_families() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("publish-family-uniqueness", &["publish-family-device"]);
+    let device = &owner.devices[0];
+    let make_input = |operation_id: &str, key_package_id: &str, request_id: &str| {
+        let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+        meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+        meta.created_at = None;
+        V2PrepareKeyPackagePublishInput {
+            meta,
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            verification_method: device.signing_key_id.clone(),
+            key_package_id: key_package_id.to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: request_id.to_owned(),
+        }
+    };
+
+    let probe_root = directory.path().join("probe");
+    let probe_store = store(&probe_root, &owner.did, &device.device_id);
+    let base_operation_id = "family-a-operation";
+    let base_key_package_id = "family-a-package";
+    let base_input = make_input(
+        base_operation_id,
+        base_key_package_id,
+        "req-family-a-prepare",
+    );
+    prepare_or_resume_key_package_publish_v2(
+        &probe_store,
+        base_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let mut first_expired = base_input.clone();
+    first_expired.issued_at = "2026-08-20T00:00:00Z".to_owned();
+    first_expired.expires_at = "2026-09-20T00:00:00Z".to_owned();
+    first_expired.now = "2026-08-20T00:00:00Z".to_owned();
+    first_expired.request_id = "req-family-a-rotate-one".to_owned();
+    let generation_one = prepare_or_resume_key_package_publish_v2(
+        &probe_store,
+        first_expired.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let mut second_expired = first_expired;
+    second_expired.issued_at = "2026-09-21T00:00:00Z".to_owned();
+    second_expired.expires_at = "2026-10-21T00:00:00Z".to_owned();
+    second_expired.now = "2026-09-21T00:00:00Z".to_owned();
+    second_expired.request_id = "req-family-a-rotate-two".to_owned();
+    let generation_two = prepare_or_resume_key_package_publish_v2(
+        &probe_store,
+        second_expired,
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+
+    let conflicting_new_families = [
+        (
+            "current-operation",
+            generation_two.meta.operation_id.as_str(),
+            "unique-current-operation-package",
+        ),
+        (
+            "current-key",
+            "unique-current-key-operation",
+            generation_two
+                .body
+                .group_key_package
+                .key_package_id
+                .as_str(),
+        ),
+        (
+            "history-operation",
+            generation_one.meta.operation_id.as_str(),
+            "unique-history-operation-package",
+        ),
+        (
+            "history-key",
+            "unique-history-key-operation",
+            generation_one
+                .body
+                .group_key_package
+                .key_package_id
+                .as_str(),
+        ),
+    ];
+    for (label, operation_id, key_package_id) in conflicting_new_families {
+        let error = prepare_or_resume_key_package_publish_v2(
+            &probe_store,
+            make_input(
+                operation_id,
+                key_package_id,
+                &format!("req-family-conflict-{label}"),
+            ),
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect_err("a new family cannot reuse current or historical wire IDs");
+        assert_eq!(error.code, "group.e2ee.commit_invalid");
+    }
+    let conn = Connection::open(probe_store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_operations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    drop(conn);
+
+    for (label, other_operation_id, other_key_package_id) in [
+        (
+            "operation",
+            generation_one.meta.operation_id.as_str(),
+            "unrelated-family-package",
+        ),
+        (
+            "key",
+            "unrelated-family-operation",
+            generation_one
+                .body
+                .group_key_package
+                .key_package_id
+                .as_str(),
+        ),
+    ] {
+        let case_root = directory.path().join(format!("rotate-{label}"));
+        let case_store = store(&case_root, &owner.did, &device.device_id);
+        prepare_or_resume_key_package_publish_v2(
+            &case_store,
+            base_input.clone(),
+            &owner.document,
+            &signing_key(device),
+        )
+        .unwrap();
+        prepare_or_resume_key_package_publish_v2(
+            &case_store,
+            make_input(
+                other_operation_id,
+                other_key_package_id,
+                &format!("req-other-family-{label}"),
+            ),
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect("the other family does not collide with generation zero");
+        let mut expired = base_input.clone();
+        expired.issued_at = "2026-08-20T00:00:00Z".to_owned();
+        expired.expires_at = "2026-09-20T00:00:00Z".to_owned();
+        expired.now = "2026-08-20T00:00:00Z".to_owned();
+        expired.request_id = format!("req-family-a-rotate-{label}-conflict");
+        let error = prepare_or_resume_key_package_publish_v2(
+            &case_store,
+            expired,
+            &owner.document,
+            &signing_key(device),
+        )
+        .expect_err("rotation cannot claim another family's current wire ID");
+        assert_eq!(error.code, "group.e2ee.commit_invalid");
+        let conn = Connection::open(case_store.state_db_path()).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM group_mls_operations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        let journal: String = conn
+            .query_row(
+                "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+                params![base_operation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let journal: Value = serde_json::from_str(&journal).unwrap();
+        assert_eq!(journal["generation"], json!(0));
+        assert!(journal["superseded_attempts"]
+            .as_array()
+            .is_none_or(Vec::is_empty));
+    }
+}
+
+#[test]
 fn rotated_publish_recovers_after_atomic_switch_and_rejects_ambiguous_bindings() {
     let directory = TestDirectory::new();
     let owner = make_did_fixture("publish-rotate-crash", &["publish-rotate-crash-device"]);
@@ -1357,23 +1665,29 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         &signing_key(owner_device),
     )
     .expect("owner KeyPackage");
-    let a1_package = generate_key_package_v2(
+    let mut a1_publish_meta = service_meta(&alice.did, &a1_device.device_id, "op-publish-a1");
+    a1_publish_meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+    a1_publish_meta.created_at = None;
+    let a1_publish_input = V2PrepareKeyPackagePublishInput {
+        meta: a1_publish_meta,
+        owner_did: alice.did.clone(),
+        owner_device_id: a1_device.device_id.clone(),
+        verification_method: a1_device.signing_key_id.clone(),
+        key_package_id: "kp-a1".to_owned(),
+        issued_at: ISSUED_AT.to_owned(),
+        expires_at: EXPIRES_AT.to_owned(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-publish-a1".to_owned(),
+    };
+    let a1_prepared = prepare_or_resume_key_package_publish_v2(
         &a1_store,
-        V2GenerateKeyPackageInput {
-            owner_did: alice.did.clone(),
-            owner_device_id: a1_device.device_id.clone(),
-            verification_method: a1_device.signing_key_id.clone(),
-            key_package_id: "kp-a1".to_owned(),
-            issued_at: ISSUED_AT.to_owned(),
-            expires_at: EXPIRES_AT.to_owned(),
-            now: NOW.to_owned(),
-            draft_extension_negotiated: true,
-            request_id: "req-kp-a1".to_owned(),
-        },
+        a1_publish_input.clone(),
         &alice.document,
         &signing_key(a1_device),
     )
-    .expect("A1 KeyPackage");
+    .expect("prepare A1 KeyPackage without Host acceptance");
+    let a1_package = a1_prepared.body.group_key_package;
     let a2_package = generate_key_package_v2(
         &a2_store,
         V2GenerateKeyPackageInput {
@@ -1604,6 +1918,104 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             .expect("repeated Welcome is idempotent")
             .epoch,
         "1"
+    );
+    let conn = Connection::open(a1_store.state_db_path()).expect("inspect consumed A1 package");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1,
+        "Welcome keeps the public package row used by the prepared publish WAL"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0,
+        "OpenMLS consumes the private KeyPackage bundle while processing Welcome"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT status FROM group_mls_operations WHERE operation_id = 'op-publish-a1'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap(),
+        "prepared"
+    );
+    drop(conn);
+
+    let mut a1_rotation_input = a1_publish_input.clone();
+    a1_rotation_input.issued_at = "2026-08-20T00:00:00Z".to_owned();
+    a1_rotation_input.expires_at = "2026-09-20T00:00:00Z".to_owned();
+    a1_rotation_input.now = "2026-08-20T00:00:00Z".to_owned();
+    a1_rotation_input.request_id = "req-publish-a1-after-welcome-ttl".to_owned();
+    let a1_rotated = prepare_or_resume_key_package_publish_v2(
+        &a1_store,
+        a1_rotation_input,
+        &alice.document,
+        &signing_key(a1_device),
+    )
+    .expect("consumed private bundle does not wedge an expired prepared publish");
+    assert_ne!(a1_rotated.meta.operation_id, "op-publish-a1");
+    assert_ne!(
+        a1_rotated.body.group_key_package.key_package_id,
+        a1_package.key_package_id
+    );
+    let conn = Connection::open(a1_store.state_db_path()).expect("inspect rotated A1 package");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = 'op-publish-a1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let journal: Value = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(journal["generation"], json!(1));
+    assert_eq!(
+        journal["superseded_attempts"]
+            .as_array()
+            .expect("superseded attempt history")
+            .len(),
+        1
+    );
+    drop(conn);
+    let accepted_a1_rotation = accept_key_package_publish_v2(
+        &a1_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: alice.did.clone(),
+            owner_device_id: a1_device.device_id.clone(),
+            operation_id: a1_rotated.meta.operation_id.clone(),
+            result: V2PublishKeyPackageResult {
+                published: true,
+                owner_did: alice.did.clone(),
+                owner_device_id: a1_device.device_id.clone(),
+                key_package_id: a1_rotated.body.group_key_package.key_package_id.clone(),
+                published_at: "2026-08-20T00:00:01Z".to_owned(),
+            },
+            request_id: "req-accept-a1-after-welcome-ttl".to_owned(),
+        },
+    )
+    .expect("rotated post-Welcome package remains acceptable");
+    assert_eq!(
+        accepted_a1_rotation.status,
+        V2KeyPackagePublishStatus::Accepted
     );
 
     let history_meta = send_meta(&owner.did, &owner_device.device_id, "history");

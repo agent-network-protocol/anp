@@ -531,6 +531,19 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
             journal
         }
     } else {
+        if key_package_publish_wire_ids_bound_elsewhere(
+            &scope.app_conn,
+            &input.meta.operation_id,
+            &input.key_package_id,
+            None,
+            &input.request_id,
+        )? {
+            return Err(operation_error(
+                "group.e2ee.commit_invalid",
+                "wire operation_id or key_package_id is already bound to another publish family",
+                &input.request_id,
+            ));
+        }
         if key_package_id_exists(&scope, &input.key_package_id, &input.request_id)? {
             return Err(operation_error(
                 "group.e2ee.key_package_consumed",
@@ -1159,6 +1172,55 @@ fn load_key_package_publish_operation_by_wire_id(
     }
 }
 
+fn key_package_publish_wire_ids_bound_elsewhere(
+    conn: &rusqlite::Connection,
+    wire_operation_id: &str,
+    wire_key_package_id: &str,
+    excluded_family_operation_id: Option<&str>,
+    request_id: &str,
+) -> GroupMlsOperationResult<bool> {
+    let mut statement = conn
+        .prepare("SELECT operation_id, response_json FROM operations WHERE command = ?1")
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    let rows = statement
+        .query_map(params![KEY_PACKAGE_PUBLISH_COMMAND], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|err| sqlite_operation_error(err, request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, request_id))?;
+    drop(statement);
+    for (family_operation_id, response_json) in rows {
+        if excluded_family_operation_id == Some(family_operation_id.as_str()) {
+            continue;
+        }
+        let journal = parse_key_package_publish_journal(&response_json, request_id)?;
+        let current_key_package_matches = if let Some(body) = journal.body.as_ref() {
+            body.group_key_package.key_package_id == wire_key_package_id
+        } else if journal.base_key_package_id.is_empty() {
+            false
+        } else {
+            key_package_publish_attempt_id(
+                "awiki.group-e2ee.key-package-publish.key-package.v1",
+                "kp-attempt-",
+                &journal.base_key_package_id,
+                journal.generation,
+                request_id,
+            )? == wire_key_package_id
+        };
+        if journal.meta.operation_id == wire_operation_id
+            || current_key_package_matches
+            || journal.superseded_attempts.iter().any(|attempt| {
+                attempt.operation_id == wire_operation_id
+                    || attempt.key_package_id == wire_key_package_id
+            })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn parse_key_package_publish_journal(
     response_json: &str,
     request_id: &str,
@@ -1318,6 +1380,19 @@ fn rotate_expired_key_package_publish_attempt(
             &input.request_id,
         ));
     }
+    if key_package_publish_wire_ids_bound_elsewhere(
+        &transaction,
+        &journal.meta.operation_id,
+        &next_key_package_id,
+        Some(&journal.base_operation_id),
+        &input.request_id,
+    )? {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "derived wire operation_id or key_package_id is already bound to another publish family",
+            &input.request_id,
+        ));
+    }
     transaction
         .execute(
             "UPDATE operations\n             SET input_digest = ?2, response_json = ?3, status = 'preparing', updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
@@ -1382,10 +1457,10 @@ fn rotate_expired_key_package_publish_attempt(
             params![old_private_ref],
         )
         .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    if private_deleted != 1 {
+    if private_deleted > 1 {
         return Err(operation_error(
             "group.e2ee.state_not_ready",
-            "expired OpenMLS KeyPackage disappeared during rotation",
+            "expired OpenMLS KeyPackage has multiple private bundles",
             &input.request_id,
         ));
     }
