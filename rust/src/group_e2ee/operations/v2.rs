@@ -237,6 +237,35 @@ pub struct V2ReconcilePendingOutput {
     pub pending_commits: Vec<V2ReconciledPendingCommit>,
 }
 
+/// Secret-free local readiness for one exact DID/device/group store.
+///
+/// This is a local SDK API, not an ANP wire object. It deliberately exposes no
+/// OpenMLS group id, Leaf index, epoch authenticator, key material, Commit, or
+/// Welcome bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2InspectLocalGroupInput {
+    pub owner_did: String,
+    pub owner_device_id: String,
+    pub group_did: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum V2LocalGroupReadiness {
+    Missing,
+    Active,
+    Inactive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2InspectLocalGroupOutput {
+    pub group_did: String,
+    pub readiness: V2LocalGroupReadiness,
+    pub auto_reconcile_pending_count: u32,
+    pub host_recheck_pending_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct V2MembershipAuthenticatedData {
@@ -1008,6 +1037,122 @@ pub fn reconcile_pending_v2<S: GroupMlsStore>(
     }
     Ok(V2ReconcilePendingOutput {
         pending_commits: reconciled,
+    })
+}
+
+/// Inspects only secret-free application metadata owned by the SDK.
+///
+/// Product integrations must use this API instead of reading the SDK SQLite
+/// schema or interpreting journal status strings themselves.
+pub fn inspect_local_group_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2InspectLocalGroupInput,
+) -> GroupMlsOperationResult<V2InspectLocalGroupOutput> {
+    let owner_scope = store.owner_scope().ok_or_else(|| {
+        operation_error(
+            "owner_scope_required",
+            "P6 v2 local inspection requires an exact DID/device store scope",
+            &input.request_id,
+        )
+    })?;
+    validate_store_scope(
+        Some(&owner_scope),
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("group_did", &input.group_did, &input.request_id)?;
+    if !input.group_did.starts_with("did:") {
+        return Err(operation_error(
+            "invalid_field",
+            "group_did must be a DID",
+            &input.request_id,
+        ));
+    }
+    let scope = open_scope(store, &input.request_id)?;
+    let (binding_count, binding_status) = scope
+        .app_conn
+        .query_row(
+            "SELECT COUNT(*), MIN(status)
+             FROM group_bindings
+             WHERE agent_did = ?1 AND device_id = ?2 AND group_did = ?3",
+            params![input.owner_did, input.owner_device_id, input.group_did],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let readiness = match (binding_count, binding_status.as_deref()) {
+        (0, None) => V2LocalGroupReadiness::Missing,
+        (1, Some("active")) => V2LocalGroupReadiness::Active,
+        (1, Some("removed")) => V2LocalGroupReadiness::Inactive,
+        (1, Some("pending_create")) => V2LocalGroupReadiness::Missing,
+        (count, _) => {
+            return Err(operation_error(
+                "group.e2ee.state_not_ready",
+                format!("invalid local group binding cardinality/status ({count})"),
+                &input.request_id,
+            ));
+        }
+    };
+    let mut statement = scope
+        .app_conn
+        .prepare(
+            "SELECT status, COUNT(*)
+             FROM pending_commits
+             WHERE group_did = ?1
+             GROUP BY status",
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let rows = statement
+        .query_map(params![input.group_did], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let mut auto_reconcile = 0_u32;
+    let mut host_recheck = 0_u32;
+    for (status, count) in rows {
+        let count = u32::try_from(count).map_err(|_| {
+            operation_error(
+                "group.e2ee.state_not_ready",
+                "invalid local pending commit count",
+                &input.request_id,
+            )
+        })?;
+        match status.as_str() {
+            "preparing" | "accepted" => {
+                auto_reconcile = auto_reconcile.checked_add(count).ok_or_else(|| {
+                    operation_error(
+                        "group.e2ee.state_not_ready",
+                        "local pending commit count overflow",
+                        &input.request_id,
+                    )
+                })?;
+            }
+            "prepared" | "pending" => {
+                host_recheck = host_recheck.checked_add(count).ok_or_else(|| {
+                    operation_error(
+                        "group.e2ee.state_not_ready",
+                        "local pending commit count overflow",
+                        &input.request_id,
+                    )
+                })?;
+            }
+            "finalized" | "aborted" => {}
+            _ => {
+                return Err(operation_error(
+                    "group.e2ee.state_not_ready",
+                    "unknown local pending commit status",
+                    &input.request_id,
+                ));
+            }
+        }
+    }
+    Ok(V2InspectLocalGroupOutput {
+        group_did: input.group_did,
+        readiness,
+        auto_reconcile_pending_count: auto_reconcile,
+        host_recheck_pending_count: host_recheck,
     })
 }
 

@@ -81,6 +81,11 @@ decision, and completes `accepted` to `finalized` idempotently after restart.
 Finalize and abort can be retried; the journal never contains exported MLS
 private state or epoch secrets.
 
+Product status surfaces use `inspect_local_group_v2`, a local-only typed
+inspection API that returns only active/missing/inactive readiness and pending
+reconciliation counts. Products must not read the SDK SQLite schema or expose
+Leaf, epoch authenticator, Commit, Welcome, or private-state fields as status.
+
 ## P6 v2 real-cryptography gate
 
 The vNext integration test uses the pinned OpenMLS 0.8 implementation together

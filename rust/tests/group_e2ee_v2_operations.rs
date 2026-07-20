@@ -9,11 +9,12 @@ use anp::authentication::{
 };
 use anp::group_e2ee::operations::v2::{
     abort_commit_v2, add_member_prepare_v2, create_group_prepare_v2, decrypt_v2, encrypt_v2,
-    finalize_commit_v2, generate_key_package_v2, process_commit_v2, process_notice_v2,
-    process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2, V2AddMemberInput,
-    V2CreateGroupInput, V2DecryptInput, V2DidDocument, V2EncryptInput, V2FinalizeInput,
-    V2GenerateKeyPackageInput, V2MembershipCommitMethod, V2ProcessCommitInput,
-    V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput,
+    finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2, process_commit_v2,
+    process_notice_v2, process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
+    V2AddMemberInput, V2CreateGroupInput, V2DecryptInput, V2DidDocument, V2EncryptInput,
+    V2FinalizeInput, V2GenerateKeyPackageInput, V2InspectLocalGroupInput, V2LocalGroupReadiness,
+    V2MembershipCommitMethod, V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput,
+    V2ReconcilePendingInput, V2RemoveMemberInput,
 };
 use anp::group_e2ee::storage::ImCoreSqliteGroupMlsStore;
 use anp::group_e2ee::{
@@ -345,6 +346,30 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     let a1_store = store(directory.path(), &alice.did, &a1_device.device_id);
     let a2_store = store(directory.path(), &alice.did, &a2_device.device_id);
 
+    let a2_missing = inspect_local_group_v2(
+        &a2_store,
+        V2InspectLocalGroupInput {
+            owner_did: alice.did.clone(),
+            owner_device_id: a2_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-a2-before-welcome".to_owned(),
+        },
+    )
+    .expect("secret-free local inspect before Welcome");
+    assert_eq!(a2_missing.readiness, V2LocalGroupReadiness::Missing);
+    assert_eq!(a2_missing.auto_reconcile_pending_count, 0);
+    assert_eq!(a2_missing.host_recheck_pending_count, 0);
+    assert!(inspect_local_group_v2(
+        &a2_store,
+        V2InspectLocalGroupInput {
+            owner_did: alice.did.clone(),
+            owner_device_id: a1_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-wrong-device-scope".to_owned(),
+        },
+    )
+    .is_err());
+
     let owner_package = generate_key_package_v2(
         &owner_store,
         V2GenerateKeyPackageInput {
@@ -422,6 +447,30 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .expect("prepare group create");
     assert_eq!(created.body.epoch, "0");
+    let prepared_status = inspect_local_group_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-prepared-create".to_owned(),
+        },
+    )
+    .expect("secret-free inspect reports durable prepared WAL");
+    assert_eq!(prepared_status.readiness, V2LocalGroupReadiness::Missing);
+    assert_eq!(prepared_status.host_recheck_pending_count, 1);
+    force_pending_status(&owner_store, &created.pending_commit_id, "corrupt-status");
+    assert!(inspect_local_group_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-corrupt-wal".to_owned(),
+        },
+    )
+    .is_err());
+    force_pending_status(&owner_store, &created.pending_commit_id, "prepared");
     let prepared = reconcile_pending_v2(
         &owner_store,
         V2ReconcilePendingInput {
@@ -452,6 +501,18 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .expect("accepted create finalizes after restart");
     assert_eq!(reconciled.pending_commits[0].status, "finalized");
+    let active_status = inspect_local_group_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-finalized-create".to_owned(),
+        },
+    )
+    .expect("secret-free inspect reports active local MLS state");
+    assert_eq!(active_status.readiness, V2LocalGroupReadiness::Active);
+    assert_eq!(active_status.host_recheck_pending_count, 0);
     assert_eq!(
         finalize_commit_v2(
             &owner_store,
