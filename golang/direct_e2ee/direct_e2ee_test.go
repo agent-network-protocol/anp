@@ -131,6 +131,76 @@ func TestPublishPrekeyBundleDoesNotStripOneTimePrekeysOnFailure(t *testing.T) {
 	}
 }
 
+func TestPublishPrekeyBundleOperationIDIdentifiesCompletePayload(t *testing.T) {
+	bobBundle, err := authentication.CreateDidWBADocument("b.example", didOptions("b.example", "bob"))
+	if err != nil {
+		t.Fatalf("CreateDidWBADocument failed: %v", err)
+	}
+	bobDID := stringValue(bobBundle.DidDocument["id"])
+	signingPrivateKey, err := anp.PrivateKeyFromPEM(bobBundle.Keys[authentication.VMKeyAuth].PrivateKeyPEM)
+	if err != nil {
+		t.Fatalf("PrivateKeyFromPEM failed: %v", err)
+	}
+	signedPrekeyStore, err := NewFileSignedPrekeyStore(filepath.Join(t.TempDir(), "spk"))
+	if err != nil {
+		t.Fatalf("NewFileSignedPrekeyStore failed: %v", err)
+	}
+	oneTimePrekeyStore, err := NewFileOneTimePrekeyStore(filepath.Join(t.TempDir(), "opk"))
+	if err != nil {
+		t.Fatalf("NewFileOneTimePrekeyStore failed: %v", err)
+	}
+	serviceDID, err := messageServiceDIDFromDocument(bobBundle.DidDocument)
+	if err != nil {
+		t.Fatalf("messageServiceDIDFromDocument failed: %v", err)
+	}
+	rpc := &fakeRPCClient{expectedServiceDID: serviceDID}
+	manager := NewPrekeyManager(bobDID, serviceDID, bobDID+"#"+authentication.VMKeyE2EEAgreement, signingPrivateKey, bobDID+"#"+authentication.VMKeyAuth, signedPrekeyStore, rpc.Call, oneTimePrekeyStore)
+	_, signedPrekey, err := manager.GenerateSignedPrekey("spk-bob-001", "2026-04-07T00:00:00Z")
+	if err != nil {
+		t.Fatalf("GenerateSignedPrekey failed: %v", err)
+	}
+	bundle, err := manager.BuildPrekeyBundle(signedPrekey, "bundle-bob-001", "")
+	if err != nil {
+		t.Fatalf("BuildPrekeyBundle failed: %v", err)
+	}
+
+	// A bundle-only payload derives its operation ID from the bundle ID alone.
+	if _, err := manager.PublishPrekeyBundle(bundle); err != nil {
+		t.Fatalf("PublishPrekeyBundle failed: %v", err)
+	}
+	if got := rpc.publishOperationIDs[0]; got != "op-publish-bundle-bob-001" {
+		t.Fatalf("operation_id without OPKs = %q, want op-publish-bundle-bob-001", got)
+	}
+
+	// With an OPK sidecar, exact retries of the same payload reuse the ID.
+	if _, err := manager.EnsureFreshOneTimePrekeys(2); err != nil {
+		t.Fatalf("EnsureFreshOneTimePrekeys failed: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := manager.PublishPrekeyBundle(bundle); err != nil {
+			t.Fatalf("PublishPrekeyBundle with OPKs failed: %v", err)
+		}
+	}
+	withOPKs := rpc.publishOperationIDs[1]
+	if !strings.HasPrefix(withOPKs, "op-publish-bundle-bob-001-opks-") {
+		t.Fatalf("operation_id with OPKs = %q, want op-publish-bundle-bob-001-opks-*", withOPKs)
+	}
+	if rpc.publishOperationIDs[2] != withOPKs {
+		t.Fatalf("exact retry used %q, want reused operation ID %q", rpc.publishOperationIDs[2], withOPKs)
+	}
+
+	// A replenished OPK sidecar changes the payload, so a new ID is required.
+	if _, _, err := manager.GenerateOneTimePrekey("opk-extra-001"); err != nil {
+		t.Fatalf("GenerateOneTimePrekey failed: %v", err)
+	}
+	if _, err := manager.PublishPrekeyBundle(bundle); err != nil {
+		t.Fatalf("PublishPrekeyBundle with replenished OPKs failed: %v", err)
+	}
+	if got := rpc.publishOperationIDs[3]; got == withOPKs {
+		t.Fatalf("replenished OPK sidecar reused operation ID %q, want a new one", got)
+	}
+}
+
 func TestSessionInitAndFollowUpRoundTrip(t *testing.T) {
 	aliceDoc, bobDoc, aliceStatic, bobStatic, bobSPK, bundle := buildSessionFixtures(t)
 	aliceDID := stringValue(aliceDoc["id"])
@@ -440,6 +510,7 @@ type fakeRPCClient struct {
 	totalGetPrekeyCalls   int
 	failPublishWithOPK    bool
 	publishAttempts       int
+	publishOperationIDs   []string
 	getPrekeyOperationIDs []string
 	calls                 [][2]any
 }
@@ -450,6 +521,7 @@ func (f *fakeRPCClient) Call(method string, params map[string]any) (map[string]a
 	case "direct.e2ee.publish_prekey_bundle":
 		f.publishAttempts++
 		meta := params["meta"].(map[string]any)
+		f.publishOperationIDs = append(f.publishOperationIDs, stringValue(meta["operation_id"]))
 		target := meta["target"].(map[string]any)
 		if target["kind"] != "service" || target["did"] != f.expectedServiceDID {
 			return nil, invalidField("publish_prekey_bundle target")

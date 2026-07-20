@@ -65,7 +65,7 @@ class MessageServiceDirectE2eeClient:
 
     def publish_prekey_bundle(self) -> Dict[str, Any]:
         bundle = self._prekey_manager.ensure_fresh_prekey_bundle()
-        return self._prekey_manager.publish_prekey_bundle(bundle)
+        return self._prekey_manager.publish_prekey_bundle(bundle, f"op-publish-{bundle.bundle_id}")
 
     def ensure_fresh_prekey_bundle(self) -> PrekeyBundle:
         return self._prekey_manager.ensure_fresh_prekey_bundle()

@@ -104,7 +104,13 @@ class PrekeyManager:
             proof=signed_bundle["proof"],
         )
 
-    def publish_prekey_bundle(self, bundle: PrekeyBundle) -> Dict[str, Any]:
+    def publish_prekey_bundle(self, bundle: PrekeyBundle, operation_id: str) -> Dict[str, Any]:
+        """Publish a signed prekey bundle over the RPC boundary.
+
+        ``operation_id`` identifies the complete publish payload: reuse it
+        when retrying the same payload and provide a new one when the payload
+        changes.
+        """
         if self._rpc_client is None:
             raise DirectE2eeError("RPC client is not configured", "rpc_unavailable")
         return self._rpc_client(
@@ -115,7 +121,7 @@ class PrekeyManager:
                     "profile": "anp.direct.e2ee.v1",
                     "security_profile": "transport-protected",
                     "sender_did": self._local_did,
-                    "operation_id": f"op-publish-{bundle.bundle_id}",
+                    "operation_id": operation_id,
                 },
                 "body": {
                     "prekey_bundle": bundle.to_dict(),
@@ -132,12 +138,12 @@ class PrekeyManager:
             )
             bundle = self.build_prekey_bundle(signed_prekey)
             if self._rpc_client is not None:
-                self.publish_prekey_bundle(bundle)
+                self.publish_prekey_bundle(bundle, f"op-publish-{bundle.bundle_id}")
             return bundle
         _, metadata = latest
         bundle = self.build_prekey_bundle(metadata)
         if self._rpc_client is not None:
-            self.publish_prekey_bundle(bundle)
+            self.publish_prekey_bundle(bundle, f"op-publish-{bundle.bundle_id}")
         return bundle
 
     @staticmethod

@@ -95,6 +95,31 @@ def test_prekey_bundle_round_trip(tmp_path: Path) -> None:
     PrekeyManager.verify_prekey_bundle(bundle, bob_doc)
 
 
+def test_publish_prekey_bundle_uses_explicit_operation_id(tmp_path: Path) -> None:
+    bob_doc, bob_keys = _build_identity("b.example", ["agents", "bob"])
+    bob_did = bob_doc["id"]
+    bob_signing_key, _ = _load_identity_keys(bob_keys)
+    rpc = FakeRpcClient({})
+    manager = PrekeyManager(
+        local_did=bob_did,
+        static_key_agreement_id=f"{bob_did}#key-3",
+        signing_private_key=bob_signing_key,
+        signing_verification_method=f"{bob_did}#key-1",
+        signed_prekey_store=FileSignedPrekeyStore(tmp_path / "spk"),
+        rpc_client=rpc,
+    )
+    _, signed_prekey = manager.generate_signed_prekey("spk-bob-001", "2026-04-07T00:00:00Z")
+    bundle = manager.build_prekey_bundle(signed_prekey, bundle_id="bundle-bob-001")
+
+    manager.publish_prekey_bundle(bundle, "op-publish-custom-001")
+    publish_params = rpc.calls[-1][1]
+    assert publish_params["meta"]["operation_id"] == "op-publish-custom-001"
+
+    ensured = manager.ensure_fresh_prekey_bundle()
+    publish_params = rpc.calls[-1][1]
+    assert publish_params["meta"]["operation_id"] == f"op-publish-{ensured.bundle_id}"
+
+
 def test_session_init_and_follow_up_round_trip(tmp_path: Path) -> None:
     alice_doc, alice_keys = _build_identity("a.example", ["agents", "alice"])
     bob_doc, bob_keys = _build_identity("b.example", ["agents", "bob"])
