@@ -266,6 +266,26 @@ pub struct V2InspectLocalGroupOutput {
     pub host_recheck_pending_count: u32,
 }
 
+/// One secret-free DID/device endpoint in the locally accepted MLS tree.
+///
+/// This is local product state, not an ANP wire object. Current P2 Manifest
+/// eligibility and P4 business membership remain product-layer checks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct V2LocalGroupMemberEndpoint {
+    pub member_did: String,
+    pub member_device_id: String,
+}
+
+/// Secret-free current endpoint inventory for one local P6 v2 group.
+///
+/// The output deliberately omits Leaf indexes, MLS signature keys, epochs,
+/// authenticators, Commit/Welcome bytes, and all private state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2ListLocalGroupMemberEndpointsOutput {
+    pub group_did: String,
+    pub member_endpoints: Vec<V2LocalGroupMemberEndpoint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct V2MembershipAuthenticatedData {
@@ -1153,6 +1173,115 @@ pub fn inspect_local_group_v2<S: GroupMlsStore>(
         readiness,
         auto_reconcile_pending_count: auto_reconcile,
         host_recheck_pending_count: host_recheck,
+    })
+}
+
+/// Lists the secret-free DID/device projection of the locally accepted tree.
+///
+/// Product integrations may compare this projection with current P2 Manifest
+/// eligibility and P4 membership when planning Add/Remove repair. They must not
+/// treat it as current authorization or read the SDK SQLite schema instead.
+pub fn list_local_group_member_endpoints_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2InspectLocalGroupInput,
+) -> GroupMlsOperationResult<V2ListLocalGroupMemberEndpointsOutput> {
+    let owner_scope = store.owner_scope().ok_or_else(|| {
+        operation_error(
+            "owner_scope_required",
+            "P6 v2 local member inspection requires an exact DID/device store scope",
+            &input.request_id,
+        )
+    })?;
+    validate_store_scope(
+        Some(&owner_scope),
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("group_did", &input.group_did, &input.request_id)?;
+    if !input.group_did.starts_with("did:") {
+        return Err(operation_error(
+            "invalid_field",
+            "group_did must be a DID",
+            &input.request_id,
+        ));
+    }
+
+    let scope = open_scope(store, &input.request_id)?;
+    let binding = active_binding(
+        &scope.app_conn,
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.group_did,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?
+    .ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "local P6 v2 group is not active",
+            &input.request_id,
+        )
+    })?;
+    let group = load_group(
+        &scope.provider,
+        &binding.openmls_group_id,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    ensure_group_head(&group, &binding, &input.group_did, &input.request_id)?;
+    let public_group = load_public_group(&scope, &group, &input.request_id)?;
+
+    let mut identities = Vec::new();
+    let mut member_endpoints = Vec::new();
+    for member in group.members() {
+        let member_index = member.index;
+        let credential = BasicCredential::try_from(member.credential).map_err(|_| {
+            operation_error(
+                "group.e2ee.did_binding_invalid",
+                "P6 v2 member credential must be a basic DID credential",
+                &input.request_id,
+            )
+        })?;
+        let credential_did = String::from_utf8(credential.identity().to_vec()).map_err(|_| {
+            operation_error(
+                "group.e2ee.did_binding_invalid",
+                "P6 v2 member credential identity must be a UTF-8 DID",
+                &input.request_id,
+            )
+        })?;
+        let leaf = public_group.leaf(member_index).ok_or_else(|| {
+            operation_error(
+                "group.e2ee.did_binding_invalid",
+                "member leaf is missing from the public group",
+                &input.request_id,
+            )
+        })?;
+        let (leaf_binding, evidence) = leaf_binding_evidence(leaf, &input.request_id)?;
+        if credential_did != leaf_binding.agent_did {
+            return Err(operation_error(
+                "group.e2ee.did_binding_invalid",
+                "member credential DID does not match the device-binding extension",
+                &input.request_id,
+            ));
+        }
+        identities.push(V2LeafIdentity {
+            agent_did: leaf_binding.agent_did.clone(),
+            device_id: leaf_binding.device_id.clone(),
+            leaf_signature_key_b64u: evidence.leaf_signature_key_b64u,
+        });
+        member_endpoints.push(V2LocalGroupMemberEndpoint {
+            member_did: leaf_binding.agent_did,
+            member_device_id: leaf_binding.device_id,
+        });
+    }
+    validate_leaf_identity_set_v2(&identities)
+        .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    member_endpoints.sort();
+
+    Ok(V2ListLocalGroupMemberEndpointsOutput {
+        group_did: input.group_did,
+        member_endpoints,
     })
 }
 

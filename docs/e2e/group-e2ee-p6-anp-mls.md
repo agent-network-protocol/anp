@@ -86,6 +86,15 @@ inspection API that returns only active/missing/inactive readiness and pending
 reconciliation counts. Products must not read the SDK SQLite schema or expose
 Leaf, epoch authenticator, Commit, Welcome, or private-state fields as status.
 
+Owner-side repair may use `list_local_group_member_endpoints_v2`, another
+local-only typed API. It returns a stable, secret-free list of accepted
+`(member_did, member_device_id)` endpoints so the product can compare current
+MLS membership with current P2 Manifest eligibility and P4 membership. The
+list is not current authorization, is not an ANP wire object, and exposes no
+Leaf index, MLS signature key, epoch, authenticator, Commit, Welcome, or private
+state. Products must still obtain and verify current DID documents before
+planning each Add or Remove.
+
 ## P6 v2 real-cryptography gate
 
 The vNext integration test uses the pinned OpenMLS 0.8 implementation together

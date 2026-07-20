@@ -9,10 +9,11 @@ use anp::authentication::{
 };
 use anp::group_e2ee::operations::v2::{
     abort_commit_v2, add_member_prepare_v2, create_group_prepare_v2, decrypt_v2, encrypt_v2,
-    finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2, process_commit_v2,
-    process_notice_v2, process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
-    V2AddMemberInput, V2CreateGroupInput, V2DecryptInput, V2DidDocument, V2EncryptInput,
-    V2FinalizeInput, V2GenerateKeyPackageInput, V2InspectLocalGroupInput, V2LocalGroupReadiness,
+    finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
+    list_local_group_member_endpoints_v2, process_commit_v2, process_notice_v2, process_welcome_v2,
+    reconcile_pending_v2, remove_member_prepare_v2, V2AddMemberInput, V2CreateGroupInput,
+    V2DecryptInput, V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
+    V2InspectLocalGroupInput, V2LocalGroupMemberEndpoint, V2LocalGroupReadiness,
     V2MembershipCommitMethod, V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput,
     V2ReconcilePendingInput, V2RemoveMemberInput,
 };
@@ -359,6 +360,20 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     assert_eq!(a2_missing.readiness, V2LocalGroupReadiness::Missing);
     assert_eq!(a2_missing.auto_reconcile_pending_count, 0);
     assert_eq!(a2_missing.host_recheck_pending_count, 0);
+    assert_eq!(
+        list_local_group_member_endpoints_v2(
+            &a2_store,
+            V2InspectLocalGroupInput {
+                owner_did: alice.did.clone(),
+                owner_device_id: a2_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-list-a2-before-welcome".to_owned(),
+            },
+        )
+        .expect_err("missing local MLS state has no current endpoint inventory")
+        .code,
+        "group.e2ee.state_not_ready"
+    );
     assert!(inspect_local_group_v2(
         &a2_store,
         V2InspectLocalGroupInput {
@@ -513,6 +528,23 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     .expect("secret-free inspect reports active local MLS state");
     assert_eq!(active_status.readiness, V2LocalGroupReadiness::Active);
     assert_eq!(active_status.host_recheck_pending_count, 0);
+    assert_eq!(
+        list_local_group_member_endpoints_v2(
+            &owner_store,
+            V2InspectLocalGroupInput {
+                owner_did: owner.did.clone(),
+                owner_device_id: owner_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-list-finalized-create".to_owned(),
+            },
+        )
+        .expect("created owner group exposes one secret-free endpoint")
+        .member_endpoints,
+        vec![V2LocalGroupMemberEndpoint {
+            member_did: owner.did.clone(),
+            member_device_id: owner_device.device_id.clone(),
+        }]
+    );
     assert_eq!(
         finalize_commit_v2(
             &owner_store,
@@ -934,6 +966,34 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         welcome_output
     );
 
+    assert_eq!(
+        list_local_group_member_endpoints_v2(
+            &owner_store,
+            V2InspectLocalGroupInput {
+                owner_did: owner.did.clone(),
+                owner_device_id: owner_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-list-after-a2-add".to_owned(),
+            },
+        )
+        .expect("current tree exposes each same-DID device endpoint once")
+        .member_endpoints,
+        vec![
+            V2LocalGroupMemberEndpoint {
+                member_did: alice.did.clone(),
+                member_device_id: a1_device.device_id.clone(),
+            },
+            V2LocalGroupMemberEndpoint {
+                member_did: alice.did.clone(),
+                member_device_id: a2_device.device_id.clone(),
+            },
+            V2LocalGroupMemberEndpoint {
+                member_did: owner.did.clone(),
+                member_device_id: owner_device.device_id.clone(),
+            },
+        ]
+    );
+
     assert!(decrypt_v2(
         &a2_store,
         V2DecryptInput {
@@ -1095,6 +1155,29 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     );
     assert_eq!(remove_echo_output.from_epoch, "2");
     assert_eq!(remove_echo_output.epoch, "3");
+    assert_eq!(
+        list_local_group_member_endpoints_v2(
+            &owner_store,
+            V2InspectLocalGroupInput {
+                owner_did: owner.did.clone(),
+                owner_device_id: owner_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-list-after-a2-remove".to_owned(),
+            },
+        )
+        .expect("exact-device Remove updates the local public endpoint projection")
+        .member_endpoints,
+        vec![
+            V2LocalGroupMemberEndpoint {
+                member_did: alice.did.clone(),
+                member_device_id: a1_device.device_id.clone(),
+            },
+            V2LocalGroupMemberEndpoint {
+                member_did: owner.did.clone(),
+                member_device_id: owner_device.device_id.clone(),
+            },
+        ]
+    );
 
     let future_meta = send_meta(&owner.did, &owner_device.device_id, "future");
     let future = encrypt_v2(
