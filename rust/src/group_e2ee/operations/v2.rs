@@ -141,6 +141,12 @@ struct V2SupersededKeyPackagePublishAttempt {
 
 type LoadedKeyPackagePublishOperation = (String, String, String, String, String);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnresolvedLegacyFamilyPolicy {
+    FailClosed,
+    Ignore,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V2CreateGroupInput {
     pub meta: crate::group_e2ee::V2ServiceMetadata,
@@ -473,6 +479,10 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
             ));
         }
         let mut journal = parse_key_package_publish_journal(&response_json, &input.request_id)?;
+        let needs_legacy_key_claim = status == "preparing"
+            && journal.generation == 0
+            && journal.body.is_none()
+            && journal.base_key_package_id.is_empty();
         hydrate_key_package_publish_family(&mut journal, &input, &stored_digest, &family_digest)?;
         validate_key_package_publish_family(&journal, &input, &family_digest)?;
         if status == "accepted" {
@@ -527,6 +537,21 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                     &input.request_id,
                 ));
             }
+            if needs_legacy_key_claim
+                && !claim_legacy_key_package_publish_family(
+                    &mut scope,
+                    &input,
+                    &stored_digest,
+                    &response_json,
+                    &journal,
+                )?
+            {
+                return Err(operation_error(
+                    "group.e2ee.commit_invalid",
+                    "legacy KeyPackage publish family was superseded by an existing wire-ID owner",
+                    &input.request_id,
+                ));
+            }
             resumes_preparing = true;
             journal
         }
@@ -536,6 +561,7 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
             &input.meta.operation_id,
             &input.key_package_id,
             None,
+            UnresolvedLegacyFamilyPolicy::FailClosed,
             &input.request_id,
         )? {
             return Err(operation_error(
@@ -1177,6 +1203,7 @@ fn key_package_publish_wire_ids_bound_elsewhere(
     wire_operation_id: &str,
     wire_key_package_id: &str,
     excluded_family_operation_id: Option<&str>,
+    unresolved_legacy_policy: UnresolvedLegacyFamilyPolicy,
     request_id: &str,
 ) -> GroupMlsOperationResult<bool> {
     let mut statement = conn
@@ -1198,17 +1225,23 @@ fn key_package_publish_wire_ids_bound_elsewhere(
         if excluded_family_operation_id == Some(family_operation_id.as_str()) {
             continue;
         }
+        if status == "superseded" {
+            continue;
+        }
         let journal = parse_key_package_publish_journal(&response_json, request_id)?;
         let current_key_package_matches = if let Some(body) = journal.body.as_ref() {
             body.group_key_package.key_package_id == wire_key_package_id
         } else if journal.base_key_package_id.is_empty() {
-            return Err(operation_error(
-                "group.e2ee.state_not_ready",
-                format!(
-                    "legacy {status} KeyPackage publish family has no recoverable key_package_id; retry its base operation before creating another family"
-                ),
-                request_id,
-            ));
+            if unresolved_legacy_policy == UnresolvedLegacyFamilyPolicy::FailClosed {
+                return Err(operation_error(
+                    "group.e2ee.state_not_ready",
+                    format!(
+                        "legacy {status} KeyPackage publish family has no recoverable key_package_id; retry its base operation before creating another family"
+                    ),
+                    request_id,
+                ));
+            }
+            false
         } else {
             key_package_publish_attempt_id(
                 "awiki.group-e2ee.key-package-publish.key-package.v1",
@@ -1288,6 +1321,92 @@ fn key_package_publish_attempt_expired(
         .transpose()
         .map_err(|err| operation_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
     Ok(now >= binding_expires || public_expires.is_some_and(|expires| now >= expires))
+}
+
+fn claim_legacy_key_package_publish_family(
+    scope: &mut GroupMlsOperationScope,
+    input: &V2PrepareKeyPackagePublishInput,
+    stored_digest: &str,
+    stored_response_json: &str,
+    journal: &V2KeyPackagePublishJournal,
+) -> GroupMlsOperationResult<bool> {
+    // Old bodyless journals do not retain their base KeyPackage ID. The
+    // device-store lock serializes recovery, and this transaction makes the
+    // first digest-valid retry the durable owner. A later conflicting retry is
+    // terminally superseded instead of adopting the first family's package.
+    let transaction = scope
+        .app_conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let current: Option<(String, String, String)> = transaction
+        .query_row(
+            "SELECT input_digest, response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if current
+        .as_ref()
+        .map(|(digest, response, status)| (digest.as_str(), response.as_str(), status.as_str()))
+        != Some((stored_digest, stored_response_json, "preparing"))
+    {
+        return Err(operation_error(
+            "state_locked",
+            "legacy KeyPackage publish family changed during recovery",
+            &input.request_id,
+        ));
+    }
+    let conflict = key_package_publish_wire_ids_bound_elsewhere(
+        &transaction,
+        &journal.meta.operation_id,
+        &journal.base_key_package_id,
+        Some(&journal.base_operation_id),
+        UnresolvedLegacyFamilyPolicy::Ignore,
+        &input.request_id,
+    )?;
+    let (next_response_json, next_status) = if conflict {
+        (stored_response_json.to_owned(), "superseded")
+    } else {
+        (
+            serialize_key_package_publish_journal(journal, &input.request_id)?,
+            "preparing",
+        )
+    };
+    transaction
+        .execute(
+            "UPDATE operations\n             SET response_json = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP\n             WHERE operation_id = ?1 AND command = ?4",
+            params![
+                &journal.base_operation_id,
+                &next_response_json,
+                next_status,
+                KEY_PACKAGE_PUBLISH_COMMAND,
+            ],
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let persisted: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
+            params![&journal.base_operation_id, KEY_PACKAGE_PUBLISH_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    if persisted
+        .as_ref()
+        .map(|(response, status)| (response.as_str(), status.as_str()))
+        != Some((next_response_json.as_str(), next_status))
+    {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "legacy KeyPackage publish recovery was not persisted",
+            &input.request_id,
+        ));
+    }
+    transaction
+        .commit()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    Ok(!conflict)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1395,6 +1514,7 @@ fn rotate_expired_key_package_publish_attempt(
         &journal.meta.operation_id,
         &next_key_package_id,
         Some(&journal.base_operation_id),
+        UnresolvedLegacyFamilyPolicy::FailClosed,
         &input.request_id,
     )? {
         return Err(operation_error(

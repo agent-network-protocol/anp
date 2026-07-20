@@ -1408,6 +1408,246 @@ fn key_package_publish_preparing_recovery_removes_orphan_private_bundles() {
 }
 
 #[test]
+fn legacy_publish_recovery_serializes_conflicting_family_ownership() {
+    let directory = TestDirectory::new();
+    let owner = make_did_fixture("legacy-family-recovery", &["legacy-family-device"]);
+    let device = &owner.devices[0];
+    let shared_key_package_id = "legacy-shared-package";
+    let make_input = |operation_id: &str, request_id: &str| {
+        let mut meta = service_meta(&owner.did, &device.device_id, operation_id);
+        meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
+        meta.created_at = None;
+        V2PrepareKeyPackagePublishInput {
+            meta,
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            verification_method: device.signing_key_id.clone(),
+            key_package_id: shared_key_package_id.to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: request_id.to_owned(),
+        }
+    };
+    let owner_input = make_input("legacy-owner-operation", "req-legacy-owner-prepare");
+    let loser_input = make_input("legacy-loser-operation", "req-legacy-loser-probe");
+
+    let probe_store = store(
+        &directory.path().join("probe"),
+        &owner.did,
+        &device.device_id,
+    );
+    let loser_probe = prepare_or_resume_key_package_publish_v2(
+        &probe_store,
+        loser_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let conn = Connection::open(probe_store.state_db_path()).unwrap();
+    let loser_digest: String = conn
+        .query_row(
+            "SELECT input_digest FROM group_mls_operations WHERE operation_id = ?1",
+            params![loser_input.meta.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    let loser_legacy_json = json!({
+        "journal_version": "v1",
+        "meta": loser_probe.meta,
+    })
+    .to_string();
+    let insert_legacy_loser = |conn: &Connection| {
+        conn.execute(
+            "INSERT INTO group_mls_operations(\n                 owner_identity_id, device_id, operation_id, command, input_digest,\n                 response_json, status\n             ) VALUES (?1, ?2, ?3, 'group.e2ee.publish-key-package.v2', ?4, ?5, 'preparing')",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                loser_input.meta.operation_id,
+                loser_digest,
+                loser_legacy_json,
+            ],
+        )
+        .unwrap();
+    };
+
+    let two_unknown_store = store(
+        &directory.path().join("two-unknown"),
+        &owner.did,
+        &device.device_id,
+    );
+    let owner_prepared = prepare_or_resume_key_package_publish_v2(
+        &two_unknown_store,
+        owner_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let conn = Connection::open(two_unknown_store.state_db_path()).unwrap();
+    let owner_legacy_json = json!({
+        "journal_version": "v1",
+        "meta": owner_prepared.meta,
+    })
+    .to_string();
+    conn.execute(
+        "UPDATE group_mls_operations SET response_json = ?2, status = 'preparing'\n         WHERE operation_id = ?1",
+        params![owner_input.meta.operation_id, owner_legacy_json],
+    )
+    .unwrap();
+    insert_legacy_loser(&conn);
+    drop(conn);
+
+    let mut owner_retry = owner_input.clone();
+    owner_retry.request_id = "req-legacy-owner-recover".to_owned();
+    let recovered_owner = prepare_or_resume_key_package_publish_v2(
+        &two_unknown_store,
+        owner_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("the first serialized valid legacy retry claims and recovers the package");
+    let mut loser_retry = loser_input.clone();
+    loser_retry.request_id = "req-legacy-loser-after-owner".to_owned();
+    let error = prepare_or_resume_key_package_publish_v2(
+        &two_unknown_store,
+        loser_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("the second conflicting legacy family cannot bind the same package");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+    let conn = Connection::open(two_unknown_store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT status FROM group_mls_operations WHERE operation_id = ?1",
+            params![loser_input.meta.operation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap(),
+        "superseded"
+    );
+    let owner_journal: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![owner_input.meta.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let loser_journal: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations WHERE operation_id = ?1",
+            params![loser_input.meta.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(serde_json::from_str::<Value>(&owner_journal).unwrap()["body"].is_object());
+    assert!(serde_json::from_str::<Value>(&loser_journal).unwrap()["body"].is_null());
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    accept_key_package_publish_v2(
+        &two_unknown_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: recovered_owner.meta.operation_id.clone(),
+            result: V2PublishKeyPackageResult {
+                published: true,
+                owner_did: owner.did.clone(),
+                owner_device_id: device.device_id.clone(),
+                key_package_id: recovered_owner
+                    .body
+                    .group_key_package
+                    .key_package_id
+                    .clone(),
+                published_at: NOW.to_owned(),
+            },
+            request_id: "req-legacy-owner-accept".to_owned(),
+        },
+    )
+    .expect("the claimed owner family remains exactly acceptable");
+
+    let completed_store = store(
+        &directory.path().join("completed-owner"),
+        &owner.did,
+        &device.device_id,
+    );
+    let completed = prepare_or_resume_key_package_publish_v2(
+        &completed_store,
+        owner_input.clone(),
+        &owner.document,
+        &signing_key(device),
+    )
+    .unwrap();
+    let completed_result = V2PublishKeyPackageResult {
+        published: true,
+        owner_did: owner.did.clone(),
+        owner_device_id: device.device_id.clone(),
+        key_package_id: completed.body.group_key_package.key_package_id.clone(),
+        published_at: NOW.to_owned(),
+    };
+    accept_key_package_publish_v2(
+        &completed_store,
+        V2AcceptKeyPackagePublishInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: device.device_id.clone(),
+            operation_id: completed.meta.operation_id.clone(),
+            result: completed_result.clone(),
+            request_id: "req-completed-owner-accept".to_owned(),
+        },
+    )
+    .unwrap();
+    let conn = Connection::open(completed_store.state_db_path()).unwrap();
+    insert_legacy_loser(&conn);
+    drop(conn);
+    let mut loser_again = loser_input;
+    loser_again.request_id = "req-legacy-loser-against-completed".to_owned();
+    let error = prepare_or_resume_key_package_publish_v2(
+        &completed_store,
+        loser_again,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect_err("an unknown legacy family cannot claim a completed family's package");
+    assert_eq!(error.code, "group.e2ee.commit_invalid");
+    let conn = Connection::open(completed_store.state_db_path()).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT status FROM group_mls_operations WHERE operation_id = ?1",
+            params!["legacy-loser-operation"],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap(),
+        "superseded"
+    );
+    drop(conn);
+    let mut completed_retry = owner_input;
+    completed_retry.request_id = "req-completed-owner-retry".to_owned();
+    let cached = prepare_or_resume_key_package_publish_v2(
+        &completed_store,
+        completed_retry,
+        &owner.document,
+        &signing_key(device),
+    )
+    .expect("the completed owner family remains intact");
+    assert_eq!(cached.accepted_result, Some(completed_result));
+}
+
+#[test]
 fn key_package_publish_validation_failure_does_not_retain_private_orphan() {
     let directory = TestDirectory::new();
     let owner = make_did_fixture("publish-validation-cleanup", &["publish-invalid-device"]);
