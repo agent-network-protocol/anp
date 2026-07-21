@@ -232,10 +232,10 @@ fn encode_signature_multibase(signature: &[u8]) -> String {
 }
 
 fn decode_signature_multibase(value: &str) -> Result<Vec<u8>, ProofError> {
-    if !value.starts_with(OBJECT_PROOF_SIGNATURE_MULTIBASE_PREFIX) {
-        return Err(ProofError::InvalidProofValue);
-    }
-    let signature = bs58::decode(value.trim_start_matches(OBJECT_PROOF_SIGNATURE_MULTIBASE_PREFIX))
+    let encoded = value
+        .strip_prefix(OBJECT_PROOF_SIGNATURE_MULTIBASE_PREFIX)
+        .ok_or(ProofError::InvalidProofValue)?;
+    let signature = bs58::decode(encoded)
         .into_vec()
         .map_err(|_| ProofError::InvalidProofValue)?;
     if signature.len() != 64 {
@@ -251,4 +251,24 @@ pub(crate) fn document_without_top_level_proof(document: &Value) -> Result<Value
         .ok_or_else(|| ProofError::InvalidProofField("document must be an object".to_string()))?
         .remove("proof");
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_signature_multibase, encode_signature_multibase};
+
+    #[test]
+    fn signature_multibase_decoder_removes_only_the_prefix() {
+        let signature = [
+            0x31, 0x86, 0xca, 0xbd, 0x6f, 0x33, 0x64, 0x72, 0xae, 0xe1, 0xe4, 0x4c, 0x0e, 0x65,
+            0xb8, 0xa4, 0x2f, 0xe3, 0x30, 0x1d, 0xdb, 0x19, 0x02, 0xd3, 0x86, 0xaa, 0xc7, 0xb9,
+            0x80, 0xba, 0xf4, 0xf2, 0x16, 0xb9, 0xb5, 0x34, 0xaf, 0x91, 0x59, 0xcc, 0x69, 0x11,
+            0x76, 0x91, 0x15, 0xd1, 0x83, 0x0f, 0xf4, 0x34, 0x84, 0xd3, 0x3b, 0x27, 0x0e, 0x4e,
+            0x81, 0xe4, 0x2f, 0xe7, 0x27, 0x37, 0xa7, 0x1d,
+        ];
+        let encoded = encode_signature_multibase(&signature);
+
+        assert!(encoded.starts_with("zz"));
+        assert_eq!(decode_signature_multibase(&encoded).unwrap(), signature);
+    }
 }
