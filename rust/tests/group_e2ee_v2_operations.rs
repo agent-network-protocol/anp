@@ -32,6 +32,8 @@ use anp::proof::{
     PROOF_TYPE_DATA_INTEGRITY,
 };
 use anp::PrivateKeyMaterial;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use openmls::prelude::{tls_codec::Deserialize as TlsDeserialize, MlsMessageIn, PrivateMessageIn};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
@@ -2457,6 +2459,12 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("encrypt pre-A2 history");
+    let raw_private_message = URL_SAFE_NO_PAD
+        .decode(&history.private_message_b64u)
+        .expect("decode raw MLS PrivateMessage");
+    PrivateMessageIn::tls_deserialize_exact(raw_private_message.clone())
+        .expect("P6 private_message_b64u is an exact raw MLS PrivateMessage");
+    assert!(MlsMessageIn::tls_deserialize_exact(raw_private_message).is_err());
     assert_eq!(
         decrypt_v2(
             &a1_store,

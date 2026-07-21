@@ -4166,8 +4166,18 @@ pub fn encrypt_v2<S: GroupMlsStore>(
         .map_err(|err| {
             mls_operation_error("group.e2ee.private_message_invalid", err, &input.request_id)
         })?;
+    let private_message = match message.body() {
+        MlsMessageBodyOut::PrivateMessage(private_message) => private_message,
+        _ => {
+            return Err(operation_error(
+                "group.e2ee.private_message_invalid",
+                "OpenMLS did not produce a PrivateMessage",
+                &input.request_id,
+            ))
+        }
+    };
     body.private_message_b64u = encode_tls(
-        &message,
+        private_message,
         "group.e2ee.private_message_invalid",
         &input.request_id,
     )?;
@@ -4250,7 +4260,7 @@ pub fn decrypt_v2<S: GroupMlsStore>(
             .map_err(|err| {
                 v2_error("group.e2ee.private_message_invalid", err, &input.request_id)
             })?;
-    let message = MlsMessageIn::tls_deserialize_exact(
+    let private_message = PrivateMessageIn::tls_deserialize_exact(
         decode_b64u(
             &input.group_cipher_object.private_message_b64u,
             &input.request_id,
@@ -4260,13 +4270,7 @@ pub fn decrypt_v2<S: GroupMlsStore>(
     .map_err(|err| {
         mls_operation_error("group.e2ee.private_message_invalid", err, &input.request_id)
     })?;
-    let protocol = message.try_into_protocol_message().map_err(|_| {
-        operation_error(
-            "group.e2ee.private_message_invalid",
-            "group cipher is not an MLS protocol message",
-            &input.request_id,
-        )
-    })?;
+    let protocol: ProtocolMessage = private_message.into();
     let processed = group
         .process_message(&scope.provider, protocol)
         .map_err(|err| {

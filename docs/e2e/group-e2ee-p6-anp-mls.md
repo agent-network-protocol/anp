@@ -73,6 +73,10 @@ merged twice.
 P4 membership, owner policy, service CAS and KeyPackage lease/consumption remain
 product and Group Host checks rather than local MLS checks.
 
+For P6 v2 application messages, `private_message_b64u` contains the base64url
+encoding of the raw TLS-serialized MLS `PrivateMessage`, not an enclosing
+OpenMLS `MlsMessage` wrapper. Decryption accepts only that exact raw form.
+
 Because OpenMLS storage and SDK metadata use separate SQLite connections, the
 v2 facade uses a recoverable write-ahead journal rather than claiming one SQL
 transaction across both providers. `reconcile_pending_v2` rolls back an
