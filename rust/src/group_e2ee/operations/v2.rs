@@ -45,6 +45,7 @@ use super::typed::{GroupMlsOperationError, GroupMlsOperationResult};
 const CRYPTO_GROUP_ID_LEN: usize = 32;
 const KEY_PACKAGE_PUBLISH_COMMAND: &str = "group.e2ee.publish-key-package.v2";
 const KEY_PACKAGE_PUBLISH_JOURNAL_VERSION: &str = "v1";
+const P6_V2_WIRE_FORMAT_POLICY: WireFormatPolicy = PURE_PLAINTEXT_WIRE_FORMAT_POLICY;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V2DidDocument {
@@ -4792,6 +4793,7 @@ fn v2_group_create_config(
     let extension_type = ExtensionType::Unknown(DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2);
     let config = MlsGroupCreateConfig::builder()
         .ciphersuite(ciphersuite())
+        .wire_format_policy(P6_V2_WIRE_FORMAT_POLICY)
         .capabilities(v2_capabilities())
         .with_leaf_node_extensions(binding_extensions(binding, request_id)?)
         .map_err(|err| mls_operation_error("group.e2ee.did_binding_invalid", err, request_id))?
@@ -4808,6 +4810,7 @@ fn v2_group_create_config(
 
 fn v2_group_join_config() -> MlsGroupJoinConfig {
     MlsGroupJoinConfig::builder()
+        .wire_format_policy(P6_V2_WIRE_FORMAT_POLICY)
         .use_ratchet_tree_extension(true)
         .build()
 }
@@ -5174,5 +5177,26 @@ fn operation_error(
         code: code.into(),
         message: message.to_string(),
         request_id: Some(request_id.to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn p6_v2_handshake_policy_requires_public_messages() {
+        assert_eq!(
+            P6_V2_WIRE_FORMAT_POLICY.outgoing(),
+            OutgoingWireFormatPolicy::AlwaysPlaintext
+        );
+        assert_eq!(
+            P6_V2_WIRE_FORMAT_POLICY.incoming(),
+            IncomingWireFormatPolicy::AlwaysPlaintext
+        );
+        assert_eq!(
+            v2_group_join_config().wire_format_policy(),
+            P6_V2_WIRE_FORMAT_POLICY
+        );
     }
 }

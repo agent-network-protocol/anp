@@ -33,7 +33,10 @@ use anp::proof::{
 };
 use anp::PrivateKeyMaterial;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use openmls::prelude::{tls_codec::Deserialize as TlsDeserialize, MlsMessageIn, PrivateMessageIn};
+use openmls::prelude::{
+    tls_codec::Deserialize as TlsDeserialize, ContentType, MlsMessageBodyIn, MlsMessageIn,
+    PrivateMessageIn, WireFormat,
+};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
@@ -372,6 +375,21 @@ fn force_pending_status(store: &ImCoreSqliteGroupMlsStore, pending_commit_id: &s
         .expect("set simulated crash journal state"),
         1
     );
+}
+
+fn assert_public_commit(commit_b64u: &str) {
+    let commit = URL_SAFE_NO_PAD
+        .decode(commit_b64u)
+        .expect("decode full MLS Commit message");
+    let message = MlsMessageIn::tls_deserialize_exact(commit)
+        .expect("commit_b64u is an exact full MLSMessage");
+    assert_eq!(message.wire_format(), WireFormat::PublicMessage);
+    match message.extract() {
+        MlsMessageBodyIn::PublicMessage(public_message) => {
+            assert_eq!(public_message.content_type(), ContentType::Commit);
+        }
+        body => panic!("commit_b64u is not an MLS PublicMessage Commit: {body:?}"),
+    }
 }
 
 #[test]
@@ -2270,6 +2288,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("prepare A1 Add");
+    assert_public_commit(&add_a1.body.commit_b64u);
     force_pending_status(&owner_store, &add_a1.pending_commit_id, "accepted");
     let restarted_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
     let reconciled = reconcile_pending_v2(
@@ -2915,6 +2934,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("prepare exact A2 Remove after A2 loses current Manifest eligibility");
+    assert_public_commit(&remove_a2.body.commit_b64u);
     let restarted_remove_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
     let remove_after_restart = reconcile_pending_v2(
         &restarted_remove_owner_store,
