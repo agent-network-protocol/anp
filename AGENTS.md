@@ -15,6 +15,8 @@ Follow Google Python Style: four-space indentation, type hints, and Google-style
 ## Testing Guidelines
 All new logic must arrive with pytest coverage under the mirrored `anp/unittest` path, naming files `test_<area>.py` and functions `test_<behavior>`. Mark async tests with `@pytest.mark.asyncio`. Before review, run `uv run pytest --cov=anp` and ensure new branches are exercised. Add scenario checks in `examples/` whenever protocol behavior changes or interoperability could regress.
 
+Any code addition or modification must, in the same task, add or update the corresponding unit tests, system tests, and end-to-end (E2E) tests. Keep each test in its owning repository or harness; when a required test layer is owned by another repository, update that repository in the same task.
+
 ## Commit & Pull Request Guidelines
 Author imperative commit subjects (e.g., `Add credential signer`) and reference issues like `#42` when relevant. Pull requests should summarize behavior changes, risks, validation commands, and any compatibility impacts. Attach logs or screenshots for user-visible updates, confirm CI success, and call out follow-up work explicitly to keep reviewers aligned.
 
