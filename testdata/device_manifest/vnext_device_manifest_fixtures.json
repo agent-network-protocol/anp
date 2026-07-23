@@ -9,27 +9,43 @@
     "verificationMethod": [
       {
         "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
-        "type": "Multikey",
+        "type": "JsonWebKey2020",
         "controller": "did:wba:example.com:agents:alice:e1_fixture",
-        "publicKeyMultibase": "zDevASign"
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+        }
       },
       {
         "id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
-        "type": "Multikey",
+        "type": "JsonWebKey2020",
         "controller": "did:wba:example.com:agents:alice:e1_fixture",
-        "publicKeyMultibase": "zDevAE2EE"
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI"
+        }
       },
       {
         "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
-        "type": "Multikey",
+        "type": "JsonWebKey2020",
         "controller": "did:wba:example.com:agents:alice:e1_fixture",
-        "publicKeyMultibase": "zDevBSign"
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+        }
       },
       {
         "id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
-        "type": "Multikey",
+        "type": "JsonWebKey2020",
         "controller": "did:wba:example.com:agents:alice:e1_fixture",
-        "publicKeyMultibase": "zDevBE2EE"
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ"
+        }
       },
       {
         "id": "did:wba:other.example:agents:mallory#foreign-sign",

@@ -4,11 +4,13 @@ import base64
 import unittest
 
 import base58
-from cryptography.hazmat.primitives.asymmetric import ec, utils
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils, x25519
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from anp.authentication.verification_methods import (
     EcdsaSecp256r1VerificationKey2019,
+    Ed25519VerificationKey2018,
     X25519KeyAgreementKey2019,
     create_verification_method,
 )
@@ -186,12 +188,97 @@ class TestX25519KeyAgreementKey(unittest.TestCase):
 
     def test_from_dict_no_multibase_raises(self):
         """Missing publicKeyMultibase should raise ValueError."""
+        encoded = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
         method_dict = {
             "type": "X25519KeyAgreementKey2019",
-            "publicKeyJwk": {"kty": "OKP"},
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "X25519",
+                "x": encoded,
+            },
         }
         with self.assertRaises(ValueError):
             X25519KeyAgreementKey2019.from_dict(method_dict)
+
+
+class TestJsonWebKey2020Okp(unittest.TestCase):
+    """Test JsonWebKey2020 with the OKP curves used by device manifests."""
+
+    def test_factory_creates_ed25519_verifier(self):
+        """JsonWebKey2020 Ed25519 keys should verify signatures."""
+        private_key = ed25519.Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(
+            Encoding.Raw,
+            PublicFormat.Raw,
+        )
+        method_dict = {
+            "type": "JsonWebKey2020",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": base64.urlsafe_b64encode(public_key).rstrip(b"=").decode(),
+            },
+        }
+
+        vm = create_verification_method(method_dict)
+        content = b"device manifest signing request"
+        signature = Ed25519VerificationKey2018.encode_signature(
+            private_key.sign(content)
+        )
+
+        self.assertIsInstance(vm, Ed25519VerificationKey2018)
+        self.assertTrue(vm.verify_signature(content, signature))
+
+    def test_factory_creates_x25519_key_agreement(self):
+        """JsonWebKey2020 X25519 keys should remain key-agreement-only."""
+        public_key = x25519.X25519PrivateKey.generate().public_key().public_bytes(
+            Encoding.Raw,
+            PublicFormat.Raw,
+        )
+        method_dict = {
+            "type": "JsonWebKey2020",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "X25519",
+                "x": base64.urlsafe_b64encode(public_key).rstrip(b"=").decode(),
+            },
+        }
+
+        vm = create_verification_method(method_dict)
+
+        self.assertIsInstance(vm, X25519KeyAgreementKey2019)
+        with self.assertRaises(NotImplementedError):
+            vm.verify_signature(b"test", "signature")
+
+    def test_rejects_noncanonical_or_private_okp_jwk(self):
+        """Public device keys must be canonical public-only JWKs."""
+        encoded = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
+        for invalid_jwk in (
+            {"kty": "OKP", "crv": "Ed25519", "x": encoded + "="},
+            {"kty": "OKP", "crv": "Ed25519", "x": encoded, "d": encoded},
+            {"kty": "OKP", "crv": "X25519", "x": encoded, "d": encoded},
+        ):
+            with self.subTest(jwk=invalid_jwk):
+                with self.assertRaises(ValueError):
+                    create_verification_method({
+                        "type": "JsonWebKey2020",
+                        "publicKeyJwk": invalid_jwk,
+                    })
+
+    def test_rejects_ambiguous_json_web_key_2020_material(self):
+        """JsonWebKey2020 must not silently choose one of multiple key fields."""
+        encoded = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
+
+        with self.assertRaises(ValueError):
+            create_verification_method({
+                "type": "JsonWebKey2020",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": encoded,
+                },
+                "publicKeyMultibase": "zambiguous",
+            })
 
 
 if __name__ == "__main__":

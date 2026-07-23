@@ -177,13 +177,23 @@ pub fn find_eligible_device(
     ) {
         return Ok(None);
     }
-    Ok(manifest.devices.into_iter().find(|device| {
+    let selected = manifest.devices.into_iter().find(|device| {
         device.device_id == device_id
             && device
                 .profiles
                 .iter()
                 .any(|profile| profile == required_profile)
-    }))
+    });
+    if let Some(device) = &selected {
+        let did = did_document
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("DID document id must be a non-empty string"))?;
+        let signing_method = unique_method(did_document, &device.signing_key_id)?;
+        let e2ee_method = unique_method(did_document, &device.e2ee_key_id)?;
+        validate_device_key_roles(did, device, signing_method, e2ee_method)?;
+    }
+    Ok(selected)
 }
 
 /// Build an unsigned vNext DID document from public key material only.
@@ -461,6 +471,15 @@ fn validate_device_methods(
     if device.signing_key_id == root_key_id || device.e2ee_key_id == root_key_id {
         return Err(invalid("DID root key cannot be a device key"));
     }
+    validate_device_key_roles(did, device, signing_method, e2ee_method)
+}
+
+fn validate_device_key_roles(
+    did: &str,
+    device: &DeviceManifestEntry,
+    signing_method: &Value,
+    e2ee_method: &Value,
+) -> Result<(PublicKeyIdentity, PublicKeyIdentity), DeviceManifestError> {
     let signing_identity = validate_public_method(
         did,
         &device.signing_key_id,

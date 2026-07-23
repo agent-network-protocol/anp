@@ -132,12 +132,87 @@ fn duplicate_verification_method_resolution_is_rejected() {
     assert!(validate_device_manifest(&document).is_err());
 }
 
+#[test]
+fn p5_lookup_rejects_wrong_device_key_algorithms() {
+    let fixtures = load_fixtures();
+    let fixture = &fixtures.valid[0];
+    for (key_id_suffix, wrong_curve, wrong_x) in [
+        (
+            "#dev-a-sign",
+            "X25519",
+            "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+        ),
+        (
+            "#dev-a-e2ee",
+            "Ed25519",
+            "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        ),
+    ] {
+        let mut document = document_with_manifest(
+            &fixtures.base_did_document,
+            &fixture.device_manifest,
+            &Map::new(),
+        );
+        let method = verification_method_mut(&mut document, key_id_suffix);
+        method["publicKeyJwk"]["crv"] = Value::String(wrong_curve.to_owned());
+        method["publicKeyJwk"]["x"] = Value::String(wrong_x.to_owned());
+
+        assert!(
+            find_eligible_device(
+                &document,
+                &fixture.lookup.device_id,
+                &fixture.lookup.profile,
+            )
+            .is_err(),
+            "{key_id_suffix} with {wrong_curve} must not be P5 eligible",
+        );
+    }
+}
+
+#[test]
+fn p5_lookup_rejects_reused_raw_key_material_across_device_roles() {
+    let fixtures = load_fixtures();
+    let fixture = &fixtures.valid[0];
+    let mut document = document_with_manifest(
+        &fixtures.base_did_document,
+        &fixture.device_manifest,
+        &Map::new(),
+    );
+    let signing_x =
+        verification_method_mut(&mut document, "#dev-a-sign")["publicKeyJwk"]["x"].clone();
+    verification_method_mut(&mut document, "#dev-a-e2ee")["publicKeyJwk"]["x"] = signing_x;
+
+    assert!(
+        find_eligible_device(
+            &document,
+            &fixture.lookup.device_id,
+            &fixture.lookup.profile,
+        )
+        .is_err(),
+        "P5 signing and E2EE roles must not reuse the same raw public key",
+    );
+}
+
 fn assert_manifest_serializes_to_fixture(name: &str, manifest: &DeviceManifest, expected: &Value) {
     assert_eq!(
         serde_json::to_value(manifest).expect("Manifest should serialize"),
         *expected,
         "{name} typed Manifest round trip",
     );
+}
+
+fn verification_method_mut<'a>(document: &'a mut Value, key_id_suffix: &str) -> &'a mut Value {
+    document["verificationMethod"]
+        .as_array_mut()
+        .expect("verificationMethod fixture array")
+        .iter_mut()
+        .find(|method| {
+            method
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|key_id| key_id.ends_with(key_id_suffix))
+        })
+        .expect("fixture verification method")
 }
 
 fn document_with_manifest(base: &Value, manifest: &Value, patch: &Map<String, Value>) -> Value {

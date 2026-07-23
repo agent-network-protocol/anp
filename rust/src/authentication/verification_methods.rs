@@ -1,7 +1,9 @@
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::keys::{base64url_decode, decode_signature_bytes, encode_signature_bytes};
+use crate::keys::{
+    base64url_decode, base64url_encode, decode_signature_bytes, encode_signature_bytes,
+};
 use crate::PublicKeyMaterial;
 
 #[derive(Debug, Error)]
@@ -134,9 +136,22 @@ fn extract_secp256r1_key(
 fn extract_ec_jwk_key(
     object: &serde_json::Map<String, Value>,
 ) -> Result<PublicKeyMaterial, VerificationMethodError> {
+    let material_count = ["publicKeyJwk", "publicKeyMultibase", "publicKeyBase58"]
+        .into_iter()
+        .filter(|field| object.contains_key(*field))
+        .count();
+    if material_count != 1 {
+        return Err(VerificationMethodError::InvalidKeyMaterial);
+    }
     let jwk = object
         .get("publicKeyJwk")
         .ok_or(VerificationMethodError::MissingKeyMaterial)?;
+    if jwk
+        .as_object()
+        .is_some_and(|object| object.contains_key("d"))
+    {
+        return Err(VerificationMethodError::InvalidKeyMaterial);
+    }
     let crv = jwk
         .get("crv")
         .and_then(Value::as_str)
@@ -144,8 +159,46 @@ fn extract_ec_jwk_key(
     match crv {
         "secp256k1" => extract_ec_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256k1),
         "P-256" => extract_p256_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256r1),
+        "Ed25519" => extract_okp_key_from_jwk(jwk, crv).and_then(|bytes| {
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+                .map(PublicKeyMaterial::Ed25519)
+                .map_err(|_| VerificationMethodError::InvalidKeyMaterial)
+        }),
+        "X25519" => extract_okp_key_from_jwk(jwk, crv).map(PublicKeyMaterial::X25519),
         _ => Err(VerificationMethodError::UnsupportedType(crv.to_string())),
     }
+}
+
+fn extract_okp_key_from_jwk(
+    jwk: &Value,
+    expected_curve: &str,
+) -> Result<[u8; 32], VerificationMethodError> {
+    let object = jwk
+        .as_object()
+        .ok_or(VerificationMethodError::InvalidKeyMaterial)?;
+    if object.get("kty").and_then(Value::as_str) != Some("OKP")
+        || object.get("crv").and_then(Value::as_str) != Some(expected_curve)
+    {
+        return Err(VerificationMethodError::InvalidKeyMaterial);
+    }
+    let encoded = object
+        .get("x")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+        .ok_or(VerificationMethodError::InvalidKeyMaterial)?;
+    let bytes =
+        base64url_decode(encoded).map_err(|_| VerificationMethodError::InvalidKeyMaterial)?;
+    if bytes.len() != 32 || base64url_encode(&bytes) != encoded {
+        return Err(VerificationMethodError::InvalidKeyMaterial);
+    }
+    bytes
+        .try_into()
+        .map_err(|_| VerificationMethodError::InvalidKeyMaterial)
 }
 
 fn extract_ed25519_key(
@@ -260,4 +313,106 @@ fn decode_coordinate(value: Option<&str>) -> Result<[u8; 32], VerificationMethod
     bytes
         .try_into()
         .map_err(|_| VerificationMethodError::InvalidKeyMaterial)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_ed25519_from_json_web_key_2020_okp_jwk() {
+        let expected = ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32]).verifying_key();
+        let encoded = base64url_encode(expected.as_bytes());
+        let method = json!({
+            "id": "did:wba:example.test:alice#device-sign",
+            "type": "JsonWebKey2020",
+            "controller": "did:wba:example.test:alice",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": encoded,
+            },
+        });
+
+        assert!(matches!(
+            extract_public_key(&method).unwrap(),
+            PublicKeyMaterial::Ed25519(key) if key == expected
+        ));
+    }
+
+    #[test]
+    fn extracts_x25519_from_json_web_key_2020_okp_jwk() {
+        let encoded = base64url_encode(&[9_u8; 32]);
+        let method = json!({
+            "id": "did:wba:example.test:alice#device-e2ee",
+            "type": "JsonWebKey2020",
+            "controller": "did:wba:example.test:alice",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "X25519",
+                "x": encoded,
+            },
+        });
+
+        assert!(matches!(
+            extract_public_key(&method).unwrap(),
+            PublicKeyMaterial::X25519(bytes) if bytes == [9_u8; 32]
+        ));
+    }
+
+    #[test]
+    fn rejects_private_or_ambiguous_json_web_key_2020_okp_jwk() {
+        let encoded = base64url_encode(&[11_u8; 32]);
+        for method in [
+            json!({
+                "type": "JsonWebKey2020",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": encoded,
+                    "d": encoded,
+                },
+            }),
+            json!({
+                "type": "JsonWebKey2020",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "X25519",
+                    "x": encoded,
+                    "d": encoded,
+                },
+            }),
+            json!({
+                "type": "JsonWebKey2020",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": encoded,
+                },
+                "publicKeyMultibase": "zambiguous",
+            }),
+        ] {
+            assert!(matches!(
+                extract_public_key(&method),
+                Err(VerificationMethodError::InvalidKeyMaterial)
+            ));
+        }
+    }
+
+    #[test]
+    fn x25519_json_web_key_2020_cannot_verify_signatures() {
+        let method = json!({
+            "id": "did:wba:example.test:alice#device-e2ee",
+            "type": "JsonWebKey2020",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "X25519",
+                "x": base64url_encode(&[13_u8; 32]),
+            },
+        });
+
+        let method = create_verification_method(&method).unwrap();
+        assert!(method.verify_signature(b"message", "AA").is_err());
+    }
 }

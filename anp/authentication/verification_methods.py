@@ -5,7 +5,7 @@ from typing import Dict
 
 import base58
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils, x25519
 
 # Define supported curve mapping
 CURVE_MAPPING = {
@@ -14,6 +14,24 @@ CURVE_MAPPING = {
     'P-384': ec.SECP384R1(),
     'P-521': ec.SECP521R1(),
 }
+
+
+def _decode_canonical_base64url_32(value: object) -> bytes:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(not (char.isalnum() or char in "_-") for char in value)
+    ):
+        raise ValueError("Public JWK x must be unpadded base64url")
+    try:
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except Exception as exc:
+        raise ValueError("Public JWK x is invalid base64url") from exc
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if len(decoded) != 32 or canonical != value:
+        raise ValueError("Public JWK x must canonically encode 32 bytes")
+    return decoded
+
 
 class VerificationMethod(ABC):
     """Abstract base class for verification methods"""
@@ -281,9 +299,14 @@ class Ed25519VerificationKey2018(VerificationMethod):
 
     @staticmethod
     def _extract_public_key_from_jwk(jwk: Dict) -> ed25519.Ed25519PublicKey:
-        if jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519':
+        if (
+            not isinstance(jwk, dict)
+            or jwk.get('kty') != 'OKP'
+            or jwk.get('crv') != 'Ed25519'
+            or 'd' in jwk
+        ):
             raise ValueError("Invalid JWK parameters for Ed25519")
-        key_bytes = base64.urlsafe_b64decode(jwk['x'] + '=' * (-len(jwk['x']) % 4))
+        key_bytes = _decode_canonical_base64url_32(jwk.get('x'))
         return ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
 
     @staticmethod
@@ -315,6 +338,33 @@ def create_verification_method(method_dict: Dict) -> VerificationMethod:
     if not method_type:
         raise ValueError("Missing verification method type")
         
+    if method_type == 'JsonWebKey2020':
+        material_fields = (
+            'publicKeyJwk',
+            'publicKeyMultibase',
+            'publicKeyBase58',
+        )
+        if sum(field in method_dict for field in material_fields) != 1:
+            raise ValueError(
+                "JsonWebKey2020 requires exactly one public key field"
+            )
+        jwk = method_dict.get('publicKeyJwk')
+        if not isinstance(jwk, dict):
+            raise ValueError("JsonWebKey2020 requires publicKeyJwk")
+        key_type = jwk.get('kty')
+        curve = jwk.get('crv')
+        if key_type == 'OKP' and curve == 'Ed25519':
+            return Ed25519VerificationKey2018.from_dict(method_dict)
+        if key_type == 'OKP' and curve == 'X25519':
+            if 'd' in jwk:
+                raise ValueError("Invalid JWK parameters for X25519")
+            return X25519KeyAgreementKey2019(
+                x25519.X25519PublicKey.from_public_bytes(
+                    _decode_canonical_base64url_32(jwk.get('x'))
+                )
+            )
+        raise ValueError("Unsupported JsonWebKey2020 public key")
+
     method_mapping = {
         'EcdsaSecp256k1VerificationKey2019': EcdsaSecp256k1VerificationKey2019,
         'EcdsaSecp256r1VerificationKey2019': EcdsaSecp256r1VerificationKey2019,
