@@ -436,3 +436,121 @@ fn v2_bundle_proof_covers_owner_device_and_all_static_fields() {
     )
     .is_err());
 }
+
+#[test]
+fn v2_bundle_proof_accepts_join_style_okp_jwk_device_keys() {
+    let generated = create_did_wba_document(
+        "bundle-v2.example",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_owned(), "joined".to_owned()],
+            did_profile: DidProfile::E1,
+            ..Default::default()
+        },
+    )
+    .expect("DID document");
+    let did = generated.did().expect("DID").to_owned();
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[23_u8; 32]);
+    let signing_private = PrivateKeyMaterial::Ed25519(signing_key.clone());
+    let agreement_private = X25519StaticSecret::from([29_u8; 32]);
+    let signing_key_id = format!("{did}#dev-joined-sign");
+    let agreement_key_id = format!("{did}#dev-joined-e2ee");
+
+    let mut document = generated.did_document.clone();
+    document
+        .as_object_mut()
+        .expect("document object")
+        .remove("proof");
+    document["verificationMethod"]
+        .as_array_mut()
+        .expect("verification methods")
+        .extend([
+            json!({
+                "id": signing_key_id,
+                "type": "JsonWebKey2020",
+                "controller": did,
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes()),
+                },
+            }),
+            json!({
+                "id": agreement_key_id,
+                "type": "JsonWebKey2020",
+                "controller": did,
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "X25519",
+                    "x": URL_SAFE_NO_PAD.encode(
+                        x25519_dalek::PublicKey::from(&agreement_private).to_bytes()
+                    ),
+                },
+            }),
+        ]);
+    document["authentication"]
+        .as_array_mut()
+        .expect("authentication")
+        .push(Value::String(signing_key_id.clone()));
+    document["assertionMethod"]
+        .as_array_mut()
+        .expect("assertion methods")
+        .push(Value::String(signing_key_id.clone()));
+    document["keyAgreement"]
+        .as_array_mut()
+        .expect("key agreement")
+        .push(Value::String(agreement_key_id.clone()));
+    document["deviceManifest"] = json!({
+        "type": "ANPDeviceManifest",
+        "devices": [{
+            "device_id": "dev-joined",
+            "signing_key_id": signing_key_id,
+            "e2ee_key_id": agreement_key_id,
+            "profiles": [
+                "anp.core.binding.v2",
+                "anp.identity.discovery.v2",
+                "anp.direct.base.v2",
+                "anp.direct.e2ee.v2"
+            ]
+        }]
+    });
+    let root_signing_key = PrivateKeyMaterial::from_pem(&generated.keys["key-1"].private_key_pem)
+        .expect("root signing key");
+    document = generate_w3c_proof(
+        &document,
+        &root_signing_key,
+        &format!("{did}#key-1"),
+        ProofGenerationOptions {
+            proof_purpose: Some("assertionMethod".to_owned()),
+            proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_owned()),
+            cryptosuite: Some(CRYPTOSUITE_EDDSA_JCS_2022.to_owned()),
+            created: Some("2026-07-19T00:00:00Z".to_owned()),
+            ..Default::default()
+        },
+    )
+    .expect("resigned DID document");
+
+    let signed_prekey_private = X25519StaticSecret::from([31_u8; 32]);
+    let bundle = build_prekey_bundle_v2(
+        "bundle-joined",
+        &did,
+        "dev-joined",
+        &agreement_key_id,
+        V2SignedPrekey {
+            key_id: "spk-joined".to_owned(),
+            public_key_b64u: URL_SAFE_NO_PAD
+                .encode(x25519_dalek::PublicKey::from(&signed_prekey_private).to_bytes()),
+            expires_at: "2035-01-01T00:00:00Z".to_owned(),
+        },
+        &signing_private,
+        &signing_key_id,
+        Some("2026-07-19T00:00:00Z"),
+    )
+    .expect("joined-device bundle");
+
+    anp::direct_e2ee::verify_prekey_bundle_v2(
+        &bundle,
+        &document,
+        Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 1).unwrap(),
+    )
+    .expect("Join-style OKP JWK bundle");
+}

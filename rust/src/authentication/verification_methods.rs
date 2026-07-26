@@ -92,7 +92,7 @@ pub fn extract_public_key(
             extract_ed25519_key(object)
         }
         "X25519KeyAgreementKey2019" => extract_x25519_key(object),
-        "JsonWebKey2020" => extract_ec_jwk_key(object),
+        "JsonWebKey2020" => extract_jwk_key(object),
         other => Err(VerificationMethodError::UnsupportedType(other.to_string())),
     }
 }
@@ -131,19 +131,32 @@ fn extract_secp256r1_key(
     Err(VerificationMethodError::MissingKeyMaterial)
 }
 
-fn extract_ec_jwk_key(
+fn extract_jwk_key(
     object: &serde_json::Map<String, Value>,
 ) -> Result<PublicKeyMaterial, VerificationMethodError> {
     let jwk = object
         .get("publicKeyJwk")
         .ok_or(VerificationMethodError::MissingKeyMaterial)?;
+    let kty = jwk
+        .get("kty")
+        .and_then(Value::as_str)
+        .ok_or(VerificationMethodError::InvalidKeyMaterial)?;
     let crv = jwk
         .get("crv")
         .and_then(Value::as_str)
         .ok_or(VerificationMethodError::InvalidKeyMaterial)?;
-    match crv {
-        "secp256k1" => extract_ec_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256k1),
-        "P-256" => extract_p256_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256r1),
+    match (kty, crv) {
+        ("EC", "secp256k1") => extract_ec_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256k1),
+        ("EC", "P-256") => extract_p256_key_from_jwk(jwk, crv).map(PublicKeyMaterial::Secp256r1),
+        ("OKP", "Ed25519") => {
+            let bytes = decode_coordinate(jwk.get("x").and_then(Value::as_str))?;
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+                .map(PublicKeyMaterial::Ed25519)
+                .map_err(|_| VerificationMethodError::InvalidKeyMaterial)
+        }
+        ("OKP", "X25519") => {
+            decode_coordinate(jwk.get("x").and_then(Value::as_str)).map(PublicKeyMaterial::X25519)
+        }
         _ => Err(VerificationMethodError::UnsupportedType(crv.to_string())),
     }
 }
