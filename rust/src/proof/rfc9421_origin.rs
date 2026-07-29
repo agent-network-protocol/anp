@@ -398,6 +398,7 @@ mod tests {
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions};
     use crate::PrivateKeyMaterial;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use serde_json::json;
 
     #[test]
@@ -499,6 +500,68 @@ mod tests {
                 .map(|component| (*component).to_owned())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn verifies_joined_device_origin_proof_with_okp_jwk() {
+        let did = "did:wba:example.com:user:alice:e1_joined";
+        let key_id = format!("{did}#dev-joined-sign");
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[41_u8; 32]);
+        let private_key = PrivateKeyMaterial::Ed25519(signing_key.clone());
+        let did_document = json!({
+            "id": did,
+            "verificationMethod": [{
+                "id": key_id,
+                "type": "JsonWebKey2020",
+                "controller": did,
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes())
+                }
+            }],
+            "authentication": [key_id],
+            "assertionMethod": [key_id]
+        });
+        let meta = json!({
+            "anp_version": "1.0",
+            "profile": "anp.direct.base.v1",
+            "security_profile": "transport-protected",
+            "sender_did": did,
+            "target": {"kind": "agent", "did": "did:wba:example.com:agent:bob:e1_bob"},
+            "operation_id": "op-joined-1",
+            "message_id": "msg-joined-1",
+            "content_type": "text/plain"
+        });
+        let body = json!({"text": "hello from joined device"});
+        let proof = generate_rfc9421_origin_proof(
+            "direct.send",
+            &meta,
+            &body,
+            &private_key,
+            &key_id,
+            Rfc9421OriginProofGenerationOptions {
+                created: Some(1_712_000_000),
+                nonce: Some("nonce-joined-1".to_owned()),
+                ..Rfc9421OriginProofGenerationOptions::default()
+            },
+        )
+        .expect("joined-device origin proof should generate");
+
+        let verified = verify_rfc9421_origin_proof(
+            &proof,
+            "direct.send",
+            &meta,
+            &body,
+            Rfc9421OriginProofVerificationOptions {
+                did_document: Some(did_document),
+                expected_signer_did: Some(did.to_owned()),
+                ..Rfc9421OriginProofVerificationOptions::default()
+            },
+        )
+        .expect("joined-device OKP JWK origin proof should verify");
+
+        assert_eq!(verified.parsed_signature_input.keyid, key_id);
     }
 
     #[test]

@@ -665,6 +665,12 @@ fn decode_public_multikey(
             "{subject}.publicKeyMultibase must be canonical"
         )));
     }
+    if method_type == "X25519KeyAgreementKey2019" && decoded.len() == 32 {
+        return Ok(PublicKeyIdentity {
+            algorithm: PublicKeyAlgorithm::X25519,
+            raw_public_key: decoded,
+        });
+    }
     if decoded.len() != 34 {
         return Err(invalid(format!(
             "{subject}.publicKeyMultibase must contain a 32-byte key"
