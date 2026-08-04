@@ -357,9 +357,9 @@ fn v2_bundle_proof_covers_owner_device_and_all_static_fields() {
             "signing_key_id": format!("{did}#key-1"),
             "e2ee_key_id": format!("{did}#key-3"),
             "profiles": [
-                "anp.core.binding.v2",
-                "anp.identity.discovery.v2",
-                "anp.direct.base.v2",
+                "anp.core.binding.v1",
+                "anp.identity.discovery.v1",
+                "anp.direct.base.v1",
                 "anp.direct.e2ee.v2"
             ]
         }]
@@ -506,9 +506,9 @@ fn v2_bundle_proof_accepts_join_style_okp_jwk_device_keys() {
             "signing_key_id": signing_key_id,
             "e2ee_key_id": agreement_key_id,
             "profiles": [
-                "anp.core.binding.v2",
-                "anp.identity.discovery.v2",
-                "anp.direct.base.v2",
+                "anp.core.binding.v1",
+                "anp.identity.discovery.v1",
+                "anp.direct.base.v1",
                 "anp.direct.e2ee.v2"
             ]
         }]

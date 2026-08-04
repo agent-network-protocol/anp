@@ -331,9 +331,9 @@ void main() {
             'signing_key_id': '$did#dev-b-sign',
             'e2ee_key_id': '$did#dev-b-e2ee',
             'profiles': [
-              'anp.core.binding.v2',
-              'anp.identity.discovery.v2',
-              'anp.direct.base.v2',
+              'anp.core.binding.v1',
+              'anp.identity.discovery.v1',
+              'anp.direct.base.v1',
               'anp.direct.e2ee.v2',
             ],
           },

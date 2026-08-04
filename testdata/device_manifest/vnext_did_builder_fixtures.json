@@ -1,6 +1,6 @@
 {
   "version": "anp-vnext-did-builder-fixtures-v2",
-  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "protocol_commit": "97896407a21cc5a0ea6c30908592bc41f669ac0c",
   "root_key_id": "did:wba:example.com:agents:alice:e1_fixture#root",
   "retired_device_ids": [
     "dev-retired-OLD"
@@ -43,11 +43,11 @@
       "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
       "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
       "profiles": [
-        "anp.core.binding.v2",
-        "anp.identity.discovery.v2",
-        "anp.direct.base.v2",
+        "anp.core.binding.v1",
+        "anp.identity.discovery.v1",
+        "anp.direct.base.v1",
         "anp.direct.e2ee.v2",
-        "anp.group.base.v2",
+        "anp.group.base.v1",
         "anp.group.e2ee.v2"
       ]
     },
@@ -78,11 +78,11 @@
       "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
       "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
       "profiles": [
-        "anp.core.binding.v2",
-        "anp.identity.discovery.v2",
-        "anp.direct.base.v2",
+        "anp.core.binding.v1",
+        "anp.identity.discovery.v1",
+        "anp.direct.base.v1",
         "anp.direct.e2ee.v2",
-        "anp.group.base.v2",
+        "anp.group.base.v1",
         "anp.group.e2ee.v2"
       ]
     },
@@ -113,9 +113,9 @@
       "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
       "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
       "profiles": [
-        "anp.core.binding.v2",
-        "anp.identity.discovery.v2",
-        "anp.direct.base.v2",
+        "anp.core.binding.v1",
+        "anp.identity.discovery.v1",
+        "anp.direct.base.v1",
         "anp.direct.e2ee.v2"
       ]
     },
@@ -217,11 +217,11 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2",
-            "anp.group.base.v2",
+            "anp.group.base.v1",
             "anp.group.e2ee.v2"
           ]
         }
@@ -322,11 +322,11 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2",
-            "anp.group.base.v2",
+            "anp.group.base.v1",
             "anp.group.e2ee.v2"
           ]
         },
@@ -335,11 +335,11 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2",
-            "anp.group.base.v2",
+            "anp.group.base.v1",
             "anp.group.e2ee.v2"
           ]
         }
@@ -440,11 +440,11 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2",
-            "anp.group.base.v2",
+            "anp.group.base.v1",
             "anp.group.e2ee.v2"
           ]
         },
@@ -453,9 +453,9 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2"
           ]
         }
@@ -533,11 +533,11 @@
           "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
           "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-a-e2ee",
           "profiles": [
-            "anp.core.binding.v2",
-            "anp.identity.discovery.v2",
-            "anp.direct.base.v2",
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
             "anp.direct.e2ee.v2",
-            "anp.group.base.v2",
+            "anp.group.base.v1",
             "anp.group.e2ee.v2"
           ]
         }

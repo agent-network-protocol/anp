@@ -16,12 +16,18 @@ import (
 
 const (
 	DeviceManifestType         = "ANPDeviceManifest"
+	ProfileCoreBindingV1       = "anp.core.binding.v1"
+	ProfileIdentityDiscoveryV1 = "anp.identity.discovery.v1"
+	ProfileDirectBaseV1        = "anp.direct.base.v1"
+	ProfileGroupBaseV1         = "anp.group.base.v1"
+	ProfileDirectE2EEV2        = "anp.direct.e2ee.v2"
+	ProfileGroupE2EEV2         = "anp.group.e2ee.v2"
+
+	// Compatibility constants for already published all-v2 draft Manifests.
 	ProfileCoreBindingV2       = "anp.core.binding.v2"
 	ProfileIdentityDiscoveryV2 = "anp.identity.discovery.v2"
 	ProfileDirectBaseV2        = "anp.direct.base.v2"
 	ProfileGroupBaseV2         = "anp.group.base.v2"
-	ProfileDirectE2EEV2        = "anp.direct.e2ee.v2"
-	ProfileGroupE2EEV2         = "anp.group.e2ee.v2"
 )
 
 var (
@@ -30,10 +36,18 @@ var (
 		"device_id": {}, "signing_key_id": {}, "e2ee_key_id": {}, "profiles": {},
 	}
 	p5Dependencies = map[string]struct{}{
+		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
+		ProfileDirectBaseV1: {}, ProfileDirectE2EEV2: {},
+	}
+	p6Dependencies = map[string]struct{}{
+		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
+		ProfileGroupBaseV1: {}, ProfileGroupE2EEV2: {},
+	}
+	p5LegacyDraftDependencies = map[string]struct{}{
 		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
 		ProfileDirectBaseV2: {}, ProfileDirectE2EEV2: {},
 	}
-	p6Dependencies = map[string]struct{}{
+	p6LegacyDraftDependencies = map[string]struct{}{
 		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
 		ProfileGroupBaseV2: {}, ProfileGroupE2EEV2: {},
 	}
@@ -208,7 +222,7 @@ func ValidateDeviceManifest(didDocument map[string]any) (*DeviceManifest, error)
 
 		profiles := stringSet(device.Profiles)
 		if _, supportsP5 := profiles[ProfileDirectE2EEV2]; supportsP5 {
-			if err := requireDependencies(profiles, p5Dependencies, "P5"); err != nil {
+			if err := requireDependencies(profiles, p5Dependencies, p5LegacyDraftDependencies, "P5"); err != nil {
 				return nil, err
 			}
 			if !relationshipContains(didDocument, "assertionMethod", device.SigningKeyID) {
@@ -216,7 +230,7 @@ func ValidateDeviceManifest(didDocument map[string]any) (*DeviceManifest, error)
 			}
 		}
 		if _, supportsP6 := profiles[ProfileGroupE2EEV2]; supportsP6 {
-			if err := requireDependencies(profiles, p6Dependencies, "P6"); err != nil {
+			if err := requireDependencies(profiles, p6Dependencies, p6LegacyDraftDependencies, "P6"); err != nil {
 				return nil, err
 			}
 			if !relationshipContains(didDocument, "assertionMethod", device.SigningKeyID) {
@@ -294,13 +308,30 @@ func stringSet(values []string) map[string]struct{} {
 	return result
 }
 
-func requireDependencies(actual map[string]struct{}, required map[string]struct{}, name string) error {
+func requireDependencies(
+	actual map[string]struct{},
+	required map[string]struct{},
+	legacyDraft map[string]struct{},
+	name string,
+) error {
+	canonicalComplete := true
 	for dependency := range required {
 		if _, ok := actual[dependency]; !ok {
-			return fmt.Errorf("%s device profile dependencies are incomplete", name)
+			canonicalComplete = false
+			break
 		}
 	}
-	return nil
+	legacyComplete := true
+	for dependency := range legacyDraft {
+		if _, ok := actual[dependency]; !ok {
+			legacyComplete = false
+			break
+		}
+	}
+	if canonicalComplete || legacyComplete {
+		return nil
+	}
+	return fmt.Errorf("%s device profile dependencies are incomplete", name)
 }
 
 func relationshipContains(didDocument map[string]any, relationship string, keyID string) bool {

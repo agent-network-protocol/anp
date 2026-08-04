@@ -2,7 +2,7 @@
 
 `vnext_device_manifest_fixtures.json` is the shared Rust, Python, Go, and Dart
 contract fixture for the P2 `deviceManifest` shape frozen at protocol commit
-`25bfbc59a5a925141b565c4bc6c24195736382b5b`.
+`97896407a21cc5a0ea6c30908592bc41f669ac0c`.
 
 `vnext_did_builder_fixtures.json` is the matching shared fixture for the
 public-key-only DID builder and add/update/remove helpers. It fixes the exact

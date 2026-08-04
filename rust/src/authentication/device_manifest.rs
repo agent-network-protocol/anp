@@ -6,20 +6,38 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub const DEVICE_MANIFEST_TYPE: &str = "ANPDeviceManifest";
+pub const PROFILE_CORE_BINDING_V1: &str = "anp.core.binding.v1";
+pub const PROFILE_IDENTITY_DISCOVERY_V1: &str = "anp.identity.discovery.v1";
+pub const PROFILE_DIRECT_BASE_V1: &str = "anp.direct.base.v1";
+pub const PROFILE_DIRECT_E2EE_V2: &str = "anp.direct.e2ee.v2";
+pub const PROFILE_GROUP_BASE_V1: &str = "anp.group.base.v1";
+pub const PROFILE_GROUP_E2EE_V2: &str = "anp.group.e2ee.v2";
+
+// Compatibility constants for validating already published all-v2 draft Manifests.
 pub const PROFILE_CORE_BINDING_V2: &str = "anp.core.binding.v2";
 pub const PROFILE_IDENTITY_DISCOVERY_V2: &str = "anp.identity.discovery.v2";
 pub const PROFILE_DIRECT_BASE_V2: &str = "anp.direct.base.v2";
-pub const PROFILE_DIRECT_E2EE_V2: &str = "anp.direct.e2ee.v2";
 pub const PROFILE_GROUP_BASE_V2: &str = "anp.group.base.v2";
-pub const PROFILE_GROUP_E2EE_V2: &str = "anp.group.e2ee.v2";
 
 const P5_DEPENDENCIES: &[&str] = &[
+    PROFILE_CORE_BINDING_V1,
+    PROFILE_IDENTITY_DISCOVERY_V1,
+    PROFILE_DIRECT_BASE_V1,
+    PROFILE_DIRECT_E2EE_V2,
+];
+const P6_DEPENDENCIES: &[&str] = &[
+    PROFILE_CORE_BINDING_V1,
+    PROFILE_IDENTITY_DISCOVERY_V1,
+    PROFILE_GROUP_BASE_V1,
+    PROFILE_GROUP_E2EE_V2,
+];
+const P5_LEGACY_DRAFT_DEPENDENCIES: &[&str] = &[
     PROFILE_CORE_BINDING_V2,
     PROFILE_IDENTITY_DISCOVERY_V2,
     PROFILE_DIRECT_BASE_V2,
     PROFILE_DIRECT_E2EE_V2,
 ];
-const P6_DEPENDENCIES: &[&str] = &[
+const P6_LEGACY_DRAFT_DEPENDENCIES: &[&str] = &[
     PROFILE_CORE_BINDING_V2,
     PROFILE_IDENTITY_DISCOVERY_V2,
     PROFILE_GROUP_BASE_V2,
@@ -137,7 +155,12 @@ pub fn validate_device_manifest(
             profiles.insert(profile.as_str());
         }
         if profiles.contains(PROFILE_DIRECT_E2EE_V2) {
-            require_dependencies(&profiles, P5_DEPENDENCIES, PROFILE_DIRECT_E2EE_V2)?;
+            require_dependencies(
+                &profiles,
+                P5_DEPENDENCIES,
+                P5_LEGACY_DRAFT_DEPENDENCIES,
+                PROFILE_DIRECT_E2EE_V2,
+            )?;
             if !relationship_contains(did_document, "assertionMethod", &device.signing_key_id) {
                 return Err(invalid(
                     "P5 signing_key_id must be authorized by assertionMethod",
@@ -145,7 +168,12 @@ pub fn validate_device_manifest(
             }
         }
         if profiles.contains(PROFILE_GROUP_E2EE_V2) {
-            require_dependencies(&profiles, P6_DEPENDENCIES, PROFILE_GROUP_E2EE_V2)?;
+            require_dependencies(
+                &profiles,
+                P6_DEPENDENCIES,
+                P6_LEGACY_DRAFT_DEPENDENCIES,
+                PROFILE_GROUP_E2EE_V2,
+            )?;
             if !relationship_contains(did_document, "assertionMethod", &device.signing_key_id) {
                 return Err(invalid(
                     "P6 signing_key_id must be authorized by assertionMethod",
@@ -902,13 +930,17 @@ fn relationship_contains(did_document: &Value, relationship: &str, key_id: &str)
 fn require_dependencies(
     profiles: &BTreeSet<&str>,
     required: &[&str],
+    legacy_draft: &[&str],
     profile: &str,
 ) -> Result<(), DeviceManifestError> {
-    if let Some(missing) = required
+    let canonical_complete = required
         .iter()
-        .find(|dependency| !profiles.contains(**dependency))
-    {
-        return Err(invalid(format!("{profile} requires dependency {missing}")));
+        .all(|dependency| profiles.contains(*dependency));
+    let legacy_complete = legacy_draft
+        .iter()
+        .all(|dependency| profiles.contains(*dependency));
+    if !canonical_complete && !legacy_complete {
+        return Err(invalid(format!("{profile} dependencies are incomplete")));
     }
     Ok(())
 }

@@ -1637,9 +1637,9 @@ mod tests {
                 "signing_key_id": format!("{did}#key-1"),
                 "e2ee_key_id": format!("{did}#key-3"),
                 "profiles": [
-                    "anp.core.binding.v2",
-                    "anp.identity.discovery.v2",
-                    "anp.direct.base.v2",
+                    "anp.core.binding.v1",
+                    "anp.identity.discovery.v1",
+                    "anp.direct.base.v1",
                     "anp.direct.e2ee.v2"
                 ]
             }]

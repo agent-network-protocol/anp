@@ -1,6 +1,6 @@
 {
   "version": "anp-group-e2ee-p6-v2-wire-v1",
-  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "protocol_commit": "97896407a21cc5a0ea6c30908592bc41f669ac0c",
   "draft_extension_type": 61601,
   "creator_key_package": {
     "key_package_id": "kp-owner-1",

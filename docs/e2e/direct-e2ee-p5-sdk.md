@@ -3,7 +3,7 @@
 ## Status
 
 - ANP-P5 v1 session support remains unchanged. The vNext wire contract is exposed side by side as explicit `v2` Rust, Python, Go, and Dart models/builders/validators. Rust additionally exposes the P5 v2 exact-device session runtime; no v1 Session or Ratchet state is implicitly upgraded or reused.
-- Frozen protocol authority: `AgentNetworkProtocol@25bfbc59a5a925141b565c4bc6c24195736382b5b`, [P5 Direct End-to-End Encryption](../../../AgentNetworkProtocol/message/vnext/05-direct-end-to-end-encryption.md).
+- Frozen protocol authority: `AgentNetworkProtocol@97896407a21cc5a0ea6c30908592bc41f669ac0c`, [P5 Direct End-to-End Encryption](../../../AgentNetworkProtocol/message/vnext/05-direct-end-to-end-encryption.md).
 - Harness map: [Direct E2EE cross-repo feature map](../../../../awiki-harness/features/direct-e2ee.md).
 - Public discovery is controlled by product services and remains off until a separate discovery/security decision enables it.
 

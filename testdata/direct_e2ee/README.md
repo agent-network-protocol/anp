@@ -3,7 +3,7 @@
 These fixtures are language-neutral regression vectors for the ANP P5 private-chat E2EE SDK.
 
 - `p5_shared_vectors.json` preserves the existing v1 cryptographic/AAD behavior.
-- `p5_v2_wire_vectors.json` is a separate vNext wire-contract fixture consumed by Rust, Python, Go, and Dart. It follows `AgentNetworkProtocol@25bfbc59a5a925141b565c4bc6c24195736382b5b` and covers device-qualified Bundle/RPC/AAD/plaintext/error objects, a real Appendix-B signed Bundle, non-MTI suite preference, RFC 8785 numbers, empty JSON objects, and strict omission/null behavior without changing v1 semantics.
+- `p5_v2_wire_vectors.json` is a separate vNext wire-contract fixture consumed by Rust, Python, Go, and Dart. It follows `AgentNetworkProtocol@97896407a21cc5a0ea6c30908592bc41f669ac0c` and covers device-qualified Bundle/RPC/AAD/plaintext/error objects, a real Appendix-B signed Bundle, non-MTI suite preference, RFC 8785 numbers, empty JSON objects, and strict omission/null behavior without changing v1 semantics. Canonical Manifest inputs use the Messaging 1.2 mixed dependency set; the signed golden intentionally retains the complete all-v2 draft Manifest to verify temporary read compatibility without changing its historical DID binding or signature.
 
 Normative anchors:
 

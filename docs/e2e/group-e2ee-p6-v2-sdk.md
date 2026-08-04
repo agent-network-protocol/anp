@@ -4,7 +4,7 @@
 
 This SDK slice implements the frozen cross-domain surface of
 [`anp.group.e2ee.v2`](../../../AgentNetworkProtocol/message/vnext/06-group-end-to-end-encryption.md)
-from `AgentNetworkProtocol@25bfbc59a5a925141b565c4bc6c24195736382b5b`.
+from `AgentNetworkProtocol@97896407a21cc5a0ea6c30908592bc41f669ac0c`.
 It is side-by-side with the existing `anp.group.e2ee.v1` models and typed
 OpenMLS library operations; no v1 wire object is silently reinterpreted as v2.
 

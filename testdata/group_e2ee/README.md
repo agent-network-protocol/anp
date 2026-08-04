@@ -4,7 +4,7 @@
 - `p6_v2_wire_vectors.json` is the Rust/Go vNext wire, canonical
   `authenticated_data`, membership-submission binding, and inner plaintext
   vector frozen against protocol commit
-  `25bfbc59a5a925141b565c4bc6c24195736382b5b`.
+  `97896407a21cc5a0ea6c30908592bc41f669ac0c`.
 
 The v2 fixture's KeyPackage bytes and proof strings are contract-vector
 placeholders for DTO/canonicalization tests. They are not claimed to be a

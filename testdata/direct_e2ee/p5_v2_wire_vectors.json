@@ -1,6 +1,6 @@
 {
   "version": "anp-direct-e2ee-p5-v2-wire-v1",
-  "protocol_commit": "25bfbc59a5a925141b565c4bc6c24195736382b5b",
+  "protocol_commit": "97896407a21cc5a0ea6c30908592bc41f669ac0c",
   "prekey_bundle": {
     "bundle_id": "bundle-b-001",
     "owner_did": "did:wba:b.example:agents:bob:e1_fixture",
@@ -285,6 +285,7 @@
   },
   "expected_application_plaintext_numeric_jcs": "{\"annotations\":{},\"application_content_type\":\"application/json\",\"payload\":{\"empty\":{},\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27,0]}}",
   "signed_bundle_golden": {
+    "compatibility": "legacy-all-v2-draft-manifest",
     "did_document": {
       "@context": [
         "https://www.w3.org/ns/did/v1",
@@ -342,11 +343,11 @@
             "device_id": "dev-a-vector",
             "signing_key_id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#dev-a-sign",
             "e2ee_key_id": "did:wba:p5-vector.example:agents:alice:e1_Iug05Ig7GJQQ0JQwmKb-vBpIvGc0_Wa6RsgJ-GJNHtM#key-3",
-            "profiles": [
-              "anp.core.binding.v2",
-              "anp.identity.discovery.v2",
-              "anp.direct.base.v2",
-              "anp.direct.e2ee.v2"
+          "profiles": [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.direct.base.v2",
+            "anp.direct.e2ee.v2"
             ]
           }
         ]

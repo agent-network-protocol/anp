@@ -377,7 +377,7 @@ func TestV2BundleObjectProofCoversDeviceAndStaticFields(t *testing.T) {
 		"devices": []any{map[string]any{
 			"device_id": "dev-a", "signing_key_id": did + "#key-1",
 			"e2ee_key_id": did + "#key-3",
-			"profiles":    []any{"anp.core.binding.v2", "anp.identity.discovery.v2", "anp.direct.base.v2", "anp.direct.e2ee.v2"},
+			"profiles":    []any{"anp.core.binding.v1", "anp.identity.discovery.v1", "anp.direct.base.v1", "anp.direct.e2ee.v2"},
 		}},
 	}
 	signingKey, err := anp.PrivateKeyFromPEM(generated.Keys[authentication.VMKeyAuth].PrivateKeyPEM)

@@ -1,7 +1,7 @@
 # ANP vNext Device Manifest SDK surface
 
 This SDK implements the minimal P2 `deviceManifest` contract frozen at ANP
-protocol commit `25bfbc59a5a925141b565c4bc6c24195736382b5b`.
+protocol commit `97896407a21cc5a0ea6c30908592bc41f669ac0c`.
 
 ## Scope
 
@@ -82,6 +82,18 @@ Manifest and the DID relationships needed to validate it, do not mutate the
 input, and therefore preserve unknown top-level DID extensions. A missing
 Manifest returns no value rather than creating a default device because
 Base-only ANP DIDs may omit the extension.
+
+For ANP Messaging 1.2, the canonical dependency bundles are mixed-version:
+
+```text
+P5 v2: core.binding.v1, identity.discovery.v1, direct.base.v1, direct.e2ee.v2
+P6 v2: core.binding.v1, identity.discovery.v1, group.base.v1, group.e2ee.v2
+```
+
+Validators temporarily also accept the complete all-v2 draft dependency
+bundle so already published Manifests remain readable during convergence.
+Builders and shared canonical fixtures only emit the mixed-version bundles;
+partial or hybrid dependency bundles remain invalid.
 
 ## Compatibility boundary
 

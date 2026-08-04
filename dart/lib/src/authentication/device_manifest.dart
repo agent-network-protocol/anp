@@ -8,12 +8,18 @@ import 'types.dart';
 
 const String deviceManifestType = 'ANPDeviceManifest';
 
+const String profileCoreBindingV1 = 'anp.core.binding.v1';
+const String profileIdentityDiscoveryV1 = 'anp.identity.discovery.v1';
+const String profileDirectBaseV1 = 'anp.direct.base.v1';
+const String profileGroupBaseV1 = 'anp.group.base.v1';
+const String profileDirectE2eeV2 = 'anp.direct.e2ee.v2';
+const String profileGroupE2eeV2 = 'anp.group.e2ee.v2';
+
+// Compatibility constants for already published all-v2 draft Manifests.
 const String profileCoreBindingV2 = 'anp.core.binding.v2';
 const String profileIdentityDiscoveryV2 = 'anp.identity.discovery.v2';
 const String profileDirectBaseV2 = 'anp.direct.base.v2';
 const String profileGroupBaseV2 = 'anp.group.base.v2';
-const String profileDirectE2eeV2 = 'anp.direct.e2ee.v2';
-const String profileGroupE2eeV2 = 'anp.group.e2ee.v2';
 
 const Set<String> _manifestFields = {'type', 'devices'};
 const Set<String> _entryFields = {
@@ -23,12 +29,24 @@ const Set<String> _entryFields = {
   'profiles',
 };
 const Set<String> _p5Dependencies = {
+  profileCoreBindingV1,
+  profileIdentityDiscoveryV1,
+  profileDirectBaseV1,
+  profileDirectE2eeV2,
+};
+const Set<String> _p6Dependencies = {
+  profileCoreBindingV1,
+  profileIdentityDiscoveryV1,
+  profileGroupBaseV1,
+  profileGroupE2eeV2,
+};
+const Set<String> _p5LegacyDraftDependencies = {
   profileCoreBindingV2,
   profileIdentityDiscoveryV2,
   profileDirectBaseV2,
   profileDirectE2eeV2,
 };
-const Set<String> _p6Dependencies = {
+const Set<String> _p6LegacyDraftDependencies = {
   profileCoreBindingV2,
   profileIdentityDiscoveryV2,
   profileGroupBaseV2,
@@ -187,7 +205,12 @@ DeviceManifest? validateDeviceManifest(JsonMap didDocument) {
 
     final profiles = device.profiles.toSet();
     if (profiles.contains(profileDirectE2eeV2)) {
-      _requireDependencies(profiles, _p5Dependencies, 'P5');
+      _requireDependencies(
+        profiles,
+        _p5Dependencies,
+        _p5LegacyDraftDependencies,
+        'P5',
+      );
       _requireRelationship(
         didDocument,
         'assertionMethod',
@@ -196,7 +219,12 @@ DeviceManifest? validateDeviceManifest(JsonMap didDocument) {
       );
     }
     if (profiles.contains(profileGroupE2eeV2)) {
-      _requireDependencies(profiles, _p6Dependencies, 'P6');
+      _requireDependencies(
+        profiles,
+        _p6Dependencies,
+        _p6LegacyDraftDependencies,
+        'P6',
+      );
       _requireRelationship(
         didDocument,
         'assertionMethod',
@@ -965,9 +993,10 @@ void _validateSameDocumentMethod(
 void _requireDependencies(
   Set<String> actual,
   Set<String> required,
+  Set<String> legacyDraft,
   String profileName,
 ) {
-  if (!actual.containsAll(required)) {
+  if (!actual.containsAll(required) && !actual.containsAll(legacyDraft)) {
     throw AnpAuthenticationException(
       '$profileName device profile dependencies are incomplete',
     );

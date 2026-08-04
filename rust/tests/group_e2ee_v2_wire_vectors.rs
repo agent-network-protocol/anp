@@ -219,9 +219,9 @@ fn p6_v2_binding_verifies_manifest_leaf_and_extension_chain() {
             "signing_key_id": format!("{did}#key-1"),
             "e2ee_key_id": format!("{did}#key-3"),
             "profiles": [
-                "anp.core.binding.v2",
-                "anp.identity.discovery.v2",
-                "anp.group.base.v2",
+                "anp.core.binding.v1",
+                "anp.identity.discovery.v1",
+                "anp.group.base.v1",
                 "anp.group.e2ee.v2"
             ]
         }]

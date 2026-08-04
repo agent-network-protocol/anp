@@ -21,16 +21,38 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 DEVICE_MANIFEST_TYPE = "ANPDeviceManifest"
 
+PROFILE_CORE_BINDING_V1 = "anp.core.binding.v1"
+PROFILE_IDENTITY_DISCOVERY_V1 = "anp.identity.discovery.v1"
+PROFILE_DIRECT_BASE_V1 = "anp.direct.base.v1"
+PROFILE_GROUP_BASE_V1 = "anp.group.base.v1"
+PROFILE_DIRECT_E2EE_V2 = "anp.direct.e2ee.v2"
+PROFILE_GROUP_E2EE_V2 = "anp.group.e2ee.v2"
+
+# Compatibility constants for validating already published all-v2 draft Manifests.
 PROFILE_CORE_BINDING_V2 = "anp.core.binding.v2"
 PROFILE_IDENTITY_DISCOVERY_V2 = "anp.identity.discovery.v2"
 PROFILE_DIRECT_BASE_V2 = "anp.direct.base.v2"
 PROFILE_GROUP_BASE_V2 = "anp.group.base.v2"
-PROFILE_DIRECT_E2EE_V2 = "anp.direct.e2ee.v2"
-PROFILE_GROUP_E2EE_V2 = "anp.group.e2ee.v2"
 
 _MANIFEST_FIELDS = frozenset({"type", "devices"})
 _ENTRY_FIELDS = frozenset({"device_id", "signing_key_id", "e2ee_key_id", "profiles"})
 _P5_DEPENDENCIES = frozenset(
+    {
+        PROFILE_CORE_BINDING_V1,
+        PROFILE_IDENTITY_DISCOVERY_V1,
+        PROFILE_DIRECT_BASE_V1,
+        PROFILE_DIRECT_E2EE_V2,
+    }
+)
+_P6_DEPENDENCIES = frozenset(
+    {
+        PROFILE_CORE_BINDING_V1,
+        PROFILE_IDENTITY_DISCOVERY_V1,
+        PROFILE_GROUP_BASE_V1,
+        PROFILE_GROUP_E2EE_V2,
+    }
+)
+_P5_LEGACY_DRAFT_DEPENDENCIES = frozenset(
     {
         PROFILE_CORE_BINDING_V2,
         PROFILE_IDENTITY_DISCOVERY_V2,
@@ -38,7 +60,7 @@ _P5_DEPENDENCIES = frozenset(
         PROFILE_DIRECT_E2EE_V2,
     }
 )
-_P6_DEPENDENCIES = frozenset(
+_P6_LEGACY_DRAFT_DEPENDENCIES = frozenset(
     {
         PROFILE_CORE_BINDING_V2,
         PROFILE_IDENTITY_DISCOVERY_V2,
@@ -202,7 +224,12 @@ def validate_device_manifest(
 
         profile_set = set(entry.profiles)
         if PROFILE_DIRECT_E2EE_V2 in profile_set:
-            _require_dependencies(profile_set, _P5_DEPENDENCIES, "P5")
+            _require_dependencies(
+                profile_set,
+                _P5_DEPENDENCIES,
+                _P5_LEGACY_DRAFT_DEPENDENCIES,
+                "P5",
+            )
             _require_relationship(
                 did_document,
                 "assertionMethod",
@@ -210,7 +237,12 @@ def validate_device_manifest(
                 "P5 signing key",
             )
         if PROFILE_GROUP_E2EE_V2 in profile_set:
-            _require_dependencies(profile_set, _P6_DEPENDENCIES, "P6")
+            _require_dependencies(
+                profile_set,
+                _P6_DEPENDENCIES,
+                _P6_LEGACY_DRAFT_DEPENDENCIES,
+                "P6",
+            )
             _require_relationship(
                 did_document,
                 "assertionMethod",
@@ -861,9 +893,12 @@ def _validate_same_document_method(
 
 
 def _require_dependencies(
-    profiles: set, required: frozenset, profile_name: str
+    profiles: set,
+    required: frozenset,
+    legacy_draft: frozenset,
+    profile_name: str,
 ) -> None:
-    if not required.issubset(profiles):
+    if not required.issubset(profiles) and not legacy_draft.issubset(profiles):
         raise DeviceManifestError(
             "{} device profile dependencies are incomplete".format(profile_name)
         )
