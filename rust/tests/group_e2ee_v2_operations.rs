@@ -39,6 +39,7 @@ use openmls::prelude::{
 };
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 const NOW: &str = "2026-07-20T00:00:00Z";
 const ISSUED_AT: &str = "2026-07-19T00:00:00Z";
@@ -266,6 +267,40 @@ fn service_meta(did: &str, device_id: &str, operation_id: &str) -> V2ServiceMeta
     }
 }
 
+fn legacy_key_package_publish_digests(input: &V2PrepareKeyPackagePublishInput) -> (String, String) {
+    let input_bytes = serde_json_canonicalizer::to_vec(&json!({
+        "journal_version": "v1",
+        "meta": input.meta,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .expect("canonical legacy publish input");
+    let family_bytes = serde_json_canonicalizer::to_vec(&json!({
+        "journal_version": "v1",
+        "anp_version": input.meta.anp_version,
+        "profile": input.meta.profile,
+        "security_profile": input.meta.security_profile,
+        "sender_did": input.meta.sender_did,
+        "sender_device_id": input.meta.sender_device_id,
+        "target_kind": input.meta.target.kind,
+        "target_did": input.meta.target.did,
+        "base_operation_id": input.meta.operation_id,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "base_key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .expect("canonical legacy publish family");
+    (
+        URL_SAFE_NO_PAD.encode(Sha256::digest(input_bytes)),
+        URL_SAFE_NO_PAD.encode(Sha256::digest(family_bytes)),
+    )
+}
+
 fn control_meta(did: &str, device_id: &str, operation_id: &str) -> V2GroupControlMetadata {
     V2GroupControlMetadata {
         anp_version: Some("2.0".to_owned()),
@@ -426,7 +461,39 @@ fn key_package_publish_wal_resumes_exactly_and_caches_typed_acceptance() {
     assert!(first.accepted_result.is_none());
     drop(first_store);
 
+    let (legacy_input_digest, legacy_family_digest) =
+        legacy_key_package_publish_digests(&first_input);
+    let conn =
+        Connection::open(store(directory.path(), &owner.did, &device.device_id).state_db_path())
+            .expect("open SDK state database for legacy journal fixture");
+    let response_json: String = conn
+        .query_row(
+            "SELECT response_json FROM group_mls_operations\n             WHERE owner_identity_id = ?1 AND device_id = ?2 AND operation_id = ?3",
+            params![
+                format!("identity-{}", device.device_id),
+                device.device_id,
+                operation_id
+            ],
+            |row| row.get(0),
+        )
+        .expect("load publish journal");
+    let mut journal: Value = serde_json::from_str(&response_json).expect("parse publish journal");
+    journal["family_digest"] = Value::String(legacy_family_digest);
+    conn.execute(
+        "UPDATE group_mls_operations\n         SET input_digest = ?4, response_json = ?5\n         WHERE owner_identity_id = ?1 AND device_id = ?2 AND operation_id = ?3",
+        params![
+            format!("identity-{}", device.device_id),
+            device.device_id,
+            operation_id,
+            legacy_input_digest,
+            serde_json::to_string(&journal).expect("serialize legacy publish journal"),
+        ],
+    )
+    .expect("simulate pre-upgrade publish journal");
+    drop(conn);
+
     let mut retry_input = first_input.clone();
+    retry_input.meta.anp_version = None;
     retry_input.issued_at = "2026-07-19T01:00:00Z".to_owned();
     retry_input.expires_at = "2026-08-20T00:00:00Z".to_owned();
     retry_input.now = "2026-07-20T00:01:00Z".to_owned();
@@ -440,6 +507,7 @@ fn key_package_publish_wal_resumes_exactly_and_caches_typed_acceptance() {
     )
     .expect("resume exact persisted KeyPackage publish");
     assert_eq!(resumed, first);
+    assert_eq!(resumed.meta.anp_version.as_deref(), Some("2.0"));
     assert_eq!(
         serde_json::to_vec(&resumed).expect("serialize resumed publish"),
         serde_json::to_vec(&first).expect("serialize first publish")

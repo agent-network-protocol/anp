@@ -490,8 +490,14 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
             && journal.base_key_package_id.is_empty();
         hydrate_key_package_publish_family(&mut journal, &input, &stored_digest, &family_digest)?;
         validate_key_package_publish_family(&journal, &input, &family_digest)?;
+        let stored_input_matches = stored_digest == input_digest
+            || stored_digest
+                == key_package_publish_legacy_input_digest(
+                    &input,
+                    journal.meta.anp_version.as_deref(),
+                )?;
         if needs_legacy_terminal_hydration {
-            if stored_digest != input_digest {
+            if !stored_input_matches {
                 return Err(operation_error(
                     "group.e2ee.commit_invalid",
                     "superseded legacy KeyPackage family was retried with different stable input",
@@ -522,7 +528,7 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
         }
         if status == "prepared" {
             if !key_package_publish_attempt_expired(&scope, &journal, &input, did_document)? {
-                if stored_digest != input_digest {
+                if !stored_input_matches {
                     return Err(operation_error(
                         "group.e2ee.commit_invalid",
                         "KeyPackage publish operation_id was replayed with different stable input",
@@ -556,7 +562,7 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                     &input.request_id,
                 ));
             }
-            if stored_digest != input_digest {
+            if !stored_input_matches {
                 return Err(operation_error(
                     "group.e2ee.commit_invalid",
                     "KeyPackage publish operation_id was replayed with different stable input",
@@ -907,9 +913,30 @@ fn key_package_publish_input_digest(
     // Retry clocks and request IDs deliberately stay out of the digest. The
     // first persisted public package owns its binding timestamps; all stable
     // identity, routing, and authorization inputs remain bound here.
+    let mut meta = input.meta.clone();
+    meta.anp_version = None;
     let canonical = crate::canonical_json::canonicalize_json(&json!({
         "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
-        "meta": input.meta,
+        "meta": meta,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    Ok(encode_b64u(&Sha256::digest(canonical)))
+}
+
+fn key_package_publish_legacy_input_digest(
+    input: &V2PrepareKeyPackagePublishInput,
+    anp_version: Option<&str>,
+) -> GroupMlsOperationResult<String> {
+    let mut meta = input.meta.clone();
+    meta.anp_version = anp_version.map(str::to_owned);
+    let canonical = crate::canonical_json::canonicalize_json(&json!({
+        "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
+        "meta": meta,
         "owner_did": input.owner_did,
         "owner_device_id": input.owner_device_id,
         "verification_method": input.verification_method,
@@ -925,7 +952,30 @@ fn key_package_publish_family_digest(
 ) -> GroupMlsOperationResult<String> {
     let canonical = crate::canonical_json::canonicalize_json(&json!({
         "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
-        "anp_version": input.meta.anp_version,
+        "profile": input.meta.profile,
+        "security_profile": input.meta.security_profile,
+        "sender_did": input.meta.sender_did,
+        "sender_device_id": input.meta.sender_device_id,
+        "target_kind": input.meta.target.kind,
+        "target_did": input.meta.target.did,
+        "base_operation_id": input.meta.operation_id,
+        "owner_did": input.owner_did,
+        "owner_device_id": input.owner_device_id,
+        "verification_method": input.verification_method,
+        "base_key_package_id": input.key_package_id,
+        "draft_extension_negotiated": input.draft_extension_negotiated,
+    }))
+    .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+    Ok(encode_b64u(&Sha256::digest(canonical)))
+}
+
+fn key_package_publish_legacy_family_digest(
+    input: &V2PrepareKeyPackagePublishInput,
+    anp_version: Option<&str>,
+) -> GroupMlsOperationResult<String> {
+    let canonical = crate::canonical_json::canonicalize_json(&json!({
+        "journal_version": KEY_PACKAGE_PUBLISH_JOURNAL_VERSION,
+        "anp_version": anp_version,
         "profile": input.meta.profile,
         "security_profile": input.meta.security_profile,
         "sender_did": input.meta.sender_did,
@@ -1005,7 +1055,13 @@ fn hydrate_key_package_publish_family(
         journal.base_key_package_id = persisted.to_owned();
     }
     if journal.family_digest.is_empty() {
-        if stored_digest != key_package_publish_input_digest(input)? {
+        if stored_digest != key_package_publish_input_digest(input)?
+            && stored_digest
+                != key_package_publish_legacy_input_digest(
+                    input,
+                    journal.meta.anp_version.as_deref(),
+                )?
+        {
             return Err(operation_error(
                 "group.e2ee.commit_invalid",
                 "legacy KeyPackage publish journal was replayed with different stable input",
@@ -1022,9 +1078,11 @@ fn validate_key_package_publish_family(
     input: &V2PrepareKeyPackagePublishInput,
     family_digest: &str,
 ) -> GroupMlsOperationResult<()> {
+    let legacy_family_digest =
+        key_package_publish_legacy_family_digest(input, journal.meta.anp_version.as_deref())?;
     if journal.base_operation_id != input.meta.operation_id
         || journal.base_key_package_id != input.key_package_id
-        || journal.family_digest != family_digest
+        || (journal.family_digest != family_digest && journal.family_digest != legacy_family_digest)
     {
         return Err(operation_error(
             "group.e2ee.commit_invalid",
@@ -1035,7 +1093,6 @@ fn validate_key_package_publish_family(
     let expected_meta =
         key_package_publish_attempt_meta(&input.meta, journal.generation, &input.request_id)?;
     if journal.meta.operation_id != expected_meta.operation_id
-        || journal.meta.anp_version != input.meta.anp_version
         || journal.meta.profile != input.meta.profile
         || journal.meta.security_profile != input.meta.security_profile
         || journal.meta.sender_did != input.meta.sender_did
@@ -1848,8 +1905,9 @@ fn validate_key_package_publish_journal(
 ) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
     let family_digest = key_package_publish_family_digest(input)?;
     validate_key_package_publish_family(&journal, input, &family_digest)?;
-    let expected_meta =
+    let mut expected_meta =
         key_package_publish_attempt_meta(&input.meta, journal.generation, &input.request_id)?;
+    expected_meta.anp_version = journal.meta.anp_version.clone();
     if journal.journal_version != KEY_PACKAGE_PUBLISH_JOURNAL_VERSION
         || (status != "accepted" && journal.meta != expected_meta)
     {
