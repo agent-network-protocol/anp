@@ -183,6 +183,51 @@ fn vnext_mutation_rejects_duplicate_foreign_and_missing_relationship() {
 }
 
 #[test]
+fn legacy_draft_foundation_profiles_are_read_only() {
+    let value = fixture();
+    let mut legacy_device = value["device_a"].clone();
+    let profiles = legacy_device["entry"]["profiles"]
+        .as_array_mut()
+        .expect("device profiles");
+    for profile in profiles {
+        let legacy = match profile.as_str().expect("profile") {
+            "anp.core.binding.v1" => Some("anp.core.binding.v2"),
+            "anp.identity.discovery.v1" => Some("anp.identity.discovery.v2"),
+            "anp.direct.base.v1" => Some("anp.direct.base.v2"),
+            "anp.group.base.v1" => Some("anp.group.base.v2"),
+            _ => None,
+        };
+        if let Some(legacy) = legacy {
+            *profile = Value::String(legacy.to_owned());
+        }
+    }
+    assert!(build_vnext_did_document(
+        &value["base_document"],
+        value["root_key_id"].as_str().expect("root key id"),
+        &value["root_verification_method"],
+        &entry(&legacy_device),
+        &legacy_device["signing_verification_method"],
+        &legacy_device["e2ee_verification_method"],
+    )
+    .is_err());
+
+    let mut legacy_document = build(&value);
+    legacy_document["deviceManifest"]["devices"][0]["profiles"] =
+        legacy_device["entry"]["profiles"].clone();
+    assert!(validate_device_manifest(&legacy_document)
+        .expect("legacy draft document remains readable")
+        .is_some());
+    assert!(remove_device_from_did_document(
+        &legacy_document,
+        value["root_key_id"].as_str().expect("root key id"),
+        legacy_device["entry"]["device_id"]
+            .as_str()
+            .expect("device id"),
+    )
+    .is_err());
+}
+
+#[test]
 fn shared_invalid_public_key_cases_are_rejected() {
     let value = fixture();
     for case in value["invalid_public_key_cases"]

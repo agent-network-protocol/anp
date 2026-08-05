@@ -165,6 +165,51 @@ void main() {
     );
   });
 
+  test('legacy draft foundation profiles are read-only', () {
+    final fixture = _fixture();
+    final legacyDevice = _clone(_map(fixture['device_a']));
+    final legacyEntry = _clone(_map(legacyDevice['entry']));
+    const legacyProfiles = {
+      profileCoreBindingV1: profileCoreBindingV2,
+      profileIdentityDiscoveryV1: profileIdentityDiscoveryV2,
+      profileDirectBaseV1: profileDirectBaseV2,
+      profileGroupBaseV1: profileGroupBaseV2,
+    };
+    legacyEntry['profiles'] = List<String>.from(
+      legacyEntry['profiles']! as List,
+    ).map((profile) => legacyProfiles[profile] ?? profile).toList();
+    legacyDevice['entry'] = legacyEntry;
+    expect(
+      () => buildVNextDidDocument(
+        _map(fixture['base_document']),
+        fixture['root_key_id']! as String,
+        _map(fixture['root_verification_method']),
+        _entry(legacyDevice),
+        _map(legacyDevice['signing_verification_method']),
+        _map(legacyDevice['e2ee_verification_method']),
+      ),
+      throwsA(isA<AnpAuthenticationException>()),
+    );
+
+    final legacyDocument = _clone(_build(fixture));
+    final manifest = _map(legacyDocument['deviceManifest']);
+    final devices = List<Object?>.from(manifest['devices']! as List);
+    final firstDevice = _map(devices.first)
+      ..['profiles'] = List<String>.from(legacyEntry['profiles']! as List);
+    devices[0] = firstDevice;
+    manifest['devices'] = devices;
+    legacyDocument['deviceManifest'] = manifest;
+    expect(validateDeviceManifest(legacyDocument), isNotNull);
+    expect(
+      () => removeDeviceFromDidDocument(
+        legacyDocument,
+        fixture['root_key_id']! as String,
+        legacyEntry['device_id']! as String,
+      ),
+      throwsA(isA<AnpAuthenticationException>()),
+    );
+  });
+
   test('builder rejects malformed or role-incompatible public keys', () {
     final fixture = _fixture();
     for (final rawCase in fixture['invalid_public_key_cases']! as List) {

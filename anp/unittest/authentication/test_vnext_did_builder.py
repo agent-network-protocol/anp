@@ -189,6 +189,43 @@ def test_vnext_mutation_rejects_duplicate_foreign_and_missing_relationship():
         )
 
 
+def test_legacy_draft_foundation_profiles_are_read_only():
+    fixture = _load_fixture()
+    legacy_device = copy.deepcopy(fixture["device_a"])
+    legacy_map = {
+        "anp.core.binding.v1": "anp.core.binding.v2",
+        "anp.identity.discovery.v1": "anp.identity.discovery.v2",
+        "anp.direct.base.v1": "anp.direct.base.v2",
+        "anp.group.base.v1": "anp.group.base.v2",
+    }
+    legacy_device["entry"]["profiles"] = [
+        legacy_map.get(profile, profile)
+        for profile in legacy_device["entry"]["profiles"]
+    ]
+
+    with pytest.raises(DeviceManifestError, match="read-only"):
+        build_vnext_did_document(
+            fixture["base_document"],
+            fixture["root_key_id"],
+            fixture["root_verification_method"],
+            _entry(legacy_device),
+            legacy_device["signing_verification_method"],
+            legacy_device["e2ee_verification_method"],
+        )
+
+    legacy_document = _build(fixture)
+    legacy_document["deviceManifest"]["devices"][0]["profiles"] = legacy_device[
+        "entry"
+    ]["profiles"]
+    assert validate_device_manifest(legacy_document) is not None
+    with pytest.raises(DeviceManifestError, match="read-only"):
+        remove_device_from_did_document(
+            legacy_document,
+            fixture["root_key_id"],
+            legacy_device["entry"]["device_id"],
+        )
+
+
 @pytest.mark.parametrize("case", _load_fixture()["invalid_public_key_cases"])
 def test_shared_invalid_public_key_cases(case):
     fixture = _load_fixture()

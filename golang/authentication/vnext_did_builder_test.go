@@ -233,6 +233,54 @@ func TestVNextMutationRejectsDuplicateForeignAndMissingRelationship(t *testing.T
 	}
 }
 
+func TestLegacyDraftFoundationProfilesAreReadOnly(t *testing.T) {
+	fixture := loadVNextDIDBuilderFixture(t)
+	legacyEntry := fixture.DeviceA.Entry
+	legacyEntry.Profiles = append([]string(nil), legacyEntry.Profiles...)
+	legacyProfiles := map[string]string{
+		ProfileCoreBindingV1:       ProfileCoreBindingV2,
+		ProfileIdentityDiscoveryV1: ProfileIdentityDiscoveryV2,
+		ProfileDirectBaseV1:        ProfileDirectBaseV2,
+		ProfileGroupBaseV1:         ProfileGroupBaseV2,
+	}
+	for index, profile := range legacyEntry.Profiles {
+		if legacy, ok := legacyProfiles[profile]; ok {
+			legacyEntry.Profiles[index] = legacy
+		}
+	}
+	if _, err := BuildVNextDIDDocument(
+		fixture.BaseDocument,
+		fixture.RootKeyID,
+		fixture.RootVerificationMethod,
+		legacyEntry,
+		fixture.DeviceA.SigningVerificationMethod,
+		fixture.DeviceA.E2EEVerificationMethod,
+	); err == nil {
+		t.Fatal("builder accepted legacy draft foundation profiles")
+	}
+
+	legacyDocument, err := buildFixtureDocument(fixture)
+	if err != nil {
+		t.Fatalf("BuildVNextDIDDocument failed: %v", err)
+	}
+	devices := legacyDocument["deviceManifest"].(map[string]any)["devices"].([]any)
+	profiles := make([]any, len(legacyEntry.Profiles))
+	for index, profile := range legacyEntry.Profiles {
+		profiles[index] = profile
+	}
+	devices[0].(map[string]any)["profiles"] = profiles
+	if manifest, err := ValidateDeviceManifest(legacyDocument); err != nil || manifest == nil {
+		t.Fatalf("legacy draft document must remain readable: %v", err)
+	}
+	if _, err := RemoveDeviceFromDIDDocument(
+		legacyDocument,
+		fixture.RootKeyID,
+		legacyEntry.DeviceID,
+	); err == nil {
+		t.Fatal("mutation republished legacy draft foundation profiles")
+	}
+}
+
 func TestSharedInvalidPublicKeyCasesAreRejected(t *testing.T) {
 	fixture := loadVNextDIDBuilderFixture(t)
 	for _, testCase := range fixture.InvalidPublicKeyCases {

@@ -68,6 +68,14 @@ _P6_LEGACY_DRAFT_DEPENDENCIES = frozenset(
         PROFILE_GROUP_E2EE_V2,
     }
 )
+_LEGACY_DRAFT_FOUNDATION_PROFILES = frozenset(
+    {
+        PROFILE_CORE_BINDING_V2,
+        PROFILE_IDENTITY_DISCOVERY_V2,
+        PROFILE_DIRECT_BASE_V2,
+        PROFILE_GROUP_BASE_V2,
+    }
+)
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SIGNING_ALGORITHMS = frozenset({"Ed25519", "P-256", "secp256k1"})
 
@@ -299,6 +307,7 @@ def build_vnext_did_document(
     relationships managed by this helper must not already be present. The
     caller must root-sign the returned document before publishing it.
     """
+    _require_canonical_write_profiles(device)
     document = _clone_document(base_document)
     for field in (
         "verificationMethod",
@@ -351,6 +360,7 @@ def add_device_to_did_document(
     retired_device_ids: Iterable[str],
 ) -> Dict[str, Any]:
     """Add one never-before-used device ID and return an unsigned copy."""
+    _require_canonical_write_profiles(device)
     document = _prepare_document_for_mutation(did_document, root_key_id)
     manifest = validate_device_manifest(document)
     if manifest is None:
@@ -379,6 +389,7 @@ def update_device_in_did_document(
     device_e2ee_verification_method: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Replace one device's public keys/Profile entry in an unsigned copy."""
+    _require_canonical_write_profiles(device)
     document = _prepare_document_for_mutation(did_document, root_key_id)
     manifest = validate_device_manifest(document)
     if manifest is None:
@@ -440,10 +451,22 @@ def _prepare_document_for_mutation(
 ) -> Dict[str, Any]:
     document = _clone_document(did_document)
     _validate_vnext_document(document, root_key_id)
+    manifest = validate_device_manifest(document)
+    if manifest is None:
+        raise DeviceManifestError("deviceManifest is required")
+    for entry in manifest.devices:
+        _require_canonical_write_profiles(entry)
     # A mutation invalidates any existing root proof. Returning it would make a
     # stale signature look publishable, so callers must explicitly sign again.
     document.pop("proof", None)
     return document
+
+
+def _require_canonical_write_profiles(device: DeviceManifestEntry) -> None:
+    if _LEGACY_DRAFT_FOUNDATION_PROFILES.intersection(device.profiles):
+        raise DeviceManifestError(
+            "legacy draft foundation profiles are read-only and cannot be published"
+        )
 
 
 def _validate_vnext_document(did_document: Dict[str, Any], root_key_id: str) -> None:

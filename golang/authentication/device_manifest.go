@@ -51,6 +51,10 @@ var (
 		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
 		ProfileGroupBaseV2: {}, ProfileGroupE2EEV2: {},
 	}
+	legacyDraftFoundationProfiles = map[string]struct{}{
+		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
+		ProfileDirectBaseV2: {}, ProfileGroupBaseV2: {},
+	}
 	jsonNumberPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 )
 
@@ -369,6 +373,9 @@ func BuildVNextDIDDocument(
 	deviceSigningVerificationMethod map[string]any,
 	deviceE2EEVerificationMethod map[string]any,
 ) (map[string]any, error) {
+	if err := requireCanonicalWriteProfiles(device); err != nil {
+		return nil, err
+	}
 	document, err := cloneDIDJSONObject(baseDocument)
 	if err != nil {
 		return nil, err
@@ -432,6 +439,9 @@ func AddDeviceToDIDDocument(
 	deviceE2EEVerificationMethod map[string]any,
 	retiredDeviceIDs []string,
 ) (map[string]any, error) {
+	if err := requireCanonicalWriteProfiles(device); err != nil {
+		return nil, err
+	}
 	document, err := prepareDIDDocumentForMutation(didDocument, rootKeyID)
 	if err != nil {
 		return nil, err
@@ -480,6 +490,9 @@ func UpdateDeviceInDIDDocument(
 	deviceSigningVerificationMethod map[string]any,
 	deviceE2EEVerificationMethod map[string]any,
 ) (map[string]any, error) {
+	if err := requireCanonicalWriteProfiles(device); err != nil {
+		return nil, err
+	}
 	document, err := prepareDIDDocumentForMutation(didDocument, rootKeyID)
 	if err != nil {
 		return nil, err
@@ -562,6 +575,18 @@ func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID string)
 	if err := validateVNextDIDDocument(didDocument, rootKeyID); err != nil {
 		return nil, err
 	}
+	manifest, err := ValidateDeviceManifest(didDocument)
+	if err != nil {
+		return nil, err
+	}
+	if manifest == nil {
+		return nil, fmt.Errorf("deviceManifest is required")
+	}
+	for _, device := range manifest.Devices {
+		if err := requireCanonicalWriteProfiles(device); err != nil {
+			return nil, err
+		}
+	}
 	document, err := cloneDIDJSONObject(didDocument)
 	if err != nil {
 		return nil, err
@@ -570,6 +595,15 @@ func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID string)
 	// again is safer than returning a document that looks publishable.
 	delete(document, "proof")
 	return document, nil
+}
+
+func requireCanonicalWriteProfiles(device DeviceManifestEntry) error {
+	for _, profile := range device.Profiles {
+		if _, legacy := legacyDraftFoundationProfiles[profile]; legacy {
+			return fmt.Errorf("legacy draft foundation profiles are read-only and cannot be published")
+		}
+	}
+	return nil
 }
 
 func validateVNextDIDDocument(didDocument map[string]any, rootKeyID string) error {

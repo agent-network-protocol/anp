@@ -43,6 +43,12 @@ const P6_LEGACY_DRAFT_DEPENDENCIES: &[&str] = &[
     PROFILE_GROUP_BASE_V2,
     PROFILE_GROUP_E2EE_V2,
 ];
+const LEGACY_DRAFT_FOUNDATION_PROFILES: &[&str] = &[
+    PROFILE_CORE_BINDING_V2,
+    PROFILE_IDENTITY_DISCOVERY_V2,
+    PROFILE_DIRECT_BASE_V2,
+    PROFILE_GROUP_BASE_V2,
+];
 
 /// The closed, interoperable device entry defined by the vNext ANP Profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +241,7 @@ pub fn build_vnext_did_document(
     device_signing_verification_method: &Value,
     device_e2ee_verification_method: &Value,
 ) -> Result<Value, DeviceManifestError> {
+    require_canonical_write_profiles(device)?;
     let mut document = base_document
         .as_object()
         .cloned()
@@ -308,6 +315,7 @@ pub fn add_device_to_did_document(
     device_e2ee_verification_method: &Value,
     retired_device_ids: &[String],
 ) -> Result<Value, DeviceManifestError> {
+    require_canonical_write_profiles(device)?;
     let mut document = prepare_document_for_mutation(did_document, root_key_id)?;
     let manifest = validate_device_manifest(&document)?
         .ok_or_else(|| invalid("deviceManifest is required for device update"))?;
@@ -344,6 +352,7 @@ pub fn update_device_in_did_document(
     device_signing_verification_method: &Value,
     device_e2ee_verification_method: &Value,
 ) -> Result<Value, DeviceManifestError> {
+    require_canonical_write_profiles(device)?;
     let mut document = prepare_document_for_mutation(did_document, root_key_id)?;
     let manifest = validate_device_manifest(&document)?
         .ok_or_else(|| invalid("deviceManifest is required for device update"))?;
@@ -390,12 +399,32 @@ fn prepare_document_for_mutation(
     root_key_id: &str,
 ) -> Result<Value, DeviceManifestError> {
     validate_vnext_document(did_document, root_key_id)?;
+    let manifest = validate_device_manifest(did_document)?
+        .ok_or_else(|| invalid("deviceManifest is required"))?;
+    for device in &manifest.devices {
+        require_canonical_write_profiles(device)?;
+    }
     let mut document = did_document.clone();
     document
         .as_object_mut()
         .ok_or(DeviceManifestError::InvalidDidDocument)?
         .remove("proof");
     Ok(document)
+}
+
+fn require_canonical_write_profiles(
+    device: &DeviceManifestEntry,
+) -> Result<(), DeviceManifestError> {
+    if device.profiles.iter().any(|profile| {
+        LEGACY_DRAFT_FOUNDATION_PROFILES
+            .iter()
+            .any(|legacy| profile == legacy)
+    }) {
+        return Err(invalid(
+            "legacy draft foundation profiles are read-only and cannot be published",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_vnext_document(

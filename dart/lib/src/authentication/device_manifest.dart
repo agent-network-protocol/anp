@@ -52,6 +52,12 @@ const Set<String> _p6LegacyDraftDependencies = {
   profileGroupBaseV2,
   profileGroupE2eeV2,
 };
+const Set<String> _legacyDraftFoundationProfiles = {
+  profileCoreBindingV2,
+  profileIdentityDiscoveryV2,
+  profileDirectBaseV2,
+  profileGroupBaseV2,
+};
 const Set<String> _signingAlgorithms = {'Ed25519', 'P-256', 'secp256k1'};
 final RegExp _base64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 
@@ -280,6 +286,7 @@ JsonMap buildVNextDidDocument(
   JsonMap deviceSigningVerificationMethod,
   JsonMap deviceE2eeVerificationMethod,
 ) {
+  _requireCanonicalWriteProfiles(device);
   final document = _deepCloneJsonMap(baseDocument);
   for (final field in const [
     'verificationMethod',
@@ -332,6 +339,7 @@ JsonMap addDeviceToDidDocument(
   JsonMap deviceE2eeVerificationMethod,
   Iterable<String> retiredDeviceIds,
 ) {
+  _requireCanonicalWriteProfiles(device);
   final document = _prepareDocumentForMutation(didDocument, rootKeyId);
   final manifest = validateDeviceManifest(document);
   if (manifest == null) {
@@ -367,6 +375,7 @@ JsonMap updateDeviceInDidDocument(
   JsonMap deviceSigningVerificationMethod,
   JsonMap deviceE2eeVerificationMethod,
 ) {
+  _requireCanonicalWriteProfiles(device);
   final document = _prepareDocumentForMutation(didDocument, rootKeyId);
   final manifest = validateDeviceManifest(document);
   if (manifest == null) {
@@ -426,11 +435,26 @@ JsonMap removeDeviceFromDidDocument(
 
 JsonMap _prepareDocumentForMutation(JsonMap didDocument, String rootKeyId) {
   _validateVNextDocument(didDocument, rootKeyId);
+  final manifest = validateDeviceManifest(didDocument);
+  if (manifest == null) {
+    throw const AnpAuthenticationException('deviceManifest is required');
+  }
+  for (final device in manifest.devices) {
+    _requireCanonicalWriteProfiles(device);
+  }
   final document = _deepCloneJsonMap(didDocument);
   // A mutation invalidates any existing root proof. The caller must sign the
   // returned unsigned document instead of accidentally publishing stale proof.
   document.remove('proof');
   return document;
+}
+
+void _requireCanonicalWriteProfiles(DeviceManifestEntry device) {
+  if (device.profiles.any(_legacyDraftFoundationProfiles.contains)) {
+    throw const AnpAuthenticationException(
+      'legacy draft foundation profiles are read-only and cannot be published',
+    );
+  }
 }
 
 void _validateVNextDocument(JsonMap didDocument, String rootKeyId) {
