@@ -80,13 +80,13 @@ OpenMLS rebind and status capabilities.
 
 ## SDKs and releases
 
-Registry status checked on **2026-07-13**. Python and Rust are published at `0.8.9`; Go remains on the previous coordinated `v0.8.8` release. Dart is published separately. TypeScript and Java are usable from source/local builds, but this README does **not** claim public npm or Maven Central publication for them.
+Registry status checked on **2026-08-06**. Python, Rust, and Go are published at the coordinated `0.9.2` release. Dart is published separately. TypeScript and Java are usable from source/local builds, but this README does **not** claim public npm or Maven Central publication for them.
 
 | Language | Package / module | Where to get it | Checked version | Install / use | Examples | Status |
 |---|---|---|---|---|---|---|
-| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.8.9` | `pip install anp` or `pip install "anp[api]"` for OpenANP/FastAPI extras | [examples/python/](examples/python/) | Stable published SDK |
-| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.8.8` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | Stable published SDK; tag format is `golang/vX.Y.Z` |
-| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.8.9` | `cargo add anp` | [rust/examples/](rust/examples/) | Stable published SDK |
+| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.9.2` | `pip install anp` or `pip install "anp[api]"` for OpenANP/FastAPI extras | [examples/python/](examples/python/) | Stable published SDK |
+| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.9.2` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | Stable published SDK; tag format is `golang/vX.Y.Z` |
+| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.9.2` | `cargo add anp` | [rust/examples/](rust/examples/) | Stable published SDK |
 | Dart | `anp` | [pub.dev](https://pub.dev/packages/anp) | `0.8.7` | `dart pub add anp` | [dart/example/](dart/example/) | Published SDK; versioned outside the current Python/Go/Rust release helper |
 | TypeScript | `@anp/typescript-sdk` | Source workspace | local `0.1.0` | `cd typescript/ts_sdk && npm install && npm run build` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Preview/local source; npm registry check returned not found |
 | Java | `com.agentconnect:anp4j`, `com.agentconnect:anp-spring-boot-starter` | Local Maven build | local `1.0.0` | `cd java && mvn clean install -DskipTests` | [java/anp-examples/](java/anp-examples/) | Local SDK; Maven Central metadata check returned not found |
