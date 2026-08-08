@@ -99,6 +99,12 @@ Leaf index, MLS signature key, epoch, authenticator, Commit, Welcome, or private
 state. Products must still obtain and verify current DID documents before
 planning each Add or Remove.
 
+Operations against the same scoped MLS store are serialized by its local
+advisory lock. A brief overlap, such as a foreground notice handler running
+while product repair starts, waits for up to five seconds before returning
+`state_locked`; unrelated lock and storage errors still fail immediately. This
+is a local execution rule and does not change the P6 wire protocol.
+
 For Remove, the target endpoint is authenticated from the locally accepted
 OpenMLS tree rather than required to remain in the current P2 Manifest. This is
 intentional: losing Manifest eligibility is itself a P6 Remove trigger, and the

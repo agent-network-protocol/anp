@@ -12,8 +12,13 @@ use std::{
     fs,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
+
+const STATE_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+const STATE_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Error)]
 pub enum StateLockError {
@@ -45,7 +50,19 @@ impl StateLock {
             .write(true)
             .open(&lock_path)
             .map_err(StateLockError::Open)?;
-        file.try_lock_exclusive().map_err(StateLockError::Locked)?;
+        let started = Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && started.elapsed() < STATE_LOCK_WAIT_TIMEOUT =>
+                {
+                    thread::sleep(STATE_LOCK_RETRY_DELAY);
+                }
+                Err(error) => return Err(StateLockError::Locked(error)),
+            }
+        }
         Ok(Self { file })
     }
 }

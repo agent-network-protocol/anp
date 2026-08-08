@@ -1984,21 +1984,8 @@ fn concurrent_expired_publish_rotation_converges_on_one_attempt() {
         handles.push(std::thread::spawn(move || {
             let store = store(&root, &did, &device_id);
             barrier.wait();
-            for _ in 0..100 {
-                match prepare_or_resume_key_package_publish_v2(
-                    &store,
-                    retry.clone(),
-                    &document,
-                    &key,
-                ) {
-                    Ok(output) => return output,
-                    Err(error) if error.code == "state_locked" => {
-                        std::thread::sleep(std::time::Duration::from_millis(2));
-                    }
-                    Err(error) => panic!("unexpected concurrent rotate error: {error:?}"),
-                }
-            }
-            panic!("concurrent rotate did not acquire the device store lock")
+            prepare_or_resume_key_package_publish_v2(&store, retry, &document, &key)
+                .expect("concurrent rotate waits for the device store lock")
         }));
     }
     let first = handles.remove(0).join().expect("first rotate thread");
