@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +20,20 @@ def _load_release_module():
     spec = importlib.util.spec_from_file_location(module_name, script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load release module from {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_release_launcher_module():
+    """Load the one-command release launcher for unit tests."""
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "scripts" / "release_sdks.py"
+    module_name = "anp_release_sdks_test_module"
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load release launcher from {script_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -185,3 +200,51 @@ def test_version_bump_commit_command_uses_lore_trailers():
     assert "Rejected:" in message_parts[2]
     assert "Tested: uv build" in message_parts[2]
     assert "Not-tested:" in message_parts[2]
+
+
+def test_release_launcher_defaults_to_a_real_coordinated_release(tmp_path):
+    """The short launcher must default to the existing release command."""
+    launcher = _load_release_launcher_module()
+
+    command = launcher.build_release_command(
+        tmp_path,
+        plan=False,
+        version=None,
+        remote="origin",
+    )
+
+    assert command == [
+        sys.executable,
+        str(
+            tmp_path
+            / "skills"
+            / "anp-multilang-release"
+            / "scripts"
+            / "release.py"
+        ),
+        "release",
+        "--remote",
+        "origin",
+    ]
+
+
+def test_release_launcher_plan_runs_without_publishing():
+    """The launcher plan path must reach the helper without registry writes."""
+    repo_root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/release_sdks.py",
+            "--plan",
+            "--version",
+            "0.9.4",
+        ],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Target version: 0.9.4" in result.stdout
+    assert "Publish steps:" in result.stdout
