@@ -44,6 +44,7 @@ describe('AWiki IM client', () => {
       otp: '123456',
     });
     expect(identity.handle).toBe('alice.awiki.test');
+    expect(identity.displayName).toBe('Alice');
     expect(identity.did).toMatch(/^did:wba:awiki\.test:alice:e1_/);
 
     const registration = service.calls.find((call) => call.method === 'register');
@@ -84,16 +85,75 @@ describe('AWiki IM client', () => {
     await restored.dispose();
   });
 
+  test('updates, authenticates, and persists the public display name', async () => {
+    const service = new FakeAwikiService();
+    const statePath = await temporaryStatePath();
+    const client = await registeredClient(service, statePath);
+
+    await expect(client.updateDisplayName({ displayName: '  新昵称  ' })).resolves.toMatchObject({
+      handle: 'alice.awiki.test',
+      displayName: '新昵称',
+    });
+    const updateCall = service.calls.find((call) => call.method === 'update_me');
+    expect(updateCall).toMatchObject({
+      path: '/user-service/v1/did/profile/rpc',
+      method: 'update_me',
+      params: { nick_name: '新昵称' },
+    });
+    expect(updateCall?.headers.authorization).toBe('Bearer test-access-token');
+
+    service.calls.length = 0;
+    service.rpcErrorOnce = { code: 1403 };
+    await expect(client.updateDisplayName({ displayName: '刷新后昵称' })).resolves.toMatchObject({
+      displayName: '刷新后昵称',
+    });
+    expect(service.methods()).toEqual(['update_me', 'get_me', 'update_me']);
+    expect(service.calls.at(-1)?.headers.authorization).toBe('Bearer refreshed');
+
+    await client.dispose();
+    const restored = createClient(service, statePath);
+    await expect(restored.getIdentity()).resolves.toMatchObject({ displayName: '刷新后昵称' });
+    await restored.dispose();
+  });
+
+  test('rejects empty and overlong display names before contacting the service', async () => {
+    const service = new FakeAwikiService();
+    const client = await registeredClient(service);
+
+    await expect(client.updateDisplayName({ displayName: '   ' })).rejects.toMatchObject({
+      code: 'invalid-request',
+    });
+    await expect(client.updateDisplayName({ displayName: '名'.repeat(51) })).rejects.toMatchObject({
+      code: 'invalid-request',
+    });
+    expect(service.calls).toEqual([]);
+    await client.dispose();
+  });
+
   test('lists direct and group conversations, pages history, and sends text', async () => {
     const service = new FakeAwikiService();
     const client = await registeredClient(service);
 
     const conversations = await client.listConversations({ limit: 10 });
-    expect(conversations.items.map((item) => item.kind)).toEqual(['direct', 'group']);
+    expect(conversations.items.map((item) => item.kind)).toEqual(['group', 'direct']);
     const direct = conversations.items.find((item) => item.kind === 'direct');
     const group = conversations.items.find((item) => item.kind === 'group');
-    expect(direct?.title).toBe('bob.awiki.test');
-    expect(group?.title).toBe('Harness Team');
+    expect(direct).toMatchObject({
+      title: 'Bob',
+      displayName: 'Bob',
+      peerHandle: 'bob.awiki.test',
+      unreadCount: 1,
+      lastMessagePreview: 'hello from bob',
+    });
+    expect(group).toMatchObject({
+      title: 'Harness Team',
+      lastMessagePreview: '[附件] incoming.txt',
+    });
+
+    expect(await client.markConversationRead(direct?.id as AwikiConversationId)).toBe(1);
+    expect(
+      (await client.listConversations()).items.find((item) => item.id === direct?.id)
+    ).toMatchObject({ unreadCount: 0 });
 
     const history = await client.getHistory({
       conversationId: direct?.id as AwikiConversationId,
@@ -127,6 +187,48 @@ describe('AWiki IM client', () => {
       security_profile: 'transport-protected',
       target: { kind: 'group', did: FakeAwikiService.GROUP_DID },
     });
+  });
+
+  test('refreshes group preview, timestamp, and supplemental unread state from group history', async () => {
+    const service = new FakeAwikiService();
+    const client = await registeredClient(service);
+
+    const initial = await client.listConversations();
+    const initialGroup = initial.items.find((item) => item.kind === 'group');
+    expect(initialGroup).toMatchObject({
+      lastMessagePreview: '[附件] incoming.txt',
+      unreadCount: 1,
+    });
+    expect(await client.markConversationRead(initialGroup?.id as AwikiConversationId)).toBe(1);
+
+    service.groupHistoryMessages = [
+      {
+        id: `${FakeAwikiService.GROUP_DID}:8`,
+        message_id: 'group-new-message',
+        group_did: FakeAwikiService.GROUP_DID,
+        sender_did: FakeAwikiService.BOB_DID,
+        content: 'group refresh',
+        content_type: 'text/plain',
+        sent_at: '2026-08-14T00:04:00Z',
+      },
+    ];
+    const refreshed = await client.listConversations();
+    const refreshedGroup = refreshed.items.find((item) => item.kind === 'group');
+    expect(refreshedGroup).toMatchObject({
+      lastMessageAt: Date.parse('2026-08-14T00:04:00Z'),
+      lastMessagePreview: 'group refresh',
+      unreadCount: 1,
+    });
+
+    expect(await client.markConversationRead(refreshedGroup?.id as AwikiConversationId)).toBe(1);
+    const afterRead = await client.listConversations();
+    expect(afterRead.items.find((item) => item.id === refreshedGroup?.id)).toMatchObject({
+      lastMessageAt: Date.parse('2026-08-14T00:04:00Z'),
+      lastMessagePreview: 'group refresh',
+      unreadCount: 0,
+    });
+    expect(service.calls.filter((call) => call.method === 'inbox.mark_read')).toHaveLength(0);
+    await client.dispose();
   });
 
   test('uploads, commits, sends, downloads, and verifies one attachment', async () => {
@@ -225,6 +327,7 @@ describe('AWiki IM client', () => {
     });
 
     expect(history.items[0]?.id).toBe('group-wire-message');
+    expect(history.items[0]?.senderDisplayName).toBe('Bob');
     if (history.items[0]?.content.kind !== 'attachment') throw new Error('attachment expected');
     await client.downloadAttachment({
       attachmentId: history.items[0].content.attachment.id,
@@ -460,11 +563,11 @@ describe('AWiki IM client', () => {
     ).rejects.toMatchObject({ code: 'remote' });
 
     const groupService = new FakeAwikiService();
-    groupService.groupHistoryWrongGroup = true;
     const groupClient = await registeredClient(groupService);
     const group = (await groupClient.listConversations()).items.find(
       (conversation) => conversation.kind === 'group'
     );
+    groupService.groupHistoryWrongGroup = true;
     await expect(
       groupClient.getHistory({ conversationId: group?.id as AwikiConversationId })
     ).rejects.toMatchObject({ code: 'remote' });
@@ -535,10 +638,111 @@ describe('AWiki IM client', () => {
       ).rejects.toMatchObject({ code: value.expected });
     }
   });
+
+  test('resolves a Handle through User Service lookup and rejects a missing peer', async () => {
+    const unregistered = createClient(new FakeAwikiService(), await temporaryStatePath());
+    await expect(unregistered.resolvePeer('bob.awiki.test')).rejects.toMatchObject({
+      code: 'not-registered',
+    });
+    await unregistered.dispose();
+
+    const service = new FakeAwikiService();
+    const client = await registeredClient(service);
+    const resolved = await client.resolvePeer('bob.awiki.test');
+    expect(resolved).toMatchObject({
+      did: FakeAwikiService.BOB_DID,
+      handle: 'bob.awiki.test',
+      displayName: 'Bob',
+    });
+    expect(resolved.conversationId).toBeTruthy();
+    expect(service.calls.some((call) => call.method === 'lookup')).toBe(true);
+    await expect(client.resolvePeer('   ')).rejects.toMatchObject({ code: 'invalid-request' });
+    await expect(client.resolvePeer('missing.awiki.test')).rejects.toMatchObject({
+      code: 'not-found',
+    });
+    await client.dispose();
+  });
+
+  test('refreshes and persists the latest peer display name when resolving an existing DID', async () => {
+    const service = new FakeAwikiService();
+    const statePath = await temporaryStatePath();
+    const client = await registeredClient(service, statePath);
+    await client.resolvePeer('bob.awiki.test');
+
+    service.bobDisplayName = 'Robert';
+    service.calls.length = 0;
+    const refreshed = await client.resolvePeer(FakeAwikiService.BOB_DID);
+    expect(refreshed).toMatchObject({
+      did: FakeAwikiService.BOB_DID,
+      handle: 'bob.awiki.test',
+      displayName: 'Robert',
+    });
+    expect(
+      service.calls.some((call) => call.method === 'GET' && call.path === '/.well-known/handle/bob')
+    ).toBe(true);
+
+    await client.getHistory({ conversationId: refreshed.conversationId });
+    const afterHistory = await client.listConversations();
+    expect(afterHistory.items.find((item) => item.kind === 'direct')).toMatchObject({
+      kind: 'direct',
+      displayName: 'Robert',
+      title: 'Robert',
+    });
+
+    const persisted = JSON.parse(await readFile(statePath, 'utf8')) as {
+      conversations: Record<string, { conversation: { displayName?: string; title: string } }>;
+    };
+    expect(
+      Object.values(persisted.conversations).some(
+        ({ conversation }) =>
+          conversation.displayName === 'Robert' && conversation.title === 'Robert'
+      )
+    ).toBe(true);
+
+    await client.dispose();
+    const restored = createClient(service, statePath);
+    const restoredConversations = await restored.listConversations();
+    expect(restoredConversations.items.find((item) => item.kind === 'direct')).toMatchObject({
+      kind: 'direct',
+      displayName: 'Robert',
+      title: 'Robert',
+    });
+    await restored.dispose();
+  });
+
+  test('titles a handle-less inbox direct chat from the WNS display name', async () => {
+    const service = new FakeAwikiService();
+    service.omitDirectHandle = true;
+    const client = await registeredClient(service);
+    const conversations = await client.listConversations();
+    const direct = conversations.items.find((item) => item.kind === 'direct');
+    expect(direct).toMatchObject({
+      kind: 'direct',
+      displayName: 'Bob',
+      title: 'Bob',
+      peerHandle: 'bob.awiki.test',
+    });
+    expect(direct?.title).not.toMatch(/^did:/);
+    const wellKnown = service.calls.filter(
+      (call) => call.method === 'GET' && call.path.startsWith('/.well-known/handle/')
+    );
+    expect(wellKnown).toHaveLength(1);
+    service.calls.length = 0;
+    await client.listConversations();
+    expect(
+      service.calls.filter(
+        (call) => call.method === 'GET' && call.path.startsWith('/.well-known/handle/')
+      )
+    ).toHaveLength(0);
+    await client.dispose();
+  });
 });
 
-async function registeredClient(service: FakeAwikiService): Promise<AwikiImClient> {
-  const client = createClient(service, await temporaryStatePath());
+async function registeredClient(
+  service: FakeAwikiService,
+  statePath?: string
+): Promise<AwikiImClient> {
+  const client = createClient(service, statePath ?? (await temporaryStatePath()));
   await client.sendRegistrationOtp({
     handle: 'alice.awiki.test',
     phone: '+8613800138000',
@@ -632,6 +836,11 @@ class FakeAwikiService {
   public commitObjectUri = 'https://objects.awiki.test/objects/object-1';
   public envelopeFaultOnce?: 'wrong-id' | 'missing-version' | 'both' | 'error-scalar';
   public rpcErrorOnce?: { readonly code: number; readonly serviceCode?: string };
+  public omitDirectHandle = false;
+  public bobDisplayName = 'Bob';
+  public bobMessageDisplayName = 'Bob';
+  public groupHistoryMessages?: readonly Record<string, unknown>[];
+  private readonly readMessageIds = new Set<string>();
   public waitForMethod?: {
     readonly method: string;
     readonly started: () => void;
@@ -657,6 +866,40 @@ class FakeAwikiService {
     }
     if (init?.method === 'GET') {
       this.calls.push({ path: url.pathname, method: 'GET', params: {}, headers });
+      if (url.pathname.startsWith('/.well-known/handle/')) {
+        const local = url.pathname.slice('/.well-known/handle/'.length);
+        if (local === 'alice' && this.aliceDid) {
+          return Response.json({
+            handle: 'alice.awiki.test',
+            did: this.aliceDid,
+            status: 'active',
+            binding_generation: '1',
+            profile: {
+              type: 'DIDSubjectProfile',
+              subject_did: this.aliceDid,
+              subject_type: 'person',
+              handle: 'alice.awiki.test',
+              display_name: 'Alice',
+            },
+          });
+        }
+        if (local !== 'bob') {
+          return new Response('not found', { status: 404 });
+        }
+        return Response.json({
+          handle: 'bob.awiki.test',
+          did: FakeAwikiService.BOB_DID,
+          status: 'active',
+          binding_generation: '1',
+          profile: {
+            type: 'DIDSubjectProfile',
+            subject_did: FakeAwikiService.BOB_DID,
+            subject_type: 'person',
+            handle: 'bob.awiki.test',
+            display_name: this.bobDisplayName,
+          },
+        });
+      }
       if (url.pathname.endsWith('/did.json')) {
         return Response.json(
           this.returnInvalidDidDocument
@@ -740,12 +983,19 @@ class FakeAwikiService {
           binding_generation: '1',
         });
       }
-      case 'lookup':
+      case 'update_me':
+        return rpcResult({ display_name: String(params.nick_name) });
+      case 'lookup': {
+        const handle = String(params.handle ?? '').toLowerCase();
+        if (handle.includes('missing')) {
+          return rpcError(1404, 'handle not found', { anp_code: 'anp.target_not_found' });
+        }
         return rpcResult({
           did: FakeAwikiService.BOB_DID,
           handle: 'bob',
           full_handle: 'bob.awiki.test',
         });
+      }
       case 'group.list':
         return rpcResult({
           groups: [
@@ -762,7 +1012,7 @@ class FakeAwikiService {
             {
               id: 'inbox-1',
               sender_did: FakeAwikiService.BOB_DID,
-              sender_handle: 'bob.awiki.test',
+              ...(this.omitDirectHandle ? {} : { sender_handle: 'bob.awiki.test' }),
               receiver_did: this.aliceDid,
               content: 'hello from bob',
               content_type: 'text/plain',
@@ -776,14 +1026,25 @@ class FakeAwikiService {
                     : []),
                 ]
               : []),
-          ],
+          ].filter(
+            (message) => typeof message.id !== 'string' || !this.readMessageIds.has(message.id)
+          ),
         });
+      case 'inbox.mark_read': {
+        const body = params.body as { message_ids?: unknown };
+        const messageIds = Array.isArray(body.message_ids)
+          ? body.message_ids.filter((value): value is string => typeof value === 'string')
+          : [];
+        for (const messageId of messageIds) this.readMessageIds.add(messageId);
+        return rpcResult({ updated_count: messageIds.length });
+      }
       case 'direct.get_history':
         return rpcResult({
           messages: [
             {
               id: 'history-1',
               sender_did: FakeAwikiService.BOB_DID,
+              sender_display_name: this.bobMessageDisplayName,
               receiver_did: this.directHistoryWrongPeer
                 ? 'did:wba:awiki.test:mallory'
                 : this.aliceDid,
@@ -797,7 +1058,7 @@ class FakeAwikiService {
         });
       case 'group.list_messages':
         return rpcResult({
-          messages: [
+          messages: this.groupHistoryMessages ?? [
             {
               ...this.incomingAttachmentMessage('group-wire-message'),
               id: `${FakeAwikiService.GROUP_DID}:7`,

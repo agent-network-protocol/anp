@@ -5,12 +5,16 @@ import { AwikiMessagingRuntime } from './messaging.js';
 import { AwikiImTransport, validateServiceBaseUrl } from './protocol.js';
 import { AwikiImStateStore } from './storage.js';
 import type {
+  AwikiDid,
+  AwikiHandle,
   AwikiIdentity,
   AwikiImClient,
+  AwikiResolvedPeer,
   AwikiImClientOptions,
   AwikiPageRequest,
   AwikiPage,
   AwikiConversation,
+  AwikiConversationId,
   GetAwikiHistoryRequest,
   AwikiMessage,
   SendAwikiTextRequest,
@@ -20,6 +24,7 @@ import type {
   RegisterIdentityRequest,
   SendRegistrationOtpRequest,
   SendRegistrationOtpResult,
+  UpdateAwikiDisplayNameRequest,
 } from './types.js';
 
 /** Create one high-level Node.js AWiki IM client. */
@@ -98,7 +103,10 @@ class DefaultAwikiImClient implements AwikiImClient {
   }
 
   public async getIdentity(): Promise<AwikiIdentity | null> {
-    return this.run(() => Promise.resolve(structuredClone(this.identity.getIdentity())));
+    return this.run(async () => {
+      await this.identity.hydrateDisplayName();
+      return structuredClone(this.identity.getIdentity());
+    });
   }
 
   public async sendRegistrationOtp(
@@ -111,6 +119,23 @@ class DefaultAwikiImClient implements AwikiImClient {
     return this.run(() => this.identity.registerIdentity(request));
   }
 
+  public async updateDisplayName(request: UpdateAwikiDisplayNameRequest): Promise<AwikiIdentity> {
+    return this.run(() => this.identity.updateDisplayName(request.displayName));
+  }
+
+  public async resolvePeer(peer: string): Promise<AwikiResolvedPeer> {
+    return this.run(async () => {
+      this.identity.requireSecrets();
+      const resolved = await this.messaging.resolveTarget({ kind: 'direct', peer });
+      return {
+        did: resolved.did as AwikiDid,
+        conversationId: resolved.conversationId,
+        ...(resolved.handle === undefined ? {} : { handle: resolved.handle as AwikiHandle }),
+        ...(resolved.displayName === undefined ? {} : { displayName: resolved.displayName }),
+      };
+    });
+  }
+
   public async listConversations(
     request?: AwikiPageRequest
   ): Promise<AwikiPage<AwikiConversation>> {
@@ -119,6 +144,10 @@ class DefaultAwikiImClient implements AwikiImClient {
 
   public async getHistory(request: GetAwikiHistoryRequest): Promise<AwikiPage<AwikiMessage>> {
     return this.run(() => this.messaging.getHistory(request));
+  }
+
+  public async markConversationRead(conversationId: AwikiConversationId): Promise<number> {
+    return this.run(() => this.messaging.markConversationRead(conversationId));
   }
 
   public async sendText(request: SendAwikiTextRequest): Promise<AwikiMessage> {

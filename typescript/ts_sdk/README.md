@@ -142,7 +142,9 @@ Low-level Rust-aligned names are still exported for compatibility.
 ### im
 
 - Register and restore one AWiki identity
-- List persisted known direct conversations, current unread senders, and existing groups
+- Read and update the identity's public WNS display name
+- Resolve a direct peer's latest WNS display name and persist it with the known conversation; later history reads preserve that refreshed Profile instead of replacing it with an older per-message name snapshot
+- List persisted known direct conversations, current unread senders, and existing groups with unread counts and newest-message previews
 - Read paginated history and send idempotent text messages
 - Upload, send, download, and verify one P7 attachment per message
 
@@ -156,7 +158,7 @@ Attachments are limited by `attachmentMaxBytes`, use transport protection with `
 
 Text and attachment idempotency keys are persisted with a request fingerprint, fixed wire IDs, fixed timestamps, progress stage, and completed public result. Reusing a key for a different request fails with `conflict`. After restart or response loss, attachment upload resumes from its durable stage; a committed-slot retry does not upload the object again.
 
-`listConversations()` combines durable conversations already seen by this client with the current unread inbox and all current groups. A fresh Legacy installation cannot reconstruct every previously read direct conversation because the Legacy service does not expose a complete direct-conversation roster.
+`listConversations()` combines durable conversations already seen by this client with the current unread inbox and all current groups. Each observed conversation can carry a display-only newest-message preview: text is preserved, while image and file messages use a type-and-filename label. Because the Legacy group roster omits message summaries, each list refresh reads the newest bounded Group history page, updates its preview and timestamp, and supplements unread state for newly observed incoming Group messages that the Legacy inbox omitted. Opening that Group clears the in-memory supplemental count; durable cross-restart Group read state remains outside the Legacy API. A fresh Legacy installation cannot reconstruct every previously read direct conversation because the Legacy service does not expose a complete direct-conversation roster.
 
 `getHistory()` returns each page in ascending timestamp order. A call without a cursor returns the newest service page; its opaque cursor is bound to the conversation and requests the next older page. The terminal page has `hasMore: false` and no high-water cursor. Legacy history uses offset pagination, so concurrent new deliveries can shift offsets; callers should deduplicate by message ID when merging pages. For refresh, call without a cursor and merge the newest page by message ID.
 
