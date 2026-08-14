@@ -2,9 +2,11 @@ import { describe, expect, test } from 'vitest';
 
 import {
   DidProfile,
+  AwikiImError,
   authentication,
   createDidDocument,
   createLegacyAuthHeader,
+  createAwikiImClient,
   createProof,
   parseUri,
   proof,
@@ -50,5 +52,13 @@ describe('public API aliases', () => {
     expect(parseUri('wba://alice.example.com').handle).toBe('alice.example.com');
     expect(wns.buildUri('alice', 'example.com')).toBe('wba://alice.example.com');
     expect(resolveUri).toBeTypeOf('function');
+  });
+
+  test('exposes the AWiki IM factory and error value from the package root', () => {
+    expect(createAwikiImClient).toBeTypeOf('function');
+    expect(new AwikiImError('remote', 'test')).toMatchObject({
+      name: 'AwikiImError',
+      code: 'remote',
+    });
   });
 });

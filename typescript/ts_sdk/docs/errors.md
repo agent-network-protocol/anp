@@ -27,12 +27,32 @@ All SDK-specific base errors extend `ANPError`.
 
 - `DidWbaVerifierError`
 
+### AWiki IM error
+
+`AwikiImError` exposes a stable `code`, a sanitized `message`, and an optional HTTP `status`. Remote response bodies, access tokens, private keys, and protocol challenge details are not copied into public error messages. JSON-RPC responses require version `2.0`, the exact request ID, and exactly one non-null `result` or `error`; an explicit `error: null` on success or `result: null` on failure is accepted.
+
+The stable codes are:
+
+- `not-registered`
+- `already-registered`
+- `invalid-request`
+- `invalid-otp`
+- `challenge-expired`
+- `handle-unavailable`
+- `not-found`
+- `forbidden`
+- `conflict`
+- `rate-limited`
+- `network`
+- `remote`
+
 ## Example pattern
 
 ```ts
 import {
   ANPError,
   AuthenticationError,
+  AwikiImError,
   HandleNotFoundError,
   NetworkError,
   ProofError,
@@ -41,7 +61,9 @@ import {
 try {
   // SDK call
 } catch (error) {
-  if (error instanceof HandleNotFoundError) {
+  if (error instanceof AwikiImError) {
+    console.error('AWiki IM error:', error.code, error.message, error.status);
+  } else if (error instanceof HandleNotFoundError) {
     console.error('Handle not found:', error.message);
   } else if (error instanceof AuthenticationError) {
     console.error('Authentication failed:', error.message);

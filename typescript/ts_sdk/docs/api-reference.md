@@ -46,6 +46,15 @@ This draft documents the stable public API for the current TypeScript SDK.
 | `createHandleServiceEntry()` | Create a DID `ANPHandleService` entry |
 | `extractHandleServices()` | Extract `ANPHandleService` entries from a DID document |
 
+### AWiki IM
+
+| Export | Description |
+|---|---|
+| `createAwikiImClient(options)` | Create one persistent high-level AWiki IM client |
+| `AwikiImError` | Stable, sanitized failure type with `code` and optional HTTP `status` |
+
+`createAwikiImClient()` is synchronous. Methods that load state or use the network are asynchronous.
+
 ## Namespace objects
 
 These namespace objects are recommended when you want a more stable import shape.
@@ -179,6 +188,25 @@ interface BindingVerificationOptions {
 }
 ```
 
+### `AwikiImClientOptions`
+
+```ts
+interface AwikiImClientOptions {
+  userServiceUrl: string;
+  userServiceDomain: string;
+  messageServiceUrl: string;
+  messageServicePublicUrl: string;
+  messageServiceDid: string;
+  allowedAttachmentOrigins: readonly string[];
+  attachmentMaxBytes: number;
+  allowInsecureLoopbackForTesting?: boolean;
+  statePath: string;
+  fetch?: typeof globalThis.fetch;
+}
+```
+
+Service URLs must use HTTPS. Explicit test environments can set `allowInsecureLoopbackForTesting` to use HTTP loopback URLs. `userServiceDomain` is the handle domain and is independent of the User Service API host. `messageServiceUrl` is the callable Home API base, while `messageServicePublicUrl` is the base advertised in the identity DID document. `messageServiceDid` must be a bare-domain `did:wba` value such as `did:wba:messages.example`. `allowedAttachmentOrigins` is an exact origin allowlist for every trusted sender DID, attachment endpoint, upload, and object origin. `attachmentMaxBytes` is a positive safe integer enforced for uploads and streamed downloads. `fetch` is an optional dependency-injection point for tests and controlled runtimes.
+
 ## Main classes
 
 ### `DidWbaVerifier`
@@ -202,6 +230,30 @@ Primary methods:
 - `updateToken(serverUrl, headers)`
 - `clearToken(serverUrl)`
 - `clearAllTokens()`
+
+### `AwikiImClient`
+
+Primary methods:
+
+- `getIdentity()`
+- `sendRegistrationOtp({ handle, phone })`
+- `registerIdentity({ handle, phone, otp })`
+- `listConversations({ cursor?, limit? })`
+- `getHistory({ conversationId, cursor?, limit? })`
+- `sendText({ target, text, idempotencyKey })`
+- `sendAttachment({ target, attachment, caption?, idempotencyKey })`
+- `downloadAttachment({ attachmentId, messageId })`
+- `dispose()`
+
+The client owns one Legacy single-device identity at `statePath`. Public identity values never contain the private key or access token. The identity document is created with E2EE disabled and does not advertise unused E2EE key agreement material. The legacy OTP request sends only `phone` to AWiki; `handle` is retained locally to bind the challenge to registration.
+
+`dispose()` rejects new operations, aborts owned network requests, joins every operation that already entered the client, and is idempotent. Its promise does not settle while an entered registration, state mutation, message send, or attachment operation is still unwinding.
+
+Direct targets accept a handle or DID. Group targets refer to an existing group ID or DID; this API does not create groups. Text and attachment sends require caller-provided idempotency keys. One attachment up to the configured `attachmentMaxBytes` is supported per message. Downloads require both IDs because an attachment ID is not globally unique across messages, and returned bytes have passed exact size and SHA-256 verification. Idempotency request fingerprints, fixed wire metadata, progress stages, and completed results survive restart; using one key for a different request fails with `conflict`.
+
+`listConversations()` returns persisted known direct conversations plus senders present in the current unread inbox and current groups. A fresh Legacy client cannot recover every previously read direct conversation because there is no authoritative Legacy direct roster.
+
+`getHistory()` returns messages in ascending time order within each page. No cursor means the newest page; `nextCursor` is opaque, bound to the conversation and direction, and requests an older page using the Legacy offset field. The final page has no cursor. New deliveries can shift offset pages, so clients merge and deduplicate by message ID. Calling without a cursor again refreshes the newest page; the history cursor is not an incremental high-water mark.
 
 ## Compatibility note
 
