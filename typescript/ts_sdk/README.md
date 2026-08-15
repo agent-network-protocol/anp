@@ -186,4 +186,4 @@ The current test suite includes:
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE).

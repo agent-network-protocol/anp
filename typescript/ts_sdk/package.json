@@ -46,16 +46,16 @@
     "ai-agent"
   ],
   "author": "ANP Community",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chgaowei/AgentNetworkProtocol.git",
-    "directory": "ts_sdk"
+    "url": "https://github.com/agent-network-protocol/anp.git",
+    "directory": "typescript/ts_sdk"
   },
   "bugs": {
-    "url": "https://github.com/chgaowei/AgentNetworkProtocol/issues"
+    "url": "https://github.com/agent-network-protocol/anp/issues"
   },
-  "homepage": "https://github.com/chgaowei/AgentNetworkProtocol#readme",
+  "homepage": "https://github.com/agent-network-protocol/anp#readme",
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
