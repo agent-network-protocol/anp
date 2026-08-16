@@ -3042,6 +3042,18 @@ fn process_welcome_with_scope(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
+    let replace_removed_group = matches!(
+        binding_status(
+            &scope.app_conn,
+            &input.recipient_did,
+            &input.recipient_device_id,
+            &input.group_did,
+            &input.request_id,
+        )
+        .map_err(GroupMlsOperationError::from)?
+        .as_deref(),
+        Some("removed")
+    );
     if let Some(existing) = active_binding(
         &scope.app_conn,
         &input.recipient_did,
@@ -3084,16 +3096,24 @@ fn process_welcome_with_scope(
             .map_err(GroupMlsOperationError::from)?,
     )
     .map_err(|err| mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id))?;
-    let staged =
+    let mut join_builder =
         StagedWelcome::build_from_welcome(&scope.provider, &v2_group_join_config(), welcome)
             .map_err(|err| {
                 mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id)
             })?
-            .with_ratchet_tree(tree)
-            .build()
-            .map_err(|err| {
-                mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id)
-            })?;
+            .with_ratchet_tree(tree);
+    if replace_removed_group {
+        // A self-Remove keeps the authenticated prior epoch for audit and
+        // exclusion checks. A later owner-controlled Add uses a fresh
+        // KeyPackage and Welcome for the same MLS group id, so OpenMLS must
+        // replace that now-inactive local group instead of rejecting it as a
+        // duplicate. Active and other non-terminal bindings never take this
+        // path.
+        join_builder = join_builder.replace_old_group();
+    }
+    let staged = join_builder
+        .build()
+        .map_err(|err| mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id))?;
     if encode_b64u(staged.group_context().group_id().as_slice()) != input.crypto_group_id_b64u
         || staged.group_context().epoch().as_u64() != target_epoch
     {
