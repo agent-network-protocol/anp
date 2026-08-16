@@ -64,6 +64,15 @@ export interface DidDocument {
   keyAgreement?: Array<string | VerificationMethodRecord>;
   service?: ServiceRecord[];
   proof?: ProofRecord;
+  deviceManifest?: {
+    type: string;
+    devices: Array<{
+      device_id: string;
+      signing_key_id: string;
+      e2ee_key_id: string;
+      profiles: string[];
+    }>;
+  };
 }
 
 export interface DidDocumentOptions {

@@ -6,6 +6,7 @@ export * from './http-signatures.js';
 export * from './did-wba-authenticator.js';
 export * from './did-wba-verifier.js';
 export * from './federation.js';
+export * from './device-manifest.js';
 
 export {
   createDidWbaDocument as createDidDocument,
@@ -60,6 +61,7 @@ import {
 import { DIDWbaAuthHeader } from './did-wba-authenticator.js';
 import { DidWbaVerifier } from './did-wba-verifier.js';
 import { verifyFederatedHttpRequest } from './federation.js';
+import * as deviceManifest from './device-manifest.js';
 
 export const didDocuments = {
   ANP_MESSAGE_SERVICE_TYPE,
@@ -93,6 +95,7 @@ export const authentication = {
   didDocuments,
   legacyAuth,
   httpSignatures,
+  deviceManifest,
   federation: {
     verifyRequest: verifyFederatedHttpRequest,
   },

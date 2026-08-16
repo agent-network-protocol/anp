@@ -26,6 +26,14 @@ export class ProofError extends ANPError {
   }
 }
 
+export class DeviceManifestError extends AuthenticationError {
+  constructor(message: string, cause?: Error) {
+    super(message, cause);
+    this.name = 'DeviceManifestError';
+    Object.defineProperty(this, 'code', { value: 'DEVICE_MANIFEST_ERROR' });
+  }
+}
+
 export class NetworkError extends ANPError {
   constructor(message: string, public readonly statusCode?: number, cause?: Error) {
     super(message, 'NETWORK_ERROR', cause);

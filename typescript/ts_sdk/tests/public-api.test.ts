@@ -4,16 +4,22 @@ import {
   DidProfile,
   AwikiImError,
   authentication,
+  buildVnextDidDocument,
   createDidDocument,
   createLegacyAuthHeader,
   createAwikiImClient,
   createProof,
+  DeviceManifestEntry,
+  generateRfc9421OriginProof,
   parseUri,
   proof,
   resolveUri,
+  validateDeviceManifest,
   verifyProof,
+  verifyRfc9421OriginProof,
   wns,
 } from '../src/index.js';
+import * as sdk from '../src/index.js';
 
 describe('public API aliases', () => {
   test('exposes stable authentication aliases and namespace', () => {
@@ -46,6 +52,15 @@ describe('public API aliases', () => {
     expect(proof.verify(signed, bundle.keys['key-1'].publicKeyPem)).toBe(true);
     expect(proof.im.generateImProof).toBeTypeOf('function');
     expect(proof.im.verifyImProof).toBeTypeOf('function');
+    expect(generateRfc9421OriginProof).toBeTypeOf('function');
+    expect(verifyRfc9421OriginProof).toBeTypeOf('function');
+    expect(proof.rfc9421.generateRfc9421OriginProof).toBeTypeOf('function');
+    expect(DeviceManifestEntry).toBeTypeOf('function');
+    expect(buildVnextDidDocument).toBeTypeOf('function');
+    expect(validateDeviceManifest).toBeTypeOf('function');
+    expect(authentication.deviceManifest.buildVnextDidDocument).toBeTypeOf('function');
+    expect('buildOriginAuthentication' in sdk).toBe(false);
+    expect((sdk as Record<string, unknown>).buildOriginAuthentication).toBeUndefined();
   });
 
   test('exposes stable wns aliases and namespace', async () => {
