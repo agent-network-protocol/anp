@@ -1,5 +1,5 @@
 {
-  "name": "@anp/typescript-sdk",
+  "name": "@awiki/anp-typescript-sdk",
   "version": "0.2.0",
   "description": "TypeScript SDK for Agent Network Protocol (ANP)",
   "type": "module",

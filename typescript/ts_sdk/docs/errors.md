@@ -56,7 +56,7 @@ import {
   HandleNotFoundError,
   NetworkError,
   ProofError,
-} from '@anp/typescript-sdk';
+} from '@awiki/anp-typescript-sdk';
 
 try {
   // SDK call

@@ -11,7 +11,7 @@ Runtime target: **Node 20+**
 ## Installation
 
 ```bash
-npm install @anp/typescript-sdk
+npm install @awiki/anp-typescript-sdk
 ```
 
 ## Stable Public API
@@ -27,7 +27,7 @@ import {
   verifyProof,
   verifyBinding,
   wns,
-} from '@anp/typescript-sdk';
+} from '@awiki/anp-typescript-sdk';
 ```
 
 You can choose either style:
@@ -38,7 +38,7 @@ You can choose either style:
 ## 1. Create a DID document
 
 ```ts
-import { DidProfile, createDidDocument } from '@anp/typescript-sdk';
+import { DidProfile, createDidDocument } from '@awiki/anp-typescript-sdk';
 
 const bundle = createDidDocument('example.com', {
   pathSegments: ['agents', 'demo'],
@@ -54,7 +54,7 @@ console.log(bundle.keys['key-1'].privateKeyPem);
 ### Legacy DIDWba header
 
 ```ts
-import { createLegacyAuthHeader } from '@anp/typescript-sdk';
+import { createLegacyAuthHeader } from '@awiki/anp-typescript-sdk';
 
 const header = createLegacyAuthHeader(
   bundle.didDocument,
@@ -66,7 +66,7 @@ const header = createLegacyAuthHeader(
 ### HTTP Message Signatures
 
 ```ts
-import { createSignatureHeaders } from '@anp/typescript-sdk';
+import { createSignatureHeaders } from '@awiki/anp-typescript-sdk';
 
 const headers = createSignatureHeaders(
   bundle.didDocument,
@@ -81,7 +81,7 @@ const headers = createSignatureHeaders(
 ## 3. Verify incoming requests
 
 ```ts
-import { DidWbaVerifier } from '@anp/typescript-sdk';
+import { DidWbaVerifier } from '@awiki/anp-typescript-sdk';
 
 const verifier = new DidWbaVerifier({
   jwtPrivateKey: 'demo-secret',
@@ -100,7 +100,7 @@ const result = await verifier.verifyRequestWithDidDocument(
 ## 4. Create and verify proofs
 
 ```ts
-import { createProof, verifyProof } from '@anp/typescript-sdk';
+import { createProof, verifyProof } from '@awiki/anp-typescript-sdk';
 
 const signedDocument = createProof(
   {
@@ -117,7 +117,7 @@ const valid = verifyProof(signedDocument, bundle.keys['key-1'].publicKeyPem);
 ## 5. Work with WNS handles
 
 ```ts
-import { parseUri, validateHandle, verifyBinding } from '@anp/typescript-sdk';
+import { parseUri, validateHandle, verifyBinding } from '@awiki/anp-typescript-sdk';
 
 const [localPart, domain] = validateHandle('Alice.Example.COM');
 const parsed = parseUri('wba://alice.example.com');

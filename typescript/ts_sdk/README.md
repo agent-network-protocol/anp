@@ -9,10 +9,12 @@ TypeScript SDK for the Agent Network Protocol focused on four Rust-aligned modul
 
 Runtime target: **Node 20+**
 
+The npm package is published under the AWiki scope from this upstream ANP repository.
+
 ## Installation
 
 ```bash
-npm install @anp/typescript-sdk
+npm install @awiki/anp-typescript-sdk
 ```
 
 ## Quick Start
@@ -24,7 +26,7 @@ import {
   createLegacyAuthHeader,
   createSignatureHeaders,
   verifyBinding,
-} from '@anp/typescript-sdk';
+} from '@awiki/anp-typescript-sdk';
 
 const bundle = createDidDocument('example.com', {
   pathSegments: ['agents', 'demo'],
@@ -66,7 +68,7 @@ const binding = await verifyBinding('alice.example.com', {
 ### AWiki IM
 
 ```ts
-import { createAwikiImClient } from '@anp/typescript-sdk';
+import { createAwikiImClient } from '@awiki/anp-typescript-sdk';
 
 const im = createAwikiImClient({
   userServiceUrl: 'https://auth.internal.example',
