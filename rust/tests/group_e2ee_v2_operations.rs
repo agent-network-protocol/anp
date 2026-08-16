@@ -3146,15 +3146,88 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     assert!(decrypt_v2(
         &a2_store,
         V2DecryptInput {
-            recipient_did: alice.did,
+            recipient_did: alice.did.clone(),
             recipient_device_id: a2_device.device_id.clone(),
             originating_meta: future_meta,
             group_cipher_object: future,
-            sender_did_document: owner.document,
+            sender_did_document: owner.document.clone(),
             now: NOW.to_owned(),
             draft_extension_negotiated: true,
             request_id: "req-decrypt-future-a2".to_owned(),
         },
     )
     .is_err());
+
+    let rejoin_a2_package = generate_key_package_v2(
+        &a2_store,
+        V2GenerateKeyPackageInput {
+            owner_did: alice.did.clone(),
+            owner_device_id: a2_device.device_id.clone(),
+            verification_method: a2_device.signing_key_id.clone(),
+            key_package_id: "kp-a2-rejoin".to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-kp-a2-rejoin".to_owned(),
+        },
+        &alice.document,
+        &signing_key(a2_device),
+    )
+    .expect("removed A2 publishes a fresh rejoin KeyPackage");
+    let rejoin_a2 = add_member_prepare_v2(
+        &owner_store,
+        V2AddMemberInput {
+            meta: control_meta(&owner.did, &owner_device.device_id, "op-rejoin-a2"),
+            group_state_ref: state_ref(5),
+            group_key_package: rejoin_a2_package,
+            member_did_document: alice.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-rejoin-a2".to_owned(),
+            request_id: "req-rejoin-a2".to_owned(),
+        },
+    )
+    .expect("owner prepares A2 rejoin with the fresh KeyPackage");
+    force_pending_status(&owner_store, &rejoin_a2.pending_commit_id, "accepted");
+    finalize_commit_v2(
+        &owner_store,
+        V2FinalizeInput {
+            pending_commit_id: rejoin_a2.pending_commit_id,
+            request_id: "req-finalize-rejoin-a2".to_owned(),
+        },
+    )
+    .expect("owner finalizes A2 rejoin");
+    process_welcome_v2(
+        &a2_store,
+        V2ProcessWelcomeInput {
+            recipient_did: alice.did.clone(),
+            recipient_device_id: a2_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            group_state_ref: rejoin_a2.body.group_state_ref,
+            crypto_group_id_b64u: rejoin_a2.body.crypto_group_id_b64u,
+            epoch: rejoin_a2.body.epoch,
+            welcome_b64u: rejoin_a2.body.welcome_b64u,
+            ratchet_tree_b64u: rejoin_a2.body.ratchet_tree_b64u,
+            member_documents: member_documents(&owner, &alice),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-welcome-a2-rejoin".to_owned(),
+        },
+    )
+    .expect("removed A2 replaces its inactive local group from the fresh Welcome");
+    assert_eq!(
+        inspect_local_group_v2(
+            &a2_store,
+            V2InspectLocalGroupInput {
+                owner_did: alice.did.clone(),
+                owner_device_id: a2_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-inspect-a2-after-rejoin".to_owned(),
+            },
+        )
+        .expect("rejoined A2 has local MLS state")
+        .readiness,
+        V2LocalGroupReadiness::Active
+    );
 }
