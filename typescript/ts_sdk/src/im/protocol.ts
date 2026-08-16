@@ -12,6 +12,8 @@ import type { JsonRpcErrorValue } from './internal.js';
 export const HANDLE_RPC_PATH = '/user-service/v1/handle/rpc';
 /** User Service DID authentication RPC path used by the AWiki Core client. */
 export const DID_AUTH_RPC_PATH = '/user-service/v1/did-auth/rpc';
+/** User Service DID profile RPC path used for authenticated profile changes. */
+export const DID_PROFILE_RPC_PATH = '/user-service/v1/did/profile/rpc';
 /** Local Message Service RPC path used by the AWiki Core client. */
 export const MESSAGE_RPC_PATH = '/im/rpc';
 

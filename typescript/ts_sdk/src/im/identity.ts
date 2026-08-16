@@ -10,10 +10,12 @@ import { AwikiImError, normalizeAwikiImError } from './errors.js';
 import { type PendingRegistrationState, type PersistedIdentitySecrets } from './internal.js';
 import {
   DID_AUTH_RPC_PATH,
+  DID_PROFILE_RPC_PATH,
   HANDLE_RPC_PATH,
   randomChallenge,
   type AwikiImTransport,
 } from './protocol.js';
+import { lookupDisplayName } from './display-name.js';
 import type { AwikiImStateStore } from './storage.js';
 import type {
   AwikiDid,
@@ -36,12 +38,39 @@ interface IdentityRuntimeOptions {
 /** Identity registration and token refresh operations for the high-level client. */
 export class AwikiIdentityRuntime {
   private registrationTail: Promise<void> = Promise.resolve();
+  private profileTail: Promise<void> = Promise.resolve();
+  private displayNameResolved = false;
 
   public constructor(private readonly options: IdentityRuntimeOptions) {}
 
   /** Return the public identity projection. */
   public getIdentity(): AwikiIdentity | null {
     return this.options.store.snapshot().identity?.public ?? null;
+  }
+
+  /** Fill a missing WNS display name once; failures leave the identity unchanged. */
+  public async hydrateDisplayName(): Promise<void> {
+    const current = this.getIdentity();
+    if (!current || current.displayName !== undefined || this.displayNameResolved) {
+      return;
+    }
+    this.displayNameResolved = true;
+    const displayName = await lookupDisplayName(
+      this.options.transport,
+      current.handle,
+      current.did
+    );
+    if (!displayName) {
+      return;
+    }
+    await this.options.store.mutate((state) => {
+      if (state.identity) {
+        state.identity = {
+          ...state.identity,
+          public: { ...state.identity.public, displayName },
+        };
+      }
+    });
   }
 
   /** Reject persisted identity material that belongs to a different configured deployment. */
@@ -146,6 +175,58 @@ export class AwikiIdentityRuntime {
         }
         throw normalized;
       }
+    });
+  }
+
+  /** Update the public WNS display name and keep the local projection in sync. */
+  public async updateDisplayName(value: string): Promise<AwikiIdentity> {
+    return this.exclusiveProfileUpdate(async () => {
+      const displayName = value.trim();
+      const length = [...displayName].length;
+      if (length === 0 || length > 50) {
+        throw new AwikiImError(
+          'invalid-request',
+          'AWiki display name must contain between 1 and 50 characters'
+        );
+      }
+      let identity = this.requireSecrets();
+      let result;
+      try {
+        result = await this.options.transport.rpc(
+          this.options.userServiceUrl,
+          DID_PROFILE_RPC_PATH,
+          'update_me',
+          { nick_name: displayName },
+          identity.accessToken
+        );
+      } catch (error) {
+        const normalized = normalizeAwikiImError(error);
+        if (normalized.code !== 'forbidden') throw normalized;
+        const accessToken = await this.refreshAccessToken();
+        identity = this.requireSecrets();
+        result = await this.options.transport.rpc(
+          this.options.userServiceUrl,
+          DID_PROFILE_RPC_PATH,
+          'update_me',
+          { nick_name: displayName },
+          accessToken
+        );
+      }
+      const returnedName = requiredWireString(result.value.display_name, 'display_name');
+      if (returnedName !== displayName) {
+        throw new AwikiImError('remote', 'AWiki service returned an invalid response');
+      }
+      await this.options.store.mutate((state) => {
+        if (state.identity) {
+          state.identity = {
+            ...state.identity,
+            ...(result.accessToken === undefined ? {} : { accessToken: result.accessToken }),
+            public: { ...state.identity.public, displayName: returnedName },
+          };
+        }
+      });
+      this.displayNameResolved = true;
+      return this.getIdentity() ?? identity.public;
     });
   }
 
@@ -257,13 +338,28 @@ export class AwikiIdentityRuntime {
       delete state.registrationOtp;
       delete state.pendingRegistration;
     });
-    return publicIdentity;
+    await this.hydrateDisplayName();
+    return this.getIdentity() ?? publicIdentity;
   }
 
   private async exclusiveRegistration<T>(operation: () => Promise<T>): Promise<T> {
     let release: () => void = () => undefined;
     const previous = this.registrationTail;
     this.registrationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async exclusiveProfileUpdate<T>(operation: () => Promise<T>): Promise<T> {
+    let release: () => void = () => undefined;
+    const previous = this.profileTail;
+    this.profileTail = new Promise<void>((resolve) => {
       release = resolve;
     });
     await previous;

@@ -29,7 +29,18 @@ export type AwikiCursor = AwikiImId<'cursor'>;
 export interface AwikiIdentity {
   readonly handle: AwikiHandle;
   readonly did: AwikiDid;
+  /** WNS `profile.display_name`. Display-only; never used for routing. */
+  readonly displayName?: string;
   readonly registeredAt: number;
+}
+
+/** Public peer produced by Handle lookup or a DID target. */
+export interface AwikiResolvedPeer {
+  readonly did: AwikiDid;
+  readonly handle?: AwikiHandle;
+  /** WNS `profile.display_name`. Display-only; never used for routing. */
+  readonly displayName?: string;
+  readonly conversationId: AwikiConversationId;
 }
 
 /** Request for one registration verification code. */
@@ -51,14 +62,25 @@ export interface RegisterIdentityRequest {
   readonly otp: string;
 }
 
+/** Replace the registered identity's public WNS display name. */
+export interface UpdateAwikiDisplayNameRequest {
+  readonly displayName: string;
+}
+
 /** Existing direct-message conversation. */
 export interface AwikiDirectConversation {
   readonly kind: 'direct';
   readonly id: AwikiConversationId;
   readonly peerDid: AwikiDid;
   readonly peerHandle?: AwikiHandle;
+  /** WNS `profile.display_name`. Display-only; never used for routing. */
+  readonly displayName?: string;
   readonly title: string;
+  /** Current unread inbox messages for this conversation. */
+  readonly unreadCount?: number;
   readonly lastMessageAt?: number;
+  /** Display-only summary of the newest observed message. */
+  readonly lastMessagePreview?: string;
 }
 
 /** Existing group conversation. */
@@ -67,7 +89,11 @@ export interface AwikiGroupConversation {
   readonly id: AwikiConversationId;
   readonly groupDid: AwikiDid;
   readonly title: string;
+  /** Current unread inbox messages for this conversation. */
+  readonly unreadCount?: number;
   readonly lastMessageAt?: number;
+  /** Display-only summary of the newest observed message. */
+  readonly lastMessagePreview?: string;
 }
 
 /** Conversation visible to the registered identity. */
@@ -120,6 +146,8 @@ export interface AwikiMessage {
   readonly conversationKind: AwikiConversation['kind'];
   readonly senderDid: AwikiDid;
   readonly senderHandle?: AwikiHandle;
+  /** WNS `profile.display_name` for the sender. Display-only; never used for routing. */
+  readonly senderDisplayName?: string;
   readonly sentAt: number;
   readonly outgoing: boolean;
   readonly content: AwikiMessageContent;
@@ -224,10 +252,16 @@ export interface AwikiImClient {
   sendRegistrationOtp(request: SendRegistrationOtpRequest): Promise<SendRegistrationOtpResult>;
   /** Register and persist the deployment's only identity. */
   registerIdentity(request: RegisterIdentityRequest): Promise<AwikiIdentity>;
+  /** Update and persist the registered identity's public WNS display name. */
+  updateDisplayName(request: UpdateAwikiDisplayNameRequest): Promise<AwikiIdentity>;
+  /** Resolve one Handle or DID to a public peer and persist the direct conversation row. */
+  resolvePeer(peer: string): Promise<AwikiResolvedPeer>;
   /** List direct and existing group conversations. */
   listConversations(request?: AwikiPageRequest): Promise<AwikiPage<AwikiConversation>>;
   /** Read one conversation's paginated history. */
   getHistory(request: GetAwikiHistoryRequest): Promise<AwikiPage<AwikiMessage>>;
+  /** Mark every currently unread inbox message in one conversation as read. */
+  markConversationRead(conversationId: AwikiConversationId): Promise<number>;
   /** Send one idempotent text message. */
   sendText(request: SendAwikiTextRequest): Promise<AwikiMessage>;
   /** Upload and send one idempotent attachment message. */

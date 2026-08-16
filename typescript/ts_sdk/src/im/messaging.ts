@@ -17,6 +17,7 @@ import {
   MESSAGE_RPC_PATH,
   operationId,
 } from './protocol.js';
+import { handleCandidateFromDid, lookupDisplayName } from './display-name.js';
 import type { AwikiIdentityRuntime } from './identity.js';
 import type { AwikiImStateStore } from './storage.js';
 import type { AwikiImTransport } from './protocol.js';
@@ -53,12 +54,17 @@ export interface ResolvedMessageTarget {
   readonly kind: 'direct' | 'group';
   readonly did: string;
   readonly handle?: string;
+  readonly displayName?: string;
   readonly conversationId: AwikiConversationId;
 }
 
 /** Direct/group conversation, history, and plain-message operations. */
 export class AwikiMessagingRuntime {
   private sendTail: Promise<void> = Promise.resolve();
+  private inboxRefreshed = false;
+  private unreadMessageIds = new Map<string, readonly string[]>();
+  private groupUnreadMessageIds = new Map<string, readonly string[]>();
+  private groupMessageWindows = new Map<string, ReadonlySet<string>>();
 
   public constructor(private readonly options: MessagingRuntimeOptions) {}
 
@@ -69,8 +75,17 @@ export class AwikiMessagingRuntime {
     this.options.identity.requireSecrets();
     const limit = pageLimit(request.limit);
     await this.refreshConversations();
+    await this.hydrateGroupMessagePreviews();
+    await this.hydrateDirectDisplayNames();
     const conversations = Object.values(this.options.store.snapshot().conversations)
-      .map((record) => record.conversation)
+      .map((record) => {
+        const key = conversationKey(record.conversation.id);
+        const unreadCount = new Set([
+          ...(this.unreadMessageIds.get(key) ?? []),
+          ...(this.groupUnreadMessageIds.get(key) ?? []),
+        ]).size;
+        return { ...record.conversation, unreadCount };
+      })
       .sort(compareConversationRecency);
     const offset = decodeOffsetCursor(request.cursor);
     const items = conversations.slice(offset, offset + limit);
@@ -124,8 +139,9 @@ export class AwikiMessagingRuntime {
           : null
       )
       .filter((message): message is MappedMessage => message !== null);
-    await this.persistMappedMessages(mapped);
-    const items = mapped.map((entry) => entry.message).sort(compareMessageTime);
+    const hydrated = await this.hydrateGroupSenderDisplayNames(mapped);
+    await this.persistMappedMessages(hydrated);
+    const items = hydrated.map((entry) => entry.message).sort(compareMessageTime);
     const consumed = wires.length;
     if (result.has_more === true && consumed === 0) {
       throw new AwikiImError('remote', 'AWiki history pagination did not advance');
@@ -138,6 +154,41 @@ export class AwikiMessagingRuntime {
         ? { nextCursor: encodeHistoryCursor(kind, request.conversationId, skip + consumed) }
         : {}),
     };
+  }
+
+  /** Mark every currently unread inbox message in one conversation as read. */
+  public async markConversationRead(conversationId: AwikiConversationId): Promise<number> {
+    const key = conversationKey(conversationId);
+    if (!this.options.store.snapshot().conversations[key]) {
+      throw new AwikiImError('not-found', 'AWiki conversation was not found');
+    }
+    if (!this.inboxRefreshed) {
+      await this.refreshInbox();
+    }
+    const messageIds = this.unreadMessageIds.get(key) ?? [];
+    const localGroupMessageIds = this.groupUnreadMessageIds.get(key) ?? [];
+    if (messageIds.length === 0 && localGroupMessageIds.length === 0) {
+      return 0;
+    }
+    let updatedCount = 0;
+    if (messageIds.length > 0) {
+      const identity = this.options.identity.requireSecrets();
+      const result = await this.authenticatedRpc('inbox.mark_read', {
+        meta: localMeta(identity.public.did as string, 'anp.inbox.local.v1'),
+        body: {
+          user_did: identity.public.did as string,
+          message_ids: [...messageIds],
+        },
+      });
+      updatedCount = integerValue(result.updated_count) ?? -1;
+      if (updatedCount < 0 || updatedCount > messageIds.length) {
+        throw new AwikiImError('remote', 'AWiki mark-read acknowledgement is invalid');
+      }
+    }
+    this.unreadMessageIds.delete(key);
+    this.groupUnreadMessageIds.delete(key);
+    const locallyCleared = localGroupMessageIds.filter((id) => !messageIds.includes(id)).length;
+    return updatedCount + locallyCleared;
   }
 
   /** Resolve and send one idempotent text message. */
@@ -207,21 +258,30 @@ export class AwikiMessagingRuntime {
       const resolved = peer.startsWith('did:')
         ? { did: peer }
         : await this.resolveHandle(peer.replace(/^wba:\/\//, ''));
+      const handle = resolved.handle ?? handleCandidateFromDid(resolved.did);
+      const displayName =
+        resolved.displayName ??
+        (handle
+          ? await lookupDisplayName(this.options.transport, handle, resolved.did)
+          : undefined);
       const conversationId = directConversationId(resolved.did);
-      await this.upsertConversation({
-        conversation: {
-          kind: 'direct',
-          id: conversationId,
-          peerDid: resolved.did as AwikiDid,
-          ...(resolved.handle ? { peerHandle: resolved.handle as AwikiHandle } : {}),
-          title: resolved.handle ?? resolved.did,
+      await this.upsertConversation(
+        {
+          conversation: directConversation({
+            id: conversationId,
+            peerDid: resolved.did,
+            peerHandle: handle,
+            displayName,
+          }),
+          peerDid: resolved.did,
         },
-        peerDid: resolved.did,
-      });
+        true
+      );
       return {
         kind: 'direct',
         did: resolved.did,
-        ...(resolved.handle ? { handle: resolved.handle } : {}),
+        ...(handle ? { handle } : {}),
+        ...(displayName ? { displayName } : {}),
         conversationId,
       };
     }
@@ -293,7 +353,11 @@ export class AwikiMessagingRuntime {
       if (conversation) {
         state.conversations[conversationKey(target.conversationId)] = {
           ...conversation,
-          conversation: { ...conversation.conversation, lastMessageAt: sentAt },
+          conversation: {
+            ...conversation.conversation,
+            lastMessageAt: sentAt,
+            lastMessagePreview: messagePreview(content),
+          },
         };
       }
       if (attachmentReference) {
@@ -369,7 +433,13 @@ export class AwikiMessagingRuntime {
 
   private async refreshConversations(): Promise<void> {
     await this.refreshGroups();
+    await this.refreshInbox();
+  }
+
+  private async refreshInbox(): Promise<void> {
     const identity = this.options.identity.requireSecrets();
+    const unread = new Map<string, string[]>();
+    const seen = new Set<string>();
     let skip = 0;
     for (let page = 0; page < MAX_REFRESH_PAGES; page += 1) {
       const result = await this.authenticatedRpc('inbox.get', {
@@ -388,8 +458,17 @@ export class AwikiMessagingRuntime {
             : null
         )
         .filter((message): message is MappedMessage => message !== null);
+      for (const entry of mapped) {
+        const message = entry.message;
+        if (message.outgoing || seen.has(message.id as string)) continue;
+        seen.add(message.id as string);
+        const key = conversationKey(message.conversationId);
+        unread.set(key, [...(unread.get(key) ?? []), message.id as string]);
+      }
       await this.persistMappedMessages(mapped);
       if (result.has_more !== true) {
+        this.unreadMessageIds = unread;
+        this.inboxRefreshed = true;
         return;
       }
       if (wires.length === 0) {
@@ -436,7 +515,9 @@ export class AwikiMessagingRuntime {
     throw new AwikiImError('remote', 'AWiki group pagination exceeded the safety limit');
   }
 
-  private async resolveHandle(peer: string): Promise<{ did: string; handle?: string }> {
+  private async resolveHandle(
+    peer: string
+  ): Promise<{ did: string; handle?: string; displayName?: string }> {
     const result = await this.options.transport.rpc(
       this.options.userServiceUrl,
       HANDLE_RPC_PATH,
@@ -445,7 +526,165 @@ export class AwikiMessagingRuntime {
     );
     const did = requiredWireString(result.value.did, 'resolved DID');
     const handle = stringValue(result.value.full_handle) ?? stringValue(result.value.handle);
-    return { did, ...(handle ? { handle } : {}) };
+    const profile = isRecord(result.value.profile) ? result.value.profile : undefined;
+    const displayName =
+      stringValue(result.value.display_name) ??
+      stringValue(profile?.display_name) ??
+      (handle ? await lookupDisplayName(this.options.transport, handle, did) : undefined);
+    return {
+      did,
+      ...(handle ? { handle } : {}),
+      ...(displayName ? { displayName } : {}),
+    };
+  }
+
+  /** Fill missing direct `displayName` values from WNS without blocking on failure. */
+  private async hydrateDirectDisplayNames(): Promise<void> {
+    const pending = Object.values(this.options.store.snapshot().conversations).filter(
+      (record) =>
+        record.conversation.kind === 'direct' && record.conversation.displayName === undefined
+    );
+    if (pending.length === 0) {
+      return;
+    }
+    const resolved = await Promise.all(
+      pending.map(async (record) => {
+        if (record.conversation.kind !== 'direct') {
+          return null;
+        }
+        const handle =
+          record.conversation.peerHandle ?? handleCandidateFromDid(record.conversation.peerDid);
+        if (!handle) {
+          return null;
+        }
+        const displayName = await lookupDisplayName(
+          this.options.transport,
+          handle,
+          record.conversation.peerDid
+        );
+        if (!displayName) {
+          return null;
+        }
+        return {
+          conversation: directConversation({
+            id: record.conversation.id,
+            peerDid: record.conversation.peerDid,
+            peerHandle: handle,
+            displayName,
+            lastMessageAt: record.conversation.lastMessageAt,
+            lastMessagePreview: record.conversation.lastMessagePreview,
+          }),
+          peerDid: record.peerDid ?? record.conversation.peerDid,
+        };
+      })
+    );
+    const updates = resolved.filter((value): value is NonNullable<typeof value> => value !== null);
+    if (updates.length === 0) {
+      return;
+    }
+    await this.options.store.mutate((state) => {
+      for (const update of updates) {
+        const key = conversationKey(update.conversation.id);
+        state.conversations[key] = mergeConversation(state.conversations[key], update);
+      }
+    });
+  }
+
+  /** Refresh Group previews and supplement unread state when Legacy inbox omits Group messages. */
+  private async hydrateGroupMessagePreviews(): Promise<void> {
+    const identity = this.options.identity.requireSecrets();
+    const pending = Object.values(this.options.store.snapshot().conversations).filter(
+      (record) => record.conversation.kind === 'group'
+    );
+    await Promise.all(
+      pending.map(async (record) => {
+        const key = conversationKey(record.conversation.id);
+        const previousWindow = this.groupMessageWindows.get(key);
+        const previousLastMessageAt = record.conversation.lastMessageAt;
+        const result = await this.authenticatedRpc('group.list_messages', {
+          meta: groupLocalMeta(
+            identity.public.did as string,
+            requiredConversationValue(record.groupDid)
+          ),
+          body: {
+            group_did: requiredConversationValue(record.groupDid),
+            limit: MAX_PAGE_LIMIT,
+          },
+        });
+        const wires = arrayValue(result.messages);
+        validateHistoryWires(wires, record, identity.public.did as string);
+        const mapped = wires
+          .map((wire) =>
+            isRecord(wire)
+              ? this.mapWireMessage(wire, record.conversation, identity.public.did as string)
+              : null
+          )
+          .filter((message): message is MappedMessage => message !== null);
+        const currentWindow = new Set(mapped.map((entry) => entry.message.id as string));
+        const locallyUnread = new Set(this.groupUnreadMessageIds.get(key) ?? []);
+        for (const entry of mapped) {
+          const message = entry.message;
+          const observedAfterPersistedSummary =
+            previousLastMessageAt !== undefined && message.sentAt > previousLastMessageAt;
+          const observedAfterEqualTimestamp =
+            previousWindow !== undefined &&
+            previousLastMessageAt !== undefined &&
+            message.sentAt === previousLastMessageAt &&
+            !previousWindow.has(message.id as string);
+          if (!message.outgoing && (observedAfterPersistedSummary || observedAfterEqualTimestamp)) {
+            locallyUnread.add(message.id as string);
+          }
+        }
+        this.groupMessageWindows.set(key, currentWindow);
+        if (locallyUnread.size > 0) {
+          this.groupUnreadMessageIds.set(key, [...locallyUnread]);
+        }
+        await this.persistMappedMessages(mapped);
+      })
+    );
+  }
+
+  /** Fill missing incoming group sender names from WNS without blocking history on failure. */
+  private async hydrateGroupSenderDisplayNames(
+    mapped: readonly MappedMessage[]
+  ): Promise<readonly MappedMessage[]> {
+    const pending = new Map<string, string>();
+    for (const entry of mapped) {
+      const message = entry.message;
+      if (
+        message.conversationKind !== 'group' ||
+        message.outgoing ||
+        message.senderDisplayName !== undefined
+      ) {
+        continue;
+      }
+      const handle = message.senderHandle ?? handleCandidateFromDid(message.senderDid);
+      if (handle) {
+        pending.set(message.senderDid, handle);
+      }
+    }
+    if (pending.size === 0) {
+      return mapped;
+    }
+    const displayNames = new Map(
+      (
+        await Promise.all(
+          [...pending].map(async ([did, handle]) => {
+            const displayName = await lookupDisplayName(this.options.transport, handle, did);
+            return displayName ? ([did, displayName] as const) : null;
+          })
+        )
+      ).filter((value): value is readonly [string, string] => value !== null)
+    );
+    if (displayNames.size === 0) {
+      return mapped;
+    }
+    return mapped.map((entry) => {
+      const senderDisplayName = displayNames.get(entry.message.senderDid);
+      return senderDisplayName
+        ? { ...entry, message: { ...entry.message, senderDisplayName } }
+        : entry;
+    });
   }
 
   private mapWireMessage(
@@ -499,6 +738,14 @@ export class AwikiMessagingRuntime {
     const peerHandle =
       stringValue(wire.peer_full_handle) ??
       (senderDid !== ownerDid ? stringValue(wire.sender_handle) : undefined);
+    const senderDisplayName =
+      stringValue(wire.sender_display_name) ?? stringValue(wire.display_name);
+    const peerDisplayName =
+      kind === 'direct'
+        ? (stringValue(wire.peer_display_name) ??
+          (senderDid !== ownerDid ? senderDisplayName : undefined) ??
+          (fallbackConversation?.kind === 'direct' ? fallbackConversation.displayName : undefined))
+        : undefined;
     const conversation: AwikiConversation =
       kind === 'group'
         ? {
@@ -511,19 +758,18 @@ export class AwikiMessagingRuntime {
                 ? fallbackConversation.title
                 : (groupDid as string)),
             ...(sentAt ? { lastMessageAt: sentAt } : {}),
+            ...(sentAt ? { lastMessagePreview: messagePreview(content) } : {}),
           }
-        : {
-            kind: 'direct',
+        : directConversation({
             id: conversationId,
-            peerDid: peerDid as AwikiDid,
-            ...(peerHandle ? { peerHandle: peerHandle as AwikiHandle } : {}),
-            title:
-              peerHandle ??
-              (fallbackConversation?.kind === 'direct'
-                ? fallbackConversation.title
-                : (peerDid as string)),
-            ...(sentAt ? { lastMessageAt: sentAt } : {}),
-          };
+            peerDid: peerDid as string,
+            peerHandle,
+            displayName: peerDisplayName,
+            lastMessageAt: sentAt || undefined,
+            lastMessagePreview: sentAt ? messagePreview(content) : undefined,
+            fallbackTitle:
+              fallbackConversation?.kind === 'direct' ? fallbackConversation.title : undefined,
+          });
     const message: AwikiMessage = {
       id: messageId as AwikiMessageId,
       conversationId,
@@ -532,6 +778,7 @@ export class AwikiMessagingRuntime {
       ...(stringValue(wire.sender_handle)
         ? { senderHandle: stringValue(wire.sender_handle) as AwikiHandle }
         : {}),
+      ...(senderDisplayName ? { senderDisplayName } : {}),
       sentAt,
       outgoing: senderDid === ownerDid,
       content,
@@ -573,10 +820,17 @@ export class AwikiMessagingRuntime {
     });
   }
 
-  private async upsertConversation(record: PersistedConversation): Promise<void> {
+  private async upsertConversation(
+    record: PersistedConversation,
+    replaceDirectProfile = false
+  ): Promise<void> {
     await this.options.store.mutate((state) => {
       const key = conversationKey(record.conversation.id);
-      state.conversations[key] = mergeConversation(state.conversations[key], record);
+      state.conversations[key] = mergeConversation(
+        state.conversations[key],
+        record,
+        replaceDirectProfile
+      );
     });
   }
 
@@ -688,6 +942,7 @@ function groupConversationFromWire(value: unknown): PersistedConversation | null
     stringValue(profile?.display_name) ??
     groupDid;
   const lastMessageAt = timestampValue(value.last_message_at);
+  const lastMessagePreview = stringValue(value.last_message_preview);
   return {
     conversation: {
       kind: 'group',
@@ -695,6 +950,7 @@ function groupConversationFromWire(value: unknown): PersistedConversation | null
       groupDid: groupDid as AwikiDid,
       title,
       ...(lastMessageAt ? { lastMessageAt } : {}),
+      ...(lastMessagePreview ? { lastMessagePreview } : {}),
     },
     groupDid,
   };
@@ -774,6 +1030,14 @@ function textContent(wire: MessageWireValue): string {
   return '';
 }
 
+function messagePreview(content: AwikiMessageContent): string {
+  if (content.kind === 'text') {
+    return content.text.trim() || '消息';
+  }
+  const kind = content.attachment.mimeType.startsWith('image/') ? '图片' : '附件';
+  return `[${kind}] ${content.attachment.fileName}`;
+}
+
 function stableIdentifiers(idempotencyKey: string): {
   readonly operationId: string;
   readonly messageId: string;
@@ -825,24 +1089,91 @@ function groupConversationId(groupDid: string): AwikiConversationId {
 
 function mergeConversation(
   current: PersistedConversation | undefined,
-  next: PersistedConversation
+  next: PersistedConversation,
+  replaceDirectProfile = false
 ): PersistedConversation {
   if (!current) {
     return next;
   }
   const currentTime = current.conversation.lastMessageAt ?? 0;
   const nextTime = next.conversation.lastMessageAt ?? 0;
+  const lastMessageAt = Math.max(currentTime, nextTime);
+  const lastMessagePreview =
+    nextTime > currentTime
+      ? next.conversation.lastMessagePreview
+      : currentTime > nextTime
+        ? current.conversation.lastMessagePreview
+        : (next.conversation.lastMessagePreview ?? current.conversation.lastMessagePreview);
+  if (current.conversation.kind === 'direct' && next.conversation.kind === 'direct') {
+    const peerHandle = replaceDirectProfile
+      ? (next.conversation.peerHandle ?? current.conversation.peerHandle)
+      : (current.conversation.peerHandle ?? next.conversation.peerHandle);
+    const displayName = replaceDirectProfile
+      ? (next.conversation.displayName ?? current.conversation.displayName)
+      : (current.conversation.displayName ?? next.conversation.displayName);
+    return {
+      ...current,
+      ...next,
+      conversation: directConversation({
+        id: next.conversation.id,
+        peerDid: next.conversation.peerDid,
+        peerHandle,
+        displayName,
+        lastMessageAt: lastMessageAt || undefined,
+        lastMessagePreview,
+        fallbackTitle: preferredLabel(
+          displayName,
+          peerHandle,
+          current.conversation.title,
+          next.conversation.title,
+          next.conversation.peerDid
+        ),
+      }),
+    };
+  }
+  const { lastMessagePreview: _currentPreview, ...currentConversation } = current.conversation;
+  const { lastMessagePreview: _nextPreview, ...nextConversation } = next.conversation;
+  void _currentPreview;
+  void _nextPreview;
   return {
     ...current,
     ...next,
     conversation: {
-      ...current.conversation,
-      ...next.conversation,
-      ...(Math.max(currentTime, nextTime) > 0
-        ? { lastMessageAt: Math.max(currentTime, nextTime) }
-        : {}),
+      ...currentConversation,
+      ...nextConversation,
+      ...(lastMessageAt > 0 ? { lastMessageAt } : {}),
+      ...(lastMessagePreview !== undefined ? { lastMessagePreview } : {}),
     } as AwikiConversation,
   };
+}
+
+function directConversation(args: {
+  readonly id: AwikiConversationId;
+  readonly peerDid: string;
+  readonly peerHandle?: string;
+  readonly displayName?: string;
+  readonly lastMessageAt?: number;
+  readonly lastMessagePreview?: string;
+  readonly fallbackTitle?: string;
+}): AwikiConversation {
+  const title = preferredLabel(args.displayName, args.peerHandle, args.fallbackTitle, args.peerDid);
+  return {
+    kind: 'direct',
+    id: args.id,
+    peerDid: args.peerDid as AwikiDid,
+    title,
+    ...(args.peerHandle ? { peerHandle: args.peerHandle as AwikiHandle } : {}),
+    ...(args.displayName ? { displayName: args.displayName } : {}),
+    ...(args.lastMessageAt ? { lastMessageAt: args.lastMessageAt } : {}),
+    ...(args.lastMessagePreview !== undefined
+      ? { lastMessagePreview: args.lastMessagePreview }
+      : {}),
+  };
+}
+
+function preferredLabel(...candidates: readonly (string | undefined)[]): string {
+  const values = candidates.filter((value): value is string => !!value && value.trim() !== '');
+  return values.find((value) => !value.startsWith('did:')) ?? values[0] ?? '';
 }
 
 function compareConversationRecency(left: AwikiConversation, right: AwikiConversation): number {
