@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::DateTime;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use super::v2_errors::GroupE2eeV2Error;
 
@@ -309,6 +310,72 @@ pub struct V2OriginAuth {
     pub origin_proof: V2OriginProof,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct V2OriginContext {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_meta: BTreeMap<String, Value>,
+}
+
+impl V2OriginContext {
+    pub fn validate(&self) -> Result<(), GroupE2eeV2Error> {
+        if let Some(created_at) = self.created_at.as_deref() {
+            validate_rfc3339("auth.origin_context.created_at", created_at)?;
+        }
+        const RESERVED: [&str; 10] = [
+            "profile",
+            "security_profile",
+            "sender_did",
+            "sender_device_id",
+            "target",
+            "recipient_device_id",
+            "message_id",
+            "operation_id",
+            "content_type",
+            "created_at",
+        ];
+        if let Some(field) = self
+            .extra_meta
+            .keys()
+            .find(|field| RESERVED.contains(&field.as_str()))
+        {
+            return Err(GroupE2eeV2Error::invalid(format!(
+                "auth.origin_context.extra_meta must not contain reserved field {field}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Origin authentication preserved on a device-targeted P6 `group.incoming`.
+///
+/// Submission methods continue to use [`V2OriginAuth`]. The additional context
+/// exists only because delivery rewrites the outer target and timestamp.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct V2DeliveredOriginAuth {
+    pub scheme: String,
+    pub origin_proof: V2OriginProof,
+    pub origin_context: V2OriginContext,
+}
+
+impl V2DeliveredOriginAuth {
+    pub fn validate(&self) -> Result<(), GroupE2eeV2Error> {
+        V2OriginAuth {
+            scheme: self.scheme.clone(),
+            origin_proof: self.origin_proof.clone(),
+        }
+        .validate()?;
+        self.origin_context.validate()
+    }
+}
+
 impl V2OriginAuth {
     pub fn validate(&self) -> Result<(), GroupE2eeV2Error> {
         require_eq("auth.scheme", &self.scheme, RFC9421_ORIGIN_PROOF_SCHEME_V2)?;
@@ -575,12 +642,7 @@ impl V2GroupApplicationPlaintext {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct V2E2eeNotice {
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_present"
-    )]
-    pub notice_id: Option<String>,
+    pub notice_id: String,
     pub notice_type: String,
     pub group_did: String,
     pub group_state_ref: V2GroupStateRef,
@@ -630,7 +692,7 @@ impl V2E2eeNotice {
         ] {
             require_non_empty(field, value)?;
         }
-        validate_optional_non_empty("notice_id", self.notice_id.as_deref())?;
+        require_non_empty("notice_id", &self.notice_id)?;
         self.group_state_ref.validate()?;
         if self.group_state_ref.group_did != self.group_did {
             return Err(GroupE2eeV2Error::invalid(

@@ -4,7 +4,7 @@
 
 This SDK slice implements the frozen cross-domain surface of
 [`anp.group.e2ee.v2`](../../../AgentNetworkProtocol/message/vnext/06-group-end-to-end-encryption.md)
-from `AgentNetworkProtocol@97896407a21cc5a0ea6c30908592bc41f669ac0c`.
+from `AgentNetworkProtocol@6c6aa9b8dc63b18fba228672165fc9a22aa4601f`.
 It is side-by-side with the existing `anp.group.e2ee.v1` models and typed
 OpenMLS library operations; no v1 wire object is silently reinterpreted as v2.
 
@@ -12,6 +12,11 @@ Rust exposes the v2 helpers under `anp::group_e2ee`; Go exposes them from
 `golang/group_e2ee`. Both SDKs include:
 
 - closed publish/get/create/add/remove/send/notice/incoming DTOs;
+- required stable Notice IDs and the `5013 / group.e2ee.leaf_not_current`
+  allocation;
+- delivered `group.incoming` auth with `origin_context`, reconstruction of the
+  original `group.e2ee.send` Signed Request Object, and P1 logical origin-proof
+  verification;
 - method-specific metadata, target-kind, security-profile and Origin Proof
   shape checks;
 - `owner_did + owner_device_id` KeyPackage binding;
@@ -86,6 +91,18 @@ current DID documents against that same pair. Welcome delivery additionally
 requires the outer recipient to equal the added subject device. Exact replay of
 the same notice operation and bytes returns the persisted result; reusing the
 operation ID with different bytes fails closed.
+
+Welcome processing also persists exact Welcome and ratchet-tree digests. A
+repeat at the same crypto group and epoch succeeds only when both byte strings
+match the persisted receipt. A fresh Welcome may replace an older local group
+at a strictly newer epoch when the prior binding is removed, or when the
+delivered tree no longer contains the exact stored old LeafNode. The fresh
+Welcome must still decrypt under this device's unconsumed KeyPackage and the
+complete new tree must pass all DID/device/Leaf validations. A P4 or Host
+terminal signal can separately disable new application sends without
+pretending that the exact MLS Remove Commit has already been applied;
+sequential Commit processing remains available until the cryptographic state
+converges.
 
 The Group Host may broadcast a Commit back to the device that prepared it.
 After that device has finalized locally, the echo is accepted only when one

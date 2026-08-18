@@ -7,7 +7,7 @@ pub struct GroupE2eeV2ProtocolError {
     pub anp_code: &'static str,
 }
 
-pub const GROUP_E2EE_V2_ERRORS: [GroupE2eeV2ProtocolError; 13] = [
+pub const GROUP_E2EE_V2_ERRORS: [GroupE2eeV2ProtocolError; 14] = [
     GroupE2eeV2ProtocolError {
         code: 5000,
         anp_code: "group.e2ee.key_package_not_found",
@@ -60,6 +60,10 @@ pub const GROUP_E2EE_V2_ERRORS: [GroupE2eeV2ProtocolError; 13] = [
         code: 5012,
         anp_code: "group.e2ee.key_package_consumed",
     },
+    GroupE2eeV2ProtocolError {
+        code: 5013,
+        anp_code: "group.e2ee.leaf_not_current",
+    },
 ];
 
 pub fn group_e2ee_v2_error(code: i32) -> Option<GroupE2eeV2ProtocolError> {
@@ -81,6 +85,8 @@ pub enum GroupE2eeV2Error {
     Manifest(#[from] crate::authentication::DeviceManifestError),
     #[error("invalid P6 v2 canonical JSON: {0}")]
     CanonicalJson(#[from] crate::canonical_json::CanonicalJsonError),
+    #[error("invalid P6 v2 origin proof: {0}")]
+    OriginProof(#[from] crate::proof::Rfc9421OriginProofError),
     #[error("P6 v2 public release is blocked until the draft MLS extension has a stable registered codepoint")]
     PublicReleaseBlocked,
 }

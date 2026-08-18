@@ -209,8 +209,23 @@ func TestP6V2WireIsClosedAndDeviceBound(t *testing.T) {
 	}
 
 	entry, ok := LookupV2ProtocolError(5002)
-	if !ok || entry.ANPCode != "group.e2ee.did_binding_invalid" || len(V2ProtocolErrors) != 13 {
+	if !ok || entry.ANPCode != "group.e2ee.did_binding_invalid" || len(V2ProtocolErrors) != 14 {
 		t.Fatal("P6 error table mismatch")
+	}
+	leafError, ok := LookupV2ProtocolError(5013)
+	if !ok || leafError.ANPCode != "group.e2ee.leaf_not_current" {
+		t.Fatal("P6 leaf terminal error mismatch")
+	}
+
+	notice := cloneP6V2(t, fixture["notice_notification"])
+	delete(notice["params"].(map[string]any)["body"].(map[string]any), "notice_id")
+	if _, _, err := ParseGroupNoticeNotificationV2(notice); err == nil {
+		t.Fatal("accepted notice without notice_id")
+	}
+	incoming := cloneP6V2(t, fixture["incoming_notification"])
+	delete(incoming["params"].(map[string]any)["auth"].(map[string]any), "origin_context")
+	if _, _, _, err := ParseGroupIncomingNotificationV2(incoming); err == nil {
+		t.Fatal("accepted incoming envelope without origin_context")
 	}
 }
 

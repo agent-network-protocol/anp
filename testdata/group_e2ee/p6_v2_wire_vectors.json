@@ -404,6 +404,12 @@
           "contentDigest": "sha-256=:fixture:",
           "signatureInput": "sig1=(\"@method\" \"@target-uri\" \"content-digest\");created=1784419200;keyid=\"fixture\"",
           "signature": "sig1=:fixture:"
+        },
+        "origin_context": {
+          "created_at": "2026-07-19T00:00:00Z",
+          "extra_meta": {
+            "anp_version": "2.0"
+          }
         }
       }
     }

@@ -365,21 +365,21 @@ func ParseGroupNoticeNotificationV2(value any) (V2GroupNoticeMetadata, V2E2EENot
 	return meta, body, nil
 }
 
-func GroupIncomingNotificationV2(meta V2GroupIncomingMetadata, body V2GroupIncomingBody, auth V2OriginAuth) (map[string]any, error) {
+func GroupIncomingNotificationV2(meta V2GroupIncomingMetadata, body V2GroupIncomingBody, auth V2DeliveredOriginAuth) (map[string]any, error) {
 	if err := validateIncomingV2(meta, body, auth); err != nil {
 		return nil, err
 	}
 	return requestMapV2(MethodGroupIncomingV2, meta, body, &auth)
 }
 
-func ParseGroupIncomingNotificationV2(value any) (V2GroupIncomingMetadata, V2GroupIncomingBody, V2OriginAuth, error) {
+func ParseGroupIncomingNotificationV2(value any) (V2GroupIncomingMetadata, V2GroupIncomingBody, V2DeliveredOriginAuth, error) {
 	_, params, err := parseRequestV2(value, MethodGroupIncomingV2, true)
 	if err != nil {
-		return V2GroupIncomingMetadata{}, V2GroupIncomingBody{}, V2OriginAuth{}, err
+		return V2GroupIncomingMetadata{}, V2GroupIncomingBody{}, V2DeliveredOriginAuth{}, err
 	}
 	var meta V2GroupIncomingMetadata
 	var body V2GroupIncomingBody
-	var auth V2OriginAuth
+	var auth V2DeliveredOriginAuth
 	if err := decodeStrictV2(params.Meta, &meta); err != nil {
 		return meta, body, auth, err
 	}
@@ -523,7 +523,7 @@ func validateNoticeV2(meta V2GroupNoticeMetadata, body V2E2EENotice) error {
 	return nil
 }
 
-func validateIncomingV2(meta V2GroupIncomingMetadata, body V2GroupIncomingBody, auth V2OriginAuth) error {
+func validateIncomingV2(meta V2GroupIncomingMetadata, body V2GroupIncomingBody, auth V2DeliveredOriginAuth) error {
 	if err := meta.Validate(); err != nil {
 		return err
 	}
@@ -568,7 +568,7 @@ func parseRequestV2(value any, expectedMethod string, requireAuth bool) (v2Reque
 	return request, params, nil
 }
 
-func requestMapV2(method string, meta, body any, auth *V2OriginAuth) (map[string]any, error) {
+func requestMapV2(method string, meta, body, auth any) (map[string]any, error) {
 	params := map[string]any{"meta": meta, "body": body}
 	if auth != nil {
 		params["auth"] = auth
@@ -617,7 +617,7 @@ func rejectKnownNullsV2(encoded []byte) error {
 		"anp_version": {}, "created_at": {}, "policy_hash": {}, "roster_hash": {}, "expires_at": {},
 		"preferred_suite": {}, "require_fresh": {}, "epoch_authenticator": {},
 		"commit_b64u": {}, "welcome_b64u": {}, "ratchet_tree_b64u": {},
-		"group_receipt": {}, "notice_id": {},
+		"group_receipt": {},
 	}
 	var walk func(any) error
 	walk = func(current any) error {

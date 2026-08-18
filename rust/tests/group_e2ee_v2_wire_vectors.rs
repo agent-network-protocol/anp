@@ -1,8 +1,9 @@
 use anp::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
 use anp::group_e2ee::*;
 use anp::proof::{
-    generate_w3c_proof, ProofGenerationOptions, CRYPTOSUITE_EDDSA_JCS_2022,
-    PROOF_TYPE_DATA_INTEGRITY,
+    generate_rfc9421_origin_proof, generate_w3c_proof, ProofGenerationOptions,
+    Rfc9421OriginProofGenerationOptions, Rfc9421OriginProofVerificationOptions,
+    CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
 };
 use anp::PrivateKeyMaterial;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -73,6 +74,16 @@ fn shared_p6_v2_wire_objects_round_trip() {
     let (meta, body, auth) =
         parse_group_incoming_notification_v2(&fixture["incoming_notification"])
             .expect("incoming notification");
+    let reconstructed = reconstruct_group_send_request_v2(&meta, &body, &auth)
+        .expect("reconstruct originating group.e2ee.send");
+    assert_eq!(
+        reconstructed,
+        json!({
+            "method": "group.e2ee.send",
+            "meta": fixture["send_request"]["params"]["meta"],
+            "body": fixture["send_request"]["params"]["body"],
+        })
+    );
     assert_eq!(
         group_incoming_notification_v2(meta, body, auth).expect("incoming build"),
         fixture["incoming_notification"]
@@ -193,7 +204,116 @@ fn p6_v2_wire_is_closed_and_device_bound() {
         group_e2ee_v2_error(5002).unwrap().anp_code,
         "group.e2ee.did_binding_invalid"
     );
-    assert_eq!(GROUP_E2EE_V2_ERRORS.len(), 13);
+    assert_eq!(
+        group_e2ee_v2_error(5013).unwrap().anp_code,
+        "group.e2ee.leaf_not_current"
+    );
+    assert_eq!(GROUP_E2EE_V2_ERRORS.len(), 14);
+
+    let mut notice = fixture["notice_notification"].clone();
+    notice["params"]["body"]
+        .as_object_mut()
+        .unwrap()
+        .remove("notice_id");
+    assert!(parse_group_notice_notification_v2(&notice).is_err());
+
+    let mut incoming = fixture["incoming_notification"].clone();
+    incoming["params"]["auth"]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin_context");
+    assert!(parse_group_incoming_notification_v2(&incoming).is_err());
+
+    let mut incoming = fixture["incoming_notification"].clone();
+    incoming["params"]["auth"]["origin_context"]["extra_meta"]["target"] =
+        json!({"kind":"group","did":"did:attacker"});
+    assert!(parse_group_incoming_notification_v2(&incoming).is_err());
+}
+
+#[test]
+fn p6_v2_incoming_reconstructs_and_verifies_the_originating_send() {
+    let fixture = vectors();
+    let generated = create_did_wba_document(
+        "p6-origin.example",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_owned(), "alice".to_owned()],
+            did_profile: DidProfile::E1,
+            ..Default::default()
+        },
+    )
+    .expect("DID document");
+    let did = generated.did().expect("DID").to_owned();
+    let keyid = format!("{did}#key-1");
+    let signing_key = PrivateKeyMaterial::from_pem(&generated.keys["key-1"].private_key_pem)
+        .expect("signing key");
+
+    let (mut send_meta, cipher, _) =
+        parse_group_send_request_v2(&fixture["send_request"]).expect("send request");
+    send_meta.sender_did = did.clone();
+    send_meta.sender_device_id = "dev-a".to_owned();
+    let send_meta_json = serde_json::to_value(&send_meta).unwrap();
+    let cipher_json = serde_json::to_value(&cipher).unwrap();
+    let proof = generate_rfc9421_origin_proof(
+        METHOD_GROUP_SEND_V2,
+        &send_meta_json,
+        &cipher_json,
+        &signing_key,
+        &keyid,
+        Rfc9421OriginProofGenerationOptions {
+            created: Some(1_784_419_200),
+            expires: Some(1_784_419_260),
+            nonce: Some("p6-origin-proof".to_owned()),
+            label: None,
+        },
+    )
+    .expect("origin proof");
+
+    let (mut incoming_meta, incoming_body, _) =
+        parse_group_incoming_notification_v2(&fixture["incoming_notification"])
+            .expect("incoming request");
+    incoming_meta.sender_did = did.clone();
+    incoming_meta.sender_device_id = "dev-a".to_owned();
+    let auth = V2DeliveredOriginAuth {
+        scheme: RFC9421_ORIGIN_PROOF_SCHEME_V2.to_owned(),
+        origin_proof: V2OriginProof {
+            content_digest: proof.content_digest,
+            signature_input: proof.signature_input,
+            signature: proof.signature,
+        },
+        origin_context: V2OriginContext {
+            created_at: send_meta.created_at.clone(),
+            extra_meta: std::collections::BTreeMap::from([(
+                "anp_version".to_owned(),
+                json!("2.0"),
+            )]),
+        },
+    };
+
+    verify_group_incoming_origin_proof_v2(
+        &incoming_meta,
+        &incoming_body,
+        &auth,
+        Rfc9421OriginProofVerificationOptions {
+            did_document: Some(generated.did_document.clone()),
+            verification_method: None,
+            expected_signer_did: Some(did.clone()),
+        },
+    )
+    .expect("verify reconstructed proof");
+
+    let mut tampered = incoming_body;
+    tampered.group_cipher_object.private_message_b64u = "dGFtcGVyZWQ".to_owned();
+    assert!(verify_group_incoming_origin_proof_v2(
+        &incoming_meta,
+        &tampered,
+        &auth,
+        Rfc9421OriginProofVerificationOptions {
+            did_document: Some(generated.did_document),
+            verification_method: None,
+            expected_signer_did: Some(did),
+        },
+    )
+    .is_err());
 }
 
 #[test]

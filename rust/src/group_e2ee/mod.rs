@@ -19,6 +19,7 @@ pub mod v2_aad;
 pub mod v2_binding;
 pub mod v2_errors;
 pub mod v2_models;
+pub mod v2_origin;
 pub mod v2_wire;
 
 pub use v2_aad::{
@@ -36,6 +37,7 @@ pub use v2_errors::{
     group_e2ee_v2_error, GroupE2eeV2Error, GroupE2eeV2ProtocolError, GROUP_E2EE_V2_ERRORS,
 };
 pub use v2_models::*;
+pub use v2_origin::*;
 pub use v2_wire::*;
 
 pub const PROFILE: &str = "anp.group.e2ee.v1";

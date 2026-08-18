@@ -21,10 +21,10 @@ struct Params<M, B> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct AuthenticatedParams<M, B> {
+struct AuthenticatedParams<M, B, A = V2OriginAuth> {
     meta: M,
     body: B,
-    auth: V2OriginAuth,
+    auth: A,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -360,7 +360,7 @@ pub fn parse_group_notice_notification_v2(
 pub fn group_incoming_notification_v2(
     meta: V2GroupIncomingMetadata,
     body: V2GroupIncomingBody,
-    auth: V2OriginAuth,
+    auth: V2DeliveredOriginAuth,
 ) -> Result<Value, GroupE2eeV2Error> {
     validate_incoming(&meta, &body, &auth)?;
     request(
@@ -371,9 +371,17 @@ pub fn group_incoming_notification_v2(
 
 pub fn parse_group_incoming_notification_v2(
     value: &Value,
-) -> Result<(V2GroupIncomingMetadata, V2GroupIncomingBody, V2OriginAuth), GroupE2eeV2Error> {
-    let request: RpcRequest<AuthenticatedParams<V2GroupIncomingMetadata, V2GroupIncomingBody>> =
-        parse(value)?;
+) -> Result<
+    (
+        V2GroupIncomingMetadata,
+        V2GroupIncomingBody,
+        V2DeliveredOriginAuth,
+    ),
+    GroupE2eeV2Error,
+> {
+    let request: RpcRequest<
+        AuthenticatedParams<V2GroupIncomingMetadata, V2GroupIncomingBody, V2DeliveredOriginAuth>,
+    > = parse(value)?;
     require_method(&request.method, METHOD_GROUP_INCOMING_V2)?;
     validate_incoming(
         &request.params.meta,
@@ -510,7 +518,7 @@ fn validate_notice(
 fn validate_incoming(
     meta: &V2GroupIncomingMetadata,
     body: &V2GroupIncomingBody,
-    auth: &V2OriginAuth,
+    auth: &V2DeliveredOriginAuth,
 ) -> Result<(), GroupE2eeV2Error> {
     meta.validate()?;
     body.validate()?;

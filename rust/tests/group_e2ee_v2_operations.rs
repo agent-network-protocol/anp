@@ -11,14 +11,15 @@ use anp::authentication::{
 use anp::group_e2ee::operations::v2::{
     abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2, create_group_prepare_v2,
     decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
-    list_local_group_member_endpoints_v2, prepare_or_resume_key_package_publish_v2,
-    process_commit_v2, process_notice_v2, process_welcome_v2, reconcile_pending_v2,
-    remove_member_prepare_v2, V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput,
-    V2DecryptInput, V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
+    list_local_group_member_endpoints_v2, mark_local_group_terminal_intent_v2,
+    prepare_or_resume_key_package_publish_v2, process_commit_v2, process_notice_v2,
+    process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
+    V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput, V2DecryptInput,
+    V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
     V2InspectLocalGroupInput, V2KeyPackagePublishStatus, V2LocalGroupMemberEndpoint,
-    V2LocalGroupReadiness, V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput,
-    V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput,
-    V2RemoveMemberInput,
+    V2LocalGroupReadiness, V2MarkTerminalIntentInput, V2MembershipCommitMethod,
+    V2PrepareKeyPackagePublishInput, V2ProcessCommitInput, V2ProcessNoticeInput,
+    V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput, V2TerminalSignal,
 };
 use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{
@@ -236,6 +237,17 @@ fn store(root: &Path, did: &str, device_id: &str) -> ImCoreSqliteGroupMlsStore {
         device_id.to_owned(),
     )
     .expect("device-scoped MLS store")
+}
+
+fn clone_device_state(source: &ImCoreSqliteGroupMlsStore, target: &ImCoreSqliteGroupMlsStore) {
+    fs::create_dir_all(target.lock_dir()).expect("create cloned device directory");
+    let connection = Connection::open(source.state_db_path()).expect("open source device state");
+    connection
+        .execute(
+            "VACUUM INTO ?1",
+            [target.state_db_path().to_string_lossy().as_ref()],
+        )
+        .expect("clone complete device SQLite state");
 }
 
 fn signing_key(device: &DeviceFixture) -> PrivateKeyMaterial {
@@ -2404,7 +2416,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         request_id: "req-welcome-a1".to_owned(),
     };
     process_welcome_v2(&a1_store, welcome_a1.clone()).expect("A1 processes Welcome");
-    let mut repeated_welcome_a1 = welcome_a1;
+    let mut repeated_welcome_a1 = welcome_a1.clone();
     repeated_welcome_a1.request_id = "req-welcome-a1-repeat".to_owned();
     assert_eq!(
         process_welcome_v2(&a1_store, repeated_welcome_a1)
@@ -2412,6 +2424,12 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             .epoch,
         "1"
     );
+    let mut conflicting_welcome_a1 = welcome_a1.clone();
+    conflicting_welcome_a1.request_id = "req-welcome-a1-conflict".to_owned();
+    conflicting_welcome_a1.welcome_b64u = "AQ".to_owned();
+    let conflict = process_welcome_v2(&a1_store, conflicting_welcome_a1)
+        .expect_err("same-epoch different Welcome bytes fail closed");
+    assert_eq!(conflict.code, "group.e2ee.epoch_conflict");
     let conn = Connection::open(a1_store.state_db_path()).expect("inspect consumed A1 package");
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM group_mls_key_packages", [], |row| {
@@ -2652,7 +2670,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         recipient_device_id: a1_device.device_id.clone(),
         meta: notice_meta(&alice.did, &a1_device.device_id, "notice-add-a2-a1"),
         notice: V2E2eeNotice {
-            notice_id: Some("notice-add-a2-a1".to_owned()),
+            notice_id: "notice-add-a2-a1".to_owned(),
             notice_type: "commit-delivery".to_owned(),
             group_did: GROUP_DID.to_owned(),
             group_state_ref: add_a2.body.group_state_ref.clone(),
@@ -2690,7 +2708,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     );
     let mut non_actor_same_epoch = add_a2_commit_notice.clone();
     non_actor_same_epoch.meta.operation_id = "notice-add-a2-a1-new-delivery".to_owned();
-    non_actor_same_epoch.notice.notice_id = Some("notice-add-a2-a1-new-delivery".to_owned());
+    non_actor_same_epoch.notice.notice_id = "notice-add-a2-a1-new-delivery".to_owned();
     non_actor_same_epoch.request_id = "req-notice-add-a2-a1-new-delivery".to_owned();
     assert_eq!(
         process_notice_v2(&a1_store, non_actor_same_epoch)
@@ -2724,7 +2742,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             "notice-add-a2-owner-echo",
         ),
         notice: V2E2eeNotice {
-            notice_id: Some("notice-add-a2-owner-echo".to_owned()),
+            notice_id: "notice-add-a2-owner-echo".to_owned(),
             notice_type: "commit-delivery".to_owned(),
             group_did: GROUP_DID.to_owned(),
             group_state_ref: add_a2.body.group_state_ref.clone(),
@@ -2776,7 +2794,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     );
     let mut wrong_commit_self_echo = add_a2_self_echo;
     wrong_commit_self_echo.meta.operation_id = "notice-add-a2-owner-wrong-commit".to_owned();
-    wrong_commit_self_echo.notice.notice_id = Some("notice-add-a2-owner-wrong-commit".to_owned());
+    wrong_commit_self_echo.notice.notice_id = "notice-add-a2-owner-wrong-commit".to_owned();
     wrong_commit_self_echo.notice.commit_b64u = Some(add_a1.body.commit_b64u.clone());
     wrong_commit_self_echo.request_id = "req-notice-add-a2-owner-wrong-commit".to_owned();
     assert_eq!(
@@ -2790,7 +2808,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         recipient_device_id: a2_device.device_id.clone(),
         meta: notice_meta(&alice.did, &a2_device.device_id, "notice-welcome-a2"),
         notice: V2E2eeNotice {
-            notice_id: Some("notice-welcome-a2".to_owned()),
+            notice_id: "notice-welcome-a2".to_owned(),
             notice_type: "welcome-delivery".to_owned(),
             group_did: GROUP_DID.to_owned(),
             group_state_ref: add_a2.body.group_state_ref.clone(),
@@ -2973,6 +2991,71 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     .iter()
     .any(|endpoint| endpoint.member_device_id == a2_device.device_id));
 
+    let missed_remove_directory = TestDirectory::new();
+    let missed_remove_a2_store = store(
+        missed_remove_directory.path(),
+        &alice.did,
+        &a2_device.device_id,
+    );
+    clone_device_state(&a2_store, &missed_remove_a2_store);
+    let cloned_binding_count = Connection::open(missed_remove_a2_store.state_db_path())
+        .expect("open cloned A2 state")
+        .query_row("SELECT COUNT(*) FROM group_mls_bindings", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("count cloned A2 bindings");
+    assert_eq!(
+        cloned_binding_count, 1,
+        "cloned A2 keeps its active binding"
+    );
+    mark_local_group_terminal_intent_v2(
+        &missed_remove_a2_store,
+        V2MarkTerminalIntentInput {
+            owner_did: alice.did.clone(),
+            owner_device_id: a2_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            signal: V2TerminalSignal::MemberRemoved,
+            request_id: "req-a2-p4-terminal-signal".to_owned(),
+        },
+    )
+    .expect("P4 terminal signal disables send without applying Remove");
+    assert_eq!(
+        inspect_local_group_v2(
+            &missed_remove_a2_store,
+            V2InspectLocalGroupInput {
+                owner_did: alice.did.clone(),
+                owner_device_id: a2_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-inspect-a2-terminal-pending".to_owned(),
+            },
+        )
+        .expect("terminal intent remains inspectable")
+        .readiness,
+        V2LocalGroupReadiness::Inactive
+    );
+    let blocked_send = encrypt_v2(
+        &missed_remove_a2_store,
+        V2EncryptInput {
+            meta: send_meta(&alice.did, &a2_device.device_id, "terminal-pending"),
+            group_state_ref: state_ref(4),
+            application_plaintext: V2GroupApplicationPlaintext {
+                application_content_type: "text/plain".to_owned(),
+                thread_id: None,
+                reply_to_message_id: None,
+                annotations: None,
+                text: Some("must not send".to_owned()),
+                payload: None,
+                payload_b64u: None,
+            },
+            sender_did_document: alice.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-a2-terminal-send".to_owned(),
+        },
+    )
+    .expect_err("terminal intent blocks new application sends");
+    assert_eq!(blocked_send.code, "group.e2ee.state_not_ready");
+
     let remove_meta = control_meta(&owner.did, &owner_device.device_id, "op-remove-a2");
     let remove_a2 = remove_member_prepare_v2(
         &owner_store,
@@ -3044,7 +3127,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             "notice-remove-a2-owner-echo",
         ),
         notice: V2E2eeNotice {
-            notice_id: Some("notice-remove-a2-owner-echo".to_owned()),
+            notice_id: "notice-remove-a2-owner-echo".to_owned(),
             notice_type: "commit-delivery".to_owned(),
             group_did: GROUP_DID.to_owned(),
             group_state_ref: remove_a2.body.group_state_ref.clone(),
@@ -3159,7 +3242,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     .is_err());
 
     let rejoin_a2_package = generate_key_package_v2(
-        &a2_store,
+        &missed_remove_a2_store,
         V2GenerateKeyPackageInput {
             owner_did: alice.did.clone(),
             owner_device_id: a2_device.device_id.clone(),
@@ -3199,7 +3282,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .expect("owner finalizes A2 rejoin");
     process_welcome_v2(
-        &a2_store,
+        &missed_remove_a2_store,
         V2ProcessWelcomeInput {
             recipient_did: alice.did.clone(),
             recipient_device_id: a2_device.device_id.clone(),
@@ -3218,7 +3301,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     .expect("removed A2 replaces its inactive local group from the fresh Welcome");
     assert_eq!(
         inspect_local_group_v2(
-            &a2_store,
+            &missed_remove_a2_store,
             V2InspectLocalGroupInput {
                 owner_did: alice.did.clone(),
                 owner_device_id: a2_device.device_id.clone(),
@@ -3226,7 +3309,7 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
                 request_id: "req-inspect-a2-after-rejoin".to_owned(),
             },
         )
-        .expect("rejoined A2 has local MLS state")
+        .expect("A2 that missed Remove has replacement local MLS state")
         .readiness,
         V2LocalGroupReadiness::Active
     );

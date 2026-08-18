@@ -400,6 +400,27 @@ fn init_app_schema(conn: &Connection) -> rusqlite::Result<()> {
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(agent_did, device_id, group_did)
          );
+         CREATE TABLE IF NOT EXISTS group_mls_welcome_receipts (
+            owner_did TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            group_did TEXT NOT NULL,
+            crypto_group_id_b64u TEXT NOT NULL,
+            epoch INTEGER NOT NULL,
+            welcome_digest_b64u TEXT NOT NULL,
+            ratchet_tree_digest_b64u TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_did, device_id, group_did, epoch)
+         );
+         CREATE TABLE IF NOT EXISTS group_mls_terminal_intents (
+            owner_did TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            group_did TEXT NOT NULL,
+            signal TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_did, device_id, group_did)
+         );
          CREATE TABLE IF NOT EXISTS pending_commits (
             pending_commit_id TEXT PRIMARY KEY,
             operation_id TEXT NOT NULL,
@@ -478,6 +499,27 @@ fn init_im_core_group_mls_schema(conn: &Connection) -> rusqlite::Result<()> {
             status TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(owner_identity_id, device_id, group_did)
+         );
+         CREATE TABLE IF NOT EXISTS group_mls_welcome_receipts (
+            owner_did TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            group_did TEXT NOT NULL,
+            crypto_group_id_b64u TEXT NOT NULL,
+            epoch INTEGER NOT NULL,
+            welcome_digest_b64u TEXT NOT NULL,
+            ratchet_tree_digest_b64u TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_did, device_id, group_did, epoch)
+         );
+         CREATE TABLE IF NOT EXISTS group_mls_terminal_intents (
+            owner_did TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            group_did TEXT NOT NULL,
+            signal TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_did, device_id, group_did)
          );
          CREATE TABLE IF NOT EXISTS group_mls_pending_commits (
             owner_identity_id TEXT NOT NULL,

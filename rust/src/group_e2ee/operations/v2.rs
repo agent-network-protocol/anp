@@ -347,6 +347,35 @@ pub enum V2LocalGroupReadiness {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum V2TerminalSignal {
+    MemberRemoved,
+    MemberLeft,
+    GroupNotMember,
+    LeafNotCurrent,
+}
+
+impl V2TerminalSignal {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::MemberRemoved => "member-removed",
+            Self::MemberLeft => "member-left",
+            Self::GroupNotMember => "group-not-member",
+            Self::LeafNotCurrent => "leaf-not-current",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2MarkTerminalIntentInput {
+    pub owner_did: String,
+    pub owner_device_id: String,
+    pub group_did: String,
+    pub signal: V2TerminalSignal,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct V2InspectLocalGroupOutput {
     pub group_did: String,
     pub readiness: V2LocalGroupReadiness,
@@ -2704,12 +2733,21 @@ pub fn inspect_local_group_v2<S: GroupMlsStore>(
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
-    let readiness = match (binding_count, binding_status.as_deref()) {
-        (0, None) => V2LocalGroupReadiness::Missing,
-        (1, Some("active")) => V2LocalGroupReadiness::Active,
-        (1, Some("removed")) => V2LocalGroupReadiness::Inactive,
-        (1, Some("pending_create")) => V2LocalGroupReadiness::Missing,
-        (count, _) => {
+    let terminal_intent = has_terminal_intent(
+        &scope,
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.group_did,
+        &input.request_id,
+    )?;
+    let readiness = match (binding_count, binding_status.as_deref(), terminal_intent) {
+        (0, None, false) => V2LocalGroupReadiness::Missing,
+        (1, Some("active"), false) => V2LocalGroupReadiness::Active,
+        (1, Some("active" | "removed"), true) | (1, Some("removed"), false) => {
+            V2LocalGroupReadiness::Inactive
+        }
+        (1, Some("pending_create"), false) => V2LocalGroupReadiness::Missing,
+        (count, _, _) => {
             return Err(operation_error(
                 "group.e2ee.state_not_ready",
                 format!("invalid local group binding cardinality/status ({count})"),
@@ -2778,6 +2816,62 @@ pub fn inspect_local_group_v2<S: GroupMlsStore>(
         auto_reconcile_pending_count: auto_reconcile,
         host_recheck_pending_count: host_recheck,
     })
+}
+
+/// Records a business/authorization terminal signal without pretending that
+/// the exact MLS Remove Commit has already been applied.
+pub fn mark_local_group_terminal_intent_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2MarkTerminalIntentInput,
+) -> GroupMlsOperationResult<()> {
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("group_did", &input.group_did, &input.request_id)?;
+    let scope = open_scope(store, &input.request_id)?;
+    if binding_status(
+        &scope.app_conn,
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.group_did,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?
+    .is_none()
+    {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "terminal signal has no exact local group binding",
+            &input.request_id,
+        ));
+    }
+    scope
+        .app_conn
+        .execute(
+            "INSERT INTO group_mls_terminal_intents(
+                 owner_did, device_id, group_did, signal, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+             ON CONFLICT(owner_did, device_id, group_did) DO UPDATE SET
+                 signal = excluded.signal,
+                 updated_at = CURRENT_TIMESTAMP",
+            params![
+                input.owner_did,
+                input.owner_device_id,
+                input.group_did,
+                input.signal.as_str(),
+            ],
+        )
+        .map_err(|error| {
+            GroupMlsOperationError::from(sqlite_error(
+                "state_write_failed",
+                error,
+                &input.request_id,
+            ))
+        })?;
+    Ok(())
 }
 
 /// Lists the secret-free DID/device projection of the locally accepted tree.
@@ -3042,7 +3136,7 @@ fn process_welcome_with_scope(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
-    let replace_removed_group = matches!(
+    let mut replace_existing_group = matches!(
         binding_status(
             &scope.app_conn,
             &input.recipient_did,
@@ -3066,6 +3160,13 @@ fn process_welcome_with_scope(
         if existing.epoch == target_epoch
             && encode_b64u(existing.openmls_group_id.as_slice()) == input.crypto_group_id_b64u
         {
+            if !welcome_receipt_matches(&scope, &input)? {
+                return Err(operation_error(
+                    "group.e2ee.epoch_conflict",
+                    "Welcome at the existing epoch is not an exact replay",
+                    &input.request_id,
+                ));
+            }
             let group = load_group(
                 &scope.provider,
                 &existing.openmls_group_id,
@@ -3080,11 +3181,38 @@ fn process_welcome_with_scope(
                 self_removed: false,
             });
         }
-        return Err(operation_error(
-            "group.e2ee.epoch_conflict",
-            "Welcome conflicts with the existing local group binding",
+        if encode_b64u(existing.openmls_group_id.as_slice()) != input.crypto_group_id_b64u
+            || target_epoch <= existing.epoch
+        {
+            return Err(operation_error(
+                "group.e2ee.epoch_conflict",
+                "Welcome conflicts with the existing local group binding",
+                &input.request_id,
+            ));
+        }
+        let group = load_group(
+            &scope.provider,
+            &existing.openmls_group_id,
             &input.request_id,
-        ));
+        )
+        .map_err(GroupMlsOperationError::from)?;
+        ensure_group_head(&group, &existing, &input.group_did, &input.request_id)?;
+        let old_leaf = exact_local_leaf_bytes(
+            &scope,
+            &group,
+            &input.recipient_did,
+            &input.recipient_device_id,
+            &input.request_id,
+        )?;
+        if ratchet_tree_contains_exact_leaf(&input.ratchet_tree_b64u, &old_leaf, &input.request_id)?
+        {
+            return Err(operation_error(
+                "group.e2ee.epoch_conflict",
+                "newer Welcome still contains the stored exact local leaf",
+                &input.request_id,
+            ));
+        }
+        replace_existing_group = true;
     }
     let welcome = Welcome::tls_deserialize_exact(
         decode_b64u(&input.welcome_b64u, &input.request_id)
@@ -3102,7 +3230,7 @@ fn process_welcome_with_scope(
                 mls_operation_error("group.e2ee.welcome_invalid", err, &input.request_id)
             })?
             .with_ratchet_tree(tree);
-    if replace_removed_group {
+    if replace_existing_group {
         // A self-Remove keeps the authenticated prior epoch for audit and
         // exclusion checks. A later owner-controlled Add uses a fresh
         // KeyPackage and Welcome for the same MLS group id, so OpenMLS must
@@ -3167,12 +3295,222 @@ fn process_welcome_with_scope(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
+    record_welcome_receipt(&scope, &input)?;
+    clear_terminal_intent(
+        &scope,
+        &input.recipient_did,
+        &input.recipient_device_id,
+        &input.group_did,
+        &input.request_id,
+    )?;
     Ok(V2ProcessCommitOutput {
         crypto_group_id_b64u: input.crypto_group_id_b64u,
         from_epoch: target_epoch.saturating_sub(1).to_string(),
         epoch: target_epoch.to_string(),
         self_removed: false,
     })
+}
+
+fn exact_local_leaf_bytes(
+    scope: &GroupMlsOperationScope,
+    group: &MlsGroup,
+    did: &str,
+    device_id: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<Vec<u8>> {
+    let public_group = load_public_group(scope, group, request_id)?;
+    let mut matches = Vec::new();
+    for member in group.members() {
+        let leaf = public_group.leaf(member.index).ok_or_else(|| {
+            operation_error(
+                "group.e2ee.did_binding_invalid",
+                "member leaf is missing from the stored local group",
+                request_id,
+            )
+        })?;
+        let (binding, evidence) = leaf_binding_evidence(leaf, request_id)?;
+        if binding.agent_did == did && binding.device_id == device_id {
+            binding
+                .validate_structure()
+                .map_err(|error| v2_error("group.e2ee.did_binding_invalid", error, request_id))?;
+            if evidence.leaf_signature_key_b64u
+                != URL_SAFE_NO_PAD.encode(leaf.signature_key().as_slice())
+            {
+                return Err(operation_error(
+                    "group.e2ee.did_binding_invalid",
+                    "stored exact local leaf signature key is inconsistent",
+                    request_id,
+                ));
+            }
+            matches.push(leaf.tls_serialize_detached().map_err(|error| {
+                operation_error("group.e2ee.state_not_ready", error, request_id)
+            })?);
+        }
+    }
+    if matches.len() == 1 {
+        Ok(matches.remove(0))
+    } else {
+        Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "stored local group does not contain one exact local leaf",
+            request_id,
+        ))
+    }
+}
+
+fn ratchet_tree_contains_exact_leaf(
+    ratchet_tree_b64u: &str,
+    exact_leaf: &[u8],
+    request_id: &str,
+) -> GroupMlsOperationResult<bool> {
+    let tree_bytes =
+        decode_b64u(ratchet_tree_b64u, request_id).map_err(GroupMlsOperationError::from)?;
+    if exact_leaf.is_empty() {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "stored exact local LeafNode is empty",
+            request_id,
+        ));
+    }
+    // RatchetTreeIn embeds the complete TLS-serialized LeafNode. A raw exact
+    // node search is conservative: an accidental occurrence elsewhere only
+    // causes a safe false-positive rejection, while absence proves the stored
+    // old LeafNode is not present in the delivered tree.
+    Ok(tree_bytes
+        .windows(exact_leaf.len())
+        .any(|window| window == exact_leaf))
+}
+
+fn welcome_wire_digest(value: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(value.as_bytes()))
+}
+
+fn welcome_receipt_matches(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessWelcomeInput,
+) -> GroupMlsOperationResult<bool> {
+    let row = scope
+        .app_conn
+        .query_row(
+            "SELECT crypto_group_id_b64u, welcome_digest_b64u, ratchet_tree_digest_b64u
+             FROM group_mls_welcome_receipts
+             WHERE owner_did = ?1 AND device_id = ?2
+               AND group_did = ?3 AND epoch = ?4",
+            params![
+                input.recipient_did,
+                input.recipient_device_id,
+                input.group_did,
+                parse_epoch(&input.epoch, &input.request_id)? as i64,
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            GroupMlsOperationError::from(sqlite_error(
+                "state_read_failed",
+                error,
+                &input.request_id,
+            ))
+        })?;
+    Ok(
+        row.is_some_and(|(crypto_group_id, welcome_digest, tree_digest)| {
+            crypto_group_id == input.crypto_group_id_b64u
+                && welcome_digest == welcome_wire_digest(&input.welcome_b64u)
+                && tree_digest == welcome_wire_digest(&input.ratchet_tree_b64u)
+        }),
+    )
+}
+
+fn record_welcome_receipt(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessWelcomeInput,
+) -> GroupMlsOperationResult<()> {
+    let epoch = parse_epoch(&input.epoch, &input.request_id)?;
+    let welcome_digest = welcome_wire_digest(&input.welcome_b64u);
+    let tree_digest = welcome_wire_digest(&input.ratchet_tree_b64u);
+    scope
+        .app_conn
+        .execute(
+            "INSERT INTO group_mls_welcome_receipts(
+                 owner_did, device_id, group_did,
+                 crypto_group_id_b64u, epoch,
+                 welcome_digest_b64u, ratchet_tree_digest_b64u, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+             ON CONFLICT(owner_did, device_id, group_did, epoch) DO NOTHING",
+            params![
+                input.recipient_did,
+                input.recipient_device_id,
+                input.group_did,
+                input.crypto_group_id_b64u,
+                epoch as i64,
+                welcome_digest,
+                tree_digest,
+            ],
+        )
+        .map_err(|error| {
+            GroupMlsOperationError::from(sqlite_error(
+                "state_write_failed",
+                error,
+                &input.request_id,
+            ))
+        })?;
+    if welcome_receipt_matches(scope, input)? {
+        Ok(())
+    } else {
+        Err(operation_error(
+            "group.e2ee.epoch_conflict",
+            "Welcome receipt conflicts with the persisted exact replay",
+            &input.request_id,
+        ))
+    }
+}
+
+fn has_terminal_intent(
+    scope: &GroupMlsOperationScope,
+    owner_did: &str,
+    device_id: &str,
+    group_did: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<bool> {
+    scope
+        .app_conn
+        .query_row(
+            "SELECT 1 FROM group_mls_terminal_intents
+             WHERE owner_did = ?1 AND device_id = ?2 AND group_did = ?3",
+            params![owner_did, device_id, group_did],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|error| {
+            GroupMlsOperationError::from(sqlite_error("state_read_failed", error, request_id))
+        })
+}
+
+fn clear_terminal_intent(
+    scope: &GroupMlsOperationScope,
+    owner_did: &str,
+    device_id: &str,
+    group_did: &str,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    scope
+        .app_conn
+        .execute(
+            "DELETE FROM group_mls_terminal_intents
+             WHERE owner_did = ?1 AND device_id = ?2 AND group_did = ?3",
+            params![owner_did, device_id, group_did],
+        )
+        .map_err(|error| {
+            GroupMlsOperationError::from(sqlite_error("state_write_failed", error, request_id))
+        })?;
+    Ok(())
 }
 
 /// Processes the standard device-targeted P6 v2 `group.e2ee.notice` shape.
@@ -4181,6 +4519,19 @@ pub fn encrypt_v2<S: GroupMlsStore>(
         ));
     }
     let scope = open_scope(store, &input.request_id)?;
+    if has_terminal_intent(
+        &scope,
+        &input.meta.sender_did,
+        &input.meta.sender_device_id,
+        &input.group_state_ref.group_did,
+        &input.request_id,
+    )? {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "local group has a terminal membership intent",
+            &input.request_id,
+        ));
+    }
     let local_binding = binding(
         &scope.app_conn,
         &input.meta.sender_did,

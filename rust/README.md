@@ -19,6 +19,7 @@ cargo add anp
 - Proof generation and verification
 - Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`
 - RFC 9421 origin proof helpers for ANP request objects
+- P6 v2 delivered-origin reconstruction for exact-device `group.incoming`
 - WNS models, validation, and resolver helpers
 - `anp::group_e2ee::operations` one-shot group E2EE APIs for ANP-P6 real OpenMLS
   KeyPackage generation, group create/add/remove prepare, local leave terminal-state
@@ -26,6 +27,9 @@ cargo add anp
   message encrypt/decrypt, and local status operations. MLS state is kept behind
   `anp::group_e2ee::storage` store implementations rather than a subprocess or CLI JSON
   command surface.
+- P6 v2 Notice IDs are required. Welcome replay is byte-exact, Terminal intents
+  disable new sends without discarding old MLS state, and a verified fresh
+  Welcome can replace a removed or provably stale local Leaf at a newer epoch.
 
 ## Compatibility Notes
 

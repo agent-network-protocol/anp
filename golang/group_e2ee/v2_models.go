@@ -181,6 +181,46 @@ type V2OriginAuth struct {
 	OriginProof V2OriginProof `json:"origin_proof"`
 }
 
+type V2OriginContext struct {
+	CreatedAt *string        `json:"created_at,omitempty"`
+	ExtraMeta map[string]any `json:"extra_meta,omitempty"`
+}
+
+func (value V2OriginContext) Validate() error {
+	if value.CreatedAt != nil {
+		if _, err := time.Parse(time.RFC3339, *value.CreatedAt); err != nil {
+			return invalidV2("auth.origin_context.created_at must be RFC3339")
+		}
+	}
+	reserved := map[string]struct{}{
+		"profile": {}, "security_profile": {}, "sender_did": {},
+		"sender_device_id": {}, "target": {}, "recipient_device_id": {},
+		"message_id": {}, "operation_id": {}, "content_type": {}, "created_at": {},
+	}
+	for field := range value.ExtraMeta {
+		if _, found := reserved[field]; found {
+			return invalidV2("auth.origin_context.extra_meta contains reserved field " + field)
+		}
+	}
+	return nil
+}
+
+type V2DeliveredOriginAuth struct {
+	Scheme        string           `json:"scheme"`
+	OriginProof   V2OriginProof    `json:"origin_proof"`
+	OriginContext *V2OriginContext `json:"origin_context"`
+}
+
+func (value V2DeliveredOriginAuth) Validate() error {
+	if err := (V2OriginAuth{Scheme: value.Scheme, OriginProof: value.OriginProof}).Validate(); err != nil {
+		return err
+	}
+	if value.OriginContext == nil {
+		return invalidV2("auth.origin_context is required")
+	}
+	return value.OriginContext.Validate()
+}
+
 func (value V2OriginAuth) Validate() error {
 	if value.Scheme != RFC9421OriginProofSchemeV2 {
 		return invalidV2("auth.scheme must equal " + RFC9421OriginProofSchemeV2)
@@ -359,7 +399,7 @@ func (value V2GroupApplicationPlaintext) Validate() error {
 }
 
 type V2E2EENotice struct {
-	NoticeID           *string         `json:"notice_id,omitempty"`
+	NoticeID           string          `json:"notice_id"`
 	NoticeType         string          `json:"notice_type"`
 	GroupDID           string          `json:"group_did"`
 	GroupStateRef      V2GroupStateRef `json:"group_state_ref"`
@@ -376,11 +416,8 @@ type V2E2EENotice struct {
 }
 
 func (value V2E2EENotice) Validate() error {
-	if empty(value.GroupDID, value.SubjectDID, value.SubjectDeviceID) {
+	if empty(value.NoticeID, value.GroupDID, value.SubjectDID, value.SubjectDeviceID) {
 		return invalidV2("notice identifiers must be non-empty")
-	}
-	if err := validateOptionalStringV2("notice_id", value.NoticeID); err != nil {
-		return err
 	}
 	if err := value.GroupStateRef.Validate(); err != nil {
 		return err

@@ -21,6 +21,7 @@ var V2ProtocolErrors = []V2ProtocolError{
 	{5010, "group.e2ee.fork_suspected"},
 	{5011, "group.e2ee.notice_type_unsupported"},
 	{5012, "group.e2ee.key_package_consumed"},
+	{5013, "group.e2ee.leaf_not_current"},
 }
 
 func LookupV2ProtocolError(code int) (V2ProtocolError, bool) {
