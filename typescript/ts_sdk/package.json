@@ -1,6 +1,6 @@
 {
   "name": "@awiki/anp-typescript-sdk",
-  "version": "0.2.0",
+  "version": "0.9.3",
   "description": "TypeScript SDK for Agent Network Protocol (ANP)",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -49,7 +49,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agent-network-protocol/anp.git",
+    "url": "git+https://github.com/agent-network-protocol/anp.git",
     "directory": "typescript/ts_sdk"
   },
   "bugs": {
@@ -77,5 +77,9 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

@@ -28,7 +28,7 @@ ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：
 
 - **Python Agent SDK**：OpenANP 用于快速构建和调用 ANP 智能体，并提供 authentication、proof、WNS、AP2、crawler 和 E2EE 模块。
 - **共享协议 SDK**：Go 和 Rust 覆盖核心 ANP 身份、证明、WNS 功能和部分 E2EE 能力；Dart 聚焦核心身份、proof 和 WNS helpers。
-- **预览 / 本地 SDK 工作区**：TypeScript 和 Java 实现可以从源码使用，公开包发布状态仍需在 README 中明确区分。
+- **预览 / 本地 SDK 工作区**：Java 实现可以从源码使用，公开包发布状态仍需在 README 中明确区分。
 - **示例和 fixtures**：可运行示例、跨语言互通检查和共享测试向量。
 - **发布工具**：Python / Go / Rust 的统一发版流程和版本规则。
 
@@ -76,15 +76,15 @@ ANP-04 WNS 1.1 将 `binding_generation` 定义为必填安全字段。该收紧�
 
 ## SDK 与发布
 
-Registry 状态核对时间：**2026-07-13**。Python 和 Rust 发布为 `0.8.9`，Go 暂时保持上一条协调发布线 `v0.8.8`。Dart 单独发布。TypeScript 和 Java 可以从源码或本地构建使用，但本 README **不声称** 它们已经公开发布到 npm 或 Maven Central。
+Registry 状态核对时间：**2026-08-18**。Python、Rust、Go 和 TypeScript 发布为 `0.9.3`。Dart 单独发布。Java 可以从本地 Maven 构建使用，但本 README **不声称** 它已经发布到 Maven Central。
 
 | 语言 | 包 / 模块 | 获取位置 | 已核对版本 | 安装 / 使用 | 示例 | 状态 |
 |---|---|---|---|---|---|---|
-| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.8.9` | `pip install anp`；OpenANP/FastAPI extras 用 `pip install "anp[api]"` | [examples/python/](examples/python/) | 稳定公开发布 SDK |
-| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.8.8` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | 稳定公开发布 SDK；tag 格式是 `golang/vX.Y.Z` |
-| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.8.9` | `cargo add anp` | [rust/examples/](rust/examples/) | 稳定公开发布 SDK |
+| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.9.3` | `pip install anp`；OpenANP/FastAPI extras 用 `pip install "anp[api]"` | [examples/python/](examples/python/) | 稳定公开发布 SDK |
+| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.9.3` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | 稳定公开发布 SDK；tag 格式是 `golang/vX.Y.Z` |
+| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.9.3` | `cargo add anp` | [rust/examples/](rust/examples/) | 稳定公开发布 SDK |
 | Dart | `anp` | [pub.dev](https://pub.dev/packages/anp) | `0.8.7` | `dart pub add anp` | [dart/example/](dart/example/) | 已发布 SDK；不在当前 Python/Go/Rust 统一 release helper 中 |
-| TypeScript | `@anp/typescript-sdk` | 源码工作区 | 本地 `0.1.0` | `cd typescript/ts_sdk && npm install && npm run build` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Preview/local source；npm registry 核对结果为 not found |
+| TypeScript | `@awiki/anp-typescript-sdk` | [npm](https://www.npmjs.com/package/@awiki/anp-typescript-sdk) | `0.9.3` | `npm install @awiki/anp-typescript-sdk` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | 已发布 SDK；不在当前 Python/Go/Rust 统一 release helper 中 |
 | Java | `com.agentconnect:anp4j`, `com.agentconnect:anp-spring-boot-starter` | 本地 Maven build | 本地 `1.0.0` | `cd java && mvn clean install -DskipTests` | [java/anp-examples/](java/anp-examples/) | Local SDK；Maven Central metadata 核对结果为 not found |
 
 ### 最小安装命令
@@ -104,6 +104,9 @@ cargo add anp
 
 # Dart
 dart pub add anp
+
+# TypeScript
+npm install @awiki/anp-typescript-sdk
 ```
 
 如果你在本仓库内开发，请优先使用 [开发](#开发) 中的本地命令，而不是安装公开发布包。

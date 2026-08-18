@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3
+
+- Align the published npm version with the coordinated ANP `0.9.3` release.
+- Add Device Manifest models and validation for the TypeScript authentication surface.
+- Add RFC 9421 origin proof generation and verification.
+
 ## 0.2.0
 
 - Add the high-level AWiki IM client for Legacy single-device registration, direct and existing-group messaging, history, and P7 attachments.

@@ -28,7 +28,7 @@ ANP is a protocol stack for an open network of interoperable agents. In practice
 
 - **Python agent SDK**: OpenANP for quickly building and calling ANP agents, plus authentication, proof, WNS, AP2, crawler, and E2EE modules.
 - **Shared protocol SDKs**: Go and Rust cover core ANP identity/proof/WNS functionality plus selected E2EE surfaces; Dart focuses on core identity, proof, and WNS helpers.
-- **Preview/local SDK workspaces**: TypeScript and Java implementations that can be used from source while their public package status matures.
+- **Preview/local SDK workspaces**: The Java implementation can be used from source while its public package status matures.
 - **Examples and fixtures**: runnable examples, cross-language interop checks, and shared test vectors.
 - **Release tooling**: coordinated Python / Go / Rust release workflow and version policy.
 
@@ -80,15 +80,15 @@ OpenMLS rebind and status capabilities.
 
 ## SDKs and releases
 
-Registry status checked on **2026-08-06**. Python, Rust, and Go are published at the coordinated `0.9.2` release. Dart is published separately. TypeScript and Java are usable from source/local builds, but this README does **not** claim public npm or Maven Central publication for them.
+Registry status checked on **2026-08-18**. Python, Rust, Go, and TypeScript are published at `0.9.3`. Dart is published separately. Java is usable from a local Maven build, but this README does **not** claim Maven Central publication for it.
 
 | Language | Package / module | Where to get it | Checked version | Install / use | Examples | Status |
 |---|---|---|---|---|---|---|
-| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.9.2` | `pip install anp` or `pip install "anp[api]"` for OpenANP/FastAPI extras | [examples/python/](examples/python/) | Stable published SDK |
-| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.9.2` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | Stable published SDK; tag format is `golang/vX.Y.Z` |
-| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.9.2` | `cargo add anp` | [rust/examples/](rust/examples/) | Stable published SDK |
+| Python | `anp` | [PyPI](https://pypi.org/project/anp/) | `0.9.3` | `pip install anp` or `pip install "anp[api]"` for OpenANP/FastAPI extras | [examples/python/](examples/python/) | Stable published SDK |
+| Go | `github.com/agent-network-protocol/anp/golang` | Go module proxy / [pkg.go.dev](https://pkg.go.dev/github.com/agent-network-protocol/anp/golang) | `v0.9.3` | `go get github.com/agent-network-protocol/anp/golang@latest` | [golang/examples/](golang/examples/) | Stable published SDK; tag format is `golang/vX.Y.Z` |
+| Rust | `anp` | [crates.io](https://crates.io/crates/anp) / [docs.rs](https://docs.rs/anp) | `0.9.3` | `cargo add anp` | [rust/examples/](rust/examples/) | Stable published SDK |
 | Dart | `anp` | [pub.dev](https://pub.dev/packages/anp) | `0.8.7` | `dart pub add anp` | [dart/example/](dart/example/) | Published SDK; versioned outside the current Python/Go/Rust release helper |
-| TypeScript | `@anp/typescript-sdk` | Source workspace | local `0.1.0` | `cd typescript/ts_sdk && npm install && npm run build` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Preview/local source; npm registry check returned not found |
+| TypeScript | `@awiki/anp-typescript-sdk` | [npm](https://www.npmjs.com/package/@awiki/anp-typescript-sdk) | `0.9.3` | `npm install @awiki/anp-typescript-sdk` | [typescript/ts_sdk/examples/](typescript/ts_sdk/examples/) | Published SDK; versioned outside the current Python/Go/Rust release helper |
 | Java | `com.agentconnect:anp4j`, `com.agentconnect:anp-spring-boot-starter` | Local Maven build | local `1.0.0` | `cd java && mvn clean install -DskipTests` | [java/anp-examples/](java/anp-examples/) | Local SDK; Maven Central metadata check returned not found |
 
 ### Minimal install snippets
@@ -108,6 +108,9 @@ cargo add anp
 
 # Dart
 dart pub add anp
+
+# TypeScript
+npm install @awiki/anp-typescript-sdk
 ```
 
 For local repository development, prefer the commands in [Development](#development) instead of installing published packages.
