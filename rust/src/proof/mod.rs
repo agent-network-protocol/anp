@@ -77,20 +77,42 @@ pub enum ProofError {
     InvalidIssuerDidDocument,
     #[error("Signing error")]
     SigningError,
+    #[error("The external signature does not match the supplied public key")]
+    InvalidSignature,
 }
 
-pub fn generate_w3c_proof(
+/// A W3C proof whose deterministic signing input is ready for an external signer.
+///
+/// The prepared value contains only public document data, proof options, and the
+/// bytes to sign. It never contains private key material.
+pub struct PreparedW3cProof {
+    document: Value,
+    proof_object: Map<String, Value>,
+    signing_input: Vec<u8>,
+    public_key: PublicKeyMaterial,
+}
+
+impl PreparedW3cProof {
+    /// Returns the exact bytes that an external signer must sign.
+    pub fn signing_input(&self) -> &[u8] {
+        &self.signing_input
+    }
+}
+
+/// Prepares a W3C proof for an external signer without accepting private keys.
+pub fn prepare_w3c_proof(
     document: &Value,
-    private_key: &PrivateKeyMaterial,
+    public_key: &PublicKeyMaterial,
     verification_method: &str,
     options: ProofGenerationOptions,
-) -> Result<Value, ProofError> {
+) -> Result<PreparedW3cProof, ProofError> {
+    if !document.is_object() {
+        return Err(ProofError::VerificationFailed);
+    }
     let proof_type = match options.proof_type.clone() {
         Some(value) => value,
-        None => infer_proof_type(private_key),
+        None => infer_public_proof_type(public_key),
     };
-
-    validate_key_compatibility(private_key, &proof_type, options.cryptosuite.as_deref())?;
 
     let created = options
         .created
@@ -113,38 +135,70 @@ pub fn generate_w3c_proof(
         let cryptosuite = options
             .cryptosuite
             .clone()
-            .unwrap_or_else(|| infer_cryptosuite(private_key));
-        validate_cryptosuite(private_key, &cryptosuite)?;
+            .unwrap_or_else(|| infer_public_cryptosuite(public_key));
         proof_object.insert("cryptosuite".to_string(), Value::String(cryptosuite));
     }
-    if let Some(domain) = options.domain.clone() {
+    if let Some(domain) = options.domain {
         proof_object.insert("domain".to_string(), Value::String(domain));
     }
-    if let Some(challenge) = options.challenge.clone() {
+    if let Some(challenge) = options.challenge {
         proof_object.insert("challenge".to_string(), Value::String(challenge));
     }
+
+    validate_public_key_compatibility(
+        public_key,
+        &proof_type,
+        proof_object.get("cryptosuite").and_then(Value::as_str),
+    )?;
 
     let mut signing_document = document.clone();
     if let Some(object) = signing_document.as_object_mut() {
         object.remove("proof");
     }
-
     let signing_input =
         compute_signing_input(&signing_document, &Value::Object(proof_object.clone()))?;
-    let signature = private_key
-        .sign_message(&signing_input)
-        .map_err(|_| ProofError::SigningError)?;
-    proof_object.insert(
-        "proofValue".to_string(),
-        Value::String(crate::keys::base64url_encode(&signature)),
-    );
 
-    let mut signed_document = document.clone();
-    let object = signed_document
+    Ok(PreparedW3cProof {
+        document: document.clone(),
+        proof_object,
+        signing_input,
+        public_key: public_key.clone(),
+    })
+}
+
+/// Completes a prepared W3C proof with bytes produced by an external signer.
+pub fn complete_w3c_proof(
+    mut prepared: PreparedW3cProof,
+    signature: &[u8],
+) -> Result<Value, ProofError> {
+    prepared
+        .public_key
+        .verify_message(&prepared.signing_input, signature)
+        .map_err(|_| ProofError::InvalidSignature)?;
+    prepared.proof_object.insert(
+        "proofValue".to_string(),
+        Value::String(crate::keys::base64url_encode(signature)),
+    );
+    let object = prepared
+        .document
         .as_object_mut()
         .ok_or(ProofError::VerificationFailed)?;
-    object.insert("proof".to_string(), Value::Object(proof_object));
-    Ok(signed_document)
+    object.insert("proof".to_string(), Value::Object(prepared.proof_object));
+    Ok(prepared.document)
+}
+
+pub fn generate_w3c_proof(
+    document: &Value,
+    private_key: &PrivateKeyMaterial,
+    verification_method: &str,
+    options: ProofGenerationOptions,
+) -> Result<Value, ProofError> {
+    let public_key = private_key.public_key();
+    let prepared = prepare_w3c_proof(document, &public_key, verification_method, options)?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| ProofError::SigningError)?;
+    complete_w3c_proof(prepared, &signature)
 }
 
 pub fn verify_w3c_proof(
@@ -240,54 +294,18 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
 
-fn infer_proof_type(private_key: &PrivateKeyMaterial) -> String {
-    match private_key {
-        PrivateKeyMaterial::Secp256k1(_) => PROOF_TYPE_SECP256K1.to_string(),
-        PrivateKeyMaterial::Ed25519(_) => PROOF_TYPE_ED25519.to_string(),
+fn infer_public_proof_type(public_key: &PublicKeyMaterial) -> String {
+    match public_key {
+        PublicKeyMaterial::Secp256k1(_) => PROOF_TYPE_SECP256K1.to_string(),
+        PublicKeyMaterial::Ed25519(_) => PROOF_TYPE_ED25519.to_string(),
         _ => PROOF_TYPE_DATA_INTEGRITY.to_string(),
     }
 }
 
-fn infer_cryptosuite(private_key: &PrivateKeyMaterial) -> String {
-    match private_key {
-        PrivateKeyMaterial::Ed25519(_) => CRYPTOSUITE_EDDSA_JCS_2022.to_string(),
+fn infer_public_cryptosuite(public_key: &PublicKeyMaterial) -> String {
+    match public_key {
+        PublicKeyMaterial::Ed25519(_) => CRYPTOSUITE_EDDSA_JCS_2022.to_string(),
         _ => CRYPTOSUITE_DIDWBA_SECP256K1_2025.to_string(),
-    }
-}
-
-fn validate_key_compatibility(
-    private_key: &PrivateKeyMaterial,
-    proof_type: &str,
-    cryptosuite: Option<&str>,
-) -> Result<(), ProofError> {
-    match proof_type {
-        PROOF_TYPE_SECP256K1 => match private_key {
-            PrivateKeyMaterial::Secp256k1(_) => Ok(()),
-            _ => Err(ProofError::KeyTypeMismatch),
-        },
-        PROOF_TYPE_ED25519 => match private_key {
-            PrivateKeyMaterial::Ed25519(_) => Ok(()),
-            _ => Err(ProofError::KeyTypeMismatch),
-        },
-        PROOF_TYPE_DATA_INTEGRITY => validate_cryptosuite(private_key, cryptosuite.unwrap_or("")),
-        other => Err(ProofError::UnsupportedProofType(other.to_string())),
-    }
-}
-
-fn validate_cryptosuite(
-    private_key: &PrivateKeyMaterial,
-    cryptosuite: &str,
-) -> Result<(), ProofError> {
-    match cryptosuite {
-        CRYPTOSUITE_EDDSA_JCS_2022 => match private_key {
-            PrivateKeyMaterial::Ed25519(_) => Ok(()),
-            _ => Err(ProofError::KeyTypeMismatch),
-        },
-        CRYPTOSUITE_DIDWBA_SECP256K1_2025 => match private_key {
-            PrivateKeyMaterial::Secp256k1(_) => Ok(()),
-            _ => Err(ProofError::KeyTypeMismatch),
-        },
-        other => Err(ProofError::UnsupportedCryptosuite(other.to_string())),
     }
 }
 

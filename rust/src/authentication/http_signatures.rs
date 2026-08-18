@@ -11,7 +11,9 @@ use url::Url;
 use crate::keys::base64url_encode;
 use crate::PrivateKeyMaterial;
 
-use super::did_wba::find_verification_method;
+use super::did_wba::{
+    find_verification_method, is_authentication_authorized, normalize_authentication_kid,
+};
 use super::verification_methods::extract_public_key;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,10 +61,28 @@ pub enum HttpSignatureError {
     InvalidContentDigest,
     #[error("Verification method not found")]
     VerificationMethodNotFound,
+    #[error("Invalid or foreign verification method KID")]
+    InvalidKeyId,
+    #[error("Verification method is not authorized for authentication")]
+    UnauthorizedVerificationMethod,
     #[error("Signature verification failed")]
     VerificationFailed,
     #[error("Signing failed")]
     SigningFailed,
+}
+
+/// HTTP Message Signature data prepared for an external signer.
+pub struct PreparedHttpSignature {
+    headers: BTreeMap<String, String>,
+    signing_input: Vec<u8>,
+    public_key: crate::PublicKeyMaterial,
+}
+
+impl PreparedHttpSignature {
+    /// Returns the exact HTTP signature base bytes to sign.
+    pub fn signing_input(&self) -> &[u8] {
+        &self.signing_input
+    }
 }
 
 pub fn build_content_digest(body: &[u8]) -> String {
@@ -83,11 +103,75 @@ pub fn generate_http_signature_headers(
     body: Option<&[u8]>,
     options: HttpSignatureOptions,
 ) -> Result<BTreeMap<String, String>, HttpSignatureError> {
-    let keyid = if let Some(value) = options.keyid.clone() {
+    let prepared = prepare_http_signature_headers(
+        did_document,
+        request_url,
+        request_method,
+        headers,
+        body,
+        options,
+    )?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| HttpSignatureError::SigningFailed)?;
+    Ok(complete_http_signature_headers_unchecked(
+        prepared, &signature,
+    ))
+}
+
+/// Generates HTTP Message Signature headers with an explicit authentication KID.
+pub fn generate_http_signature_headers_with_kid(
+    did_document: &serde_json::Value,
+    request_url: &str,
+    request_method: &str,
+    private_key: &PrivateKeyMaterial,
+    headers: Option<&BTreeMap<String, String>>,
+    body: Option<&[u8]>,
+    kid: &str,
+    mut options: HttpSignatureOptions,
+) -> Result<BTreeMap<String, String>, HttpSignatureError> {
+    options.keyid = Some(kid.to_string());
+    let prepared = prepare_http_signature_headers(
+        did_document,
+        request_url,
+        request_method,
+        headers,
+        body,
+        options,
+    )?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| HttpSignatureError::SigningFailed)?;
+    complete_http_signature_headers(prepared, &signature)
+}
+
+/// Prepares HTTP Message Signature headers for an external signer.
+pub fn prepare_http_signature_headers(
+    did_document: &serde_json::Value,
+    request_url: &str,
+    request_method: &str,
+    headers: Option<&BTreeMap<String, String>>,
+    body: Option<&[u8]>,
+    options: HttpSignatureOptions,
+) -> Result<PreparedHttpSignature, HttpSignatureError> {
+    let did = did_document
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(HttpSignatureError::InvalidKeyId)?;
+    let requested_keyid = if let Some(value) = options.keyid.clone() {
         value
     } else {
         select_default_keyid(did_document)?
     };
+    let keyid = normalize_authentication_kid(did, &requested_keyid)
+        .map_err(|_| HttpSignatureError::InvalidKeyId)?;
+    if !is_authentication_authorized(did_document, &keyid) {
+        return Err(HttpSignatureError::UnauthorizedVerificationMethod);
+    }
+    let method = find_verification_method(did_document, &keyid)
+        .ok_or(HttpSignatureError::VerificationMethodNotFound)?;
+    let public_key =
+        extract_public_key(&method).map_err(|_| HttpSignatureError::VerificationMethodNotFound)?;
     let components = options.covered_components.unwrap_or_else(|| {
         vec![
             "@method".to_string(),
@@ -128,21 +212,45 @@ pub fn generate_http_signature_headers(
         &keyid,
     )
     .map_err(|_| HttpSignatureError::InvalidSignatureInput)?;
-    let signature = private_key
-        .sign_message(signature_base.as_bytes())
-        .map_err(|_| HttpSignatureError::SigningFailed)?;
     let signature_input = format!(
         "sig1={}",
         serialize_signature_params(&covered, created, expires, nonce.as_deref(), &keyid)
     );
-    let signature_header = format!("sig1=:{}:", STANDARD.encode(signature));
     let mut result = BTreeMap::new();
     result.insert("Signature-Input".to_string(), signature_input);
-    result.insert("Signature".to_string(), signature_header);
     if let Some(value) = headers_to_sign.get("Content-Digest") {
         result.insert("Content-Digest".to_string(), value.clone());
     }
-    Ok(result)
+    Ok(PreparedHttpSignature {
+        headers: result,
+        signing_input: signature_base.into_bytes(),
+        public_key,
+    })
+}
+
+/// Completes prepared HTTP Message Signature headers with an external signature.
+pub fn complete_http_signature_headers(
+    prepared: PreparedHttpSignature,
+    signature: &[u8],
+) -> Result<BTreeMap<String, String>, HttpSignatureError> {
+    prepared
+        .public_key
+        .verify_message(&prepared.signing_input, signature)
+        .map_err(|_| HttpSignatureError::SigningFailed)?;
+    Ok(complete_http_signature_headers_unchecked(
+        prepared, signature,
+    ))
+}
+
+fn complete_http_signature_headers_unchecked(
+    mut prepared: PreparedHttpSignature,
+    signature: &[u8],
+) -> BTreeMap<String, String> {
+    prepared.headers.insert(
+        "Signature".to_string(),
+        format!("sig1=:{}:", STANDARD.encode(signature)),
+    );
+    prepared.headers
 }
 
 pub fn extract_signature_metadata(
@@ -211,7 +319,16 @@ pub fn verify_http_message_signature(
         }
     }
 
-    let method = find_verification_method(did_document, &keyid)
+    let did = did_document
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(HttpSignatureError::InvalidKeyId)?;
+    let normalized_keyid =
+        normalize_authentication_kid(did, &keyid).map_err(|_| HttpSignatureError::InvalidKeyId)?;
+    if !is_authentication_authorized(did_document, &normalized_keyid) {
+        return Err(HttpSignatureError::UnauthorizedVerificationMethod);
+    }
+    let method = find_verification_method(did_document, &normalized_keyid)
         .ok_or(HttpSignatureError::VerificationMethodNotFound)?;
     let public_key =
         extract_public_key(&method).map_err(|_| HttpSignatureError::VerificationMethodNotFound)?;

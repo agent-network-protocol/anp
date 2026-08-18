@@ -20,7 +20,9 @@ use crate::proof::{
 };
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
-use super::verification_methods::{create_verification_method, extract_public_key};
+use super::verification_methods::{
+    create_verification_method, extract_public_key, VerificationMethod,
+};
 
 pub const VM_KEY_AUTH: &str = "key-1";
 pub const VM_KEY_E2EE_SIGNING: &str = "key-2";
@@ -163,6 +165,43 @@ impl DidDocumentCreationOptions {
             .push(Value::String(reference.into()));
         self
     }
+}
+
+/// Protocol role of a public key supplied to the stateless E1 document builder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DidKeyRole {
+    RootControl,
+    RequestSigning,
+    E2eeSigning,
+    E2eeAgreement,
+}
+
+/// DID verification relationship assigned to a supplied public key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DidVerificationRelationship {
+    Authentication,
+    AssertionMethod,
+    KeyAgreement,
+}
+
+/// A public key and its protocol authorization metadata.
+#[derive(Debug, Clone)]
+pub struct SuppliedDidKey {
+    pub fragment: String,
+    pub role: DidKeyRole,
+    pub public_key: PublicKeyMaterial,
+    pub relationships: Vec<DidVerificationRelationship>,
+}
+
+/// Inputs for building an unsigned root-bound E1 DID document.
+#[derive(Debug, Clone)]
+pub struct SuppliedE1DidDocumentOptions {
+    pub port: Option<u16>,
+    pub path_segments: Vec<String>,
+    pub agent_description_url: Option<String>,
+    pub services: Vec<Value>,
+    pub root_key: SuppliedDidKey,
+    pub additional_keys: Vec<SuppliedDidKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,6 +450,20 @@ pub struct ParsedAuthHeader {
     pub version: String,
 }
 
+/// A legacy DID-WBA authorization payload prepared for an external signer.
+pub struct PreparedLegacyDidWbaAuth {
+    parsed: ParsedAuthHeader,
+    signing_input: Vec<u8>,
+    verification_method: VerificationMethod,
+}
+
+impl PreparedLegacyDidWbaAuth {
+    /// Returns the exact digest that an external signer must sign.
+    pub fn signing_input(&self) -> &[u8] {
+        &self.signing_input
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DidResolutionOptions {
     pub timeout_seconds: f64,
@@ -448,6 +501,8 @@ pub enum AuthenticationError {
     MissingAuthorizationField(String),
     #[error("Verification method not found")]
     VerificationMethodNotFound,
+    #[error("Verification method is not authorized for authentication")]
+    UnauthorizedVerificationMethod,
     #[error("Verification failed")]
     VerificationFailed,
     #[error("Signature generation failed")]
@@ -704,6 +759,116 @@ pub fn create_did_wba_document_with_creation_options(
     })
 }
 
+/// Builds an unsigned E1 DID document from caller-supplied public keys.
+///
+/// This function never generates or accepts private key material. The caller
+/// signs the returned document with [`crate::proof::prepare_w3c_proof`] and
+/// [`crate::proof::complete_w3c_proof`].
+pub fn build_unsigned_e1_did_document(
+    hostname: &str,
+    options: SuppliedE1DidDocumentOptions,
+) -> Result<Value, AuthenticationError> {
+    if hostname.trim().is_empty() {
+        return Err(AuthenticationError::EmptyHostname);
+    }
+    if is_ip_address(hostname) {
+        return Err(AuthenticationError::IpAddressNotAllowed);
+    }
+    if options.path_segments.is_empty()
+        || options
+            .path_segments
+            .iter()
+            .any(|segment| segment.trim().is_empty())
+    {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    validate_supplied_key(&options.root_key)?;
+    if options.root_key.role != DidKeyRole::RootControl {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    match &options.root_key.public_key {
+        PublicKeyMaterial::Ed25519(_) => {}
+        _ => return Err(AuthenticationError::UnsupportedProfile),
+    }
+
+    let did_base = build_did_base(hostname, options.port);
+    let mut path_segments = options.path_segments;
+    path_segments.push(format!(
+        "e1_{}",
+        compute_multikey_fingerprint(&options.root_key.public_key)?
+    ));
+    let did = join_did(&did_base, &path_segments);
+
+    let mut keys = Vec::with_capacity(1 + options.additional_keys.len());
+    keys.push(options.root_key);
+    keys.extend(options.additional_keys);
+    let mut seen_fragments = BTreeSet::new();
+    let mut contexts = vec![
+        Value::String("https://www.w3.org/ns/did/v1".to_string()),
+        Value::String("https://w3id.org/security/data-integrity/v2".to_string()),
+        Value::String("https://w3id.org/security/multikey/v1".to_string()),
+    ];
+    let mut verification_methods = Vec::with_capacity(keys.len());
+    let mut authentication = Vec::new();
+    let mut assertion_method = Vec::new();
+    let mut key_agreement = Vec::new();
+
+    for (index, key) in keys.iter().enumerate() {
+        validate_supplied_key(key)?;
+        if index > 0 && key.role == DidKeyRole::RootControl {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        if !seen_fragments.insert(key.fragment.clone()) {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        let key_id = format!("{did}#{}", key.fragment);
+        verification_methods.push(supplied_verification_method(&did, &key_id, key)?);
+        for relationship in &key.relationships {
+            let target = match relationship {
+                DidVerificationRelationship::Authentication => &mut authentication,
+                DidVerificationRelationship::AssertionMethod => &mut assertion_method,
+                DidVerificationRelationship::KeyAgreement => &mut key_agreement,
+            };
+            target.push(Value::String(key_id.clone()));
+        }
+        if matches!(key.public_key, PublicKeyMaterial::X25519(_))
+            && !contexts.iter().any(|context| {
+                context.as_str() == Some("https://w3id.org/security/suites/x25519-2019/v1")
+            })
+        {
+            contexts.push(Value::String(
+                "https://w3id.org/security/suites/x25519-2019/v1".to_string(),
+            ));
+        }
+    }
+
+    let mut document = Map::new();
+    document.insert("@context".to_string(), Value::Array(contexts));
+    document.insert("id".to_string(), Value::String(did.clone()));
+    document.insert(
+        "verificationMethod".to_string(),
+        Value::Array(verification_methods),
+    );
+    document.insert("authentication".to_string(), Value::Array(authentication));
+    document.insert(
+        "assertionMethod".to_string(),
+        Value::Array(assertion_method),
+    );
+    if !key_agreement.is_empty() {
+        document.insert("keyAgreement".to_string(), Value::Array(key_agreement));
+    }
+    let services = build_service_entries(
+        &did,
+        options.agent_description_url.as_deref(),
+        &options.services,
+    );
+    if !services.is_empty() {
+        document.insert("service".to_string(), Value::Array(services));
+    }
+
+    Ok(Value::Object(document))
+}
+
 #[deprecated(
     note = "use create_did_wba_document with DidDocumentOptions::with_profile(DidProfile::K1) instead"
 )]
@@ -917,16 +1082,42 @@ pub fn generate_auth_header(
         version,
         None,
         None,
+        None,
     )?;
-    Ok(format!(
-        "DIDWba v=\"{}\", did=\"{}\", nonce=\"{}\", timestamp=\"{}\", verification_method=\"{}\", signature=\"{}\"",
-        parsed.version,
-        parsed.did,
-        parsed.nonce,
-        parsed.timestamp,
-        parsed.verification_method,
-        parsed.signature,
-    ))
+    Ok(format_auth_header(&parsed))
+}
+
+/// Generates a legacy DID-WBA authorization header with an explicit KID.
+pub fn generate_auth_header_with_kid(
+    did_document: &Value,
+    service_domain: &str,
+    private_key: &PrivateKeyMaterial,
+    version: &str,
+    kid: &str,
+) -> Result<String, AuthenticationError> {
+    let prepared = prepare_legacy_did_wba_auth_header(did_document, service_domain, version, kid)?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| AuthenticationError::SignatureGenerationFailed)?;
+    complete_legacy_did_wba_auth_header(prepared, &signature)
+}
+
+/// Prepares a legacy DID-WBA authorization header for an external signer.
+pub fn prepare_legacy_did_wba_auth_header(
+    did_document: &Value,
+    service_domain: &str,
+    version: &str,
+    kid: &str,
+) -> Result<PreparedLegacyDidWbaAuth, AuthenticationError> {
+    prepare_auth_payload(did_document, service_domain, version, Some(kid), None, None)
+}
+
+/// Completes a prepared legacy DID-WBA header with an external signature.
+pub fn complete_legacy_did_wba_auth_header(
+    prepared: PreparedLegacyDidWbaAuth,
+    signature: &[u8],
+) -> Result<String, AuthenticationError> {
+    complete_auth_payload(prepared, signature).map(|parsed| format_auth_header(&parsed))
 }
 
 pub fn generate_auth_json(
@@ -940,6 +1131,7 @@ pub fn generate_auth_json(
         service_domain,
         private_key,
         version,
+        None,
         None,
         None,
     )?;
@@ -967,18 +1159,11 @@ pub(crate) fn generate_auth_header_with_overrides(
         service_domain,
         private_key,
         version,
+        None,
         nonce,
         timestamp,
     )?;
-    Ok(format!(
-        "DIDWba v=\"{}\", did=\"{}\", nonce=\"{}\", timestamp=\"{}\", verification_method=\"{}\", signature=\"{}\"",
-        parsed.version,
-        parsed.did,
-        parsed.nonce,
-        parsed.timestamp,
-        parsed.verification_method,
-        parsed.signature,
-    ))
+    Ok(format_auth_header(&parsed))
 }
 
 pub fn extract_auth_header_parts(
@@ -1212,14 +1397,37 @@ fn generate_auth_payload(
     service_domain: &str,
     private_key: &PrivateKeyMaterial,
     version: &str,
+    kid: Option<&str>,
     nonce_override: Option<&str>,
     timestamp_override: Option<&str>,
 ) -> Result<ParsedAuthHeader, AuthenticationError> {
+    let prepared = prepare_auth_payload(
+        did_document,
+        service_domain,
+        version,
+        kid,
+        nonce_override,
+        timestamp_override,
+    )?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| AuthenticationError::SignatureGenerationFailed)?;
+    complete_auth_payload_unchecked(prepared, &signature)
+}
+
+fn prepare_auth_payload(
+    did_document: &Value,
+    service_domain: &str,
+    version: &str,
+    kid: Option<&str>,
+    nonce_override: Option<&str>,
+    timestamp_override: Option<&str>,
+) -> Result<PreparedLegacyDidWbaAuth, AuthenticationError> {
     let did = did_document
         .get("id")
         .and_then(Value::as_str)
         .ok_or(AuthenticationError::InvalidDidDocument)?;
-    let (method_dict, method_fragment) = select_authentication_method(did_document)?;
+    let (method_dict, method_fragment) = select_authentication_method(did_document, kid)?;
     let nonce = nonce_override
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| base64url_encode(&rand::random::<[u8; 16]>()));
@@ -1237,27 +1445,61 @@ fn generate_auth_payload(
     });
     let canonical = canonicalize_json(&payload).map_err(|_| AuthenticationError::JsonFailure)?;
     let content_hash = Sha256::digest(canonical).to_vec();
-    let signature_bytes = private_key
-        .sign_message(&content_hash)
-        .map_err(|_| AuthenticationError::SignatureGenerationFailed)?;
-    let verifier = create_verification_method(&method_dict)
-        .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
-    let signature = verifier
-        .encode_signature(&signature_bytes)
+    let verification_method = create_verification_method(&method_dict)
         .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
 
-    Ok(ParsedAuthHeader {
-        did: did.to_string(),
-        nonce: payload
-            .get("nonce")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        timestamp,
-        verification_method: method_fragment,
-        signature,
-        version: version.to_string(),
+    Ok(PreparedLegacyDidWbaAuth {
+        parsed: ParsedAuthHeader {
+            did: did.to_string(),
+            nonce: payload
+                .get("nonce")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            timestamp,
+            verification_method: method_fragment,
+            signature: String::new(),
+            version: version.to_string(),
+        },
+        signing_input: content_hash,
+        verification_method,
     })
+}
+
+fn complete_auth_payload(
+    prepared: PreparedLegacyDidWbaAuth,
+    signature_bytes: &[u8],
+) -> Result<ParsedAuthHeader, AuthenticationError> {
+    prepared
+        .verification_method
+        .public_key
+        .verify_message(&prepared.signing_input, signature_bytes)
+        .map_err(|_| AuthenticationError::SignatureGenerationFailed)?;
+    complete_auth_payload_unchecked(prepared, signature_bytes)
+}
+
+fn complete_auth_payload_unchecked(
+    mut prepared: PreparedLegacyDidWbaAuth,
+    signature_bytes: &[u8],
+) -> Result<ParsedAuthHeader, AuthenticationError> {
+    let signature = prepared
+        .verification_method
+        .encode_signature(signature_bytes)
+        .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
+    prepared.parsed.signature = signature;
+    Ok(prepared.parsed)
+}
+
+fn format_auth_header(parsed: &ParsedAuthHeader) -> String {
+    format!(
+        "DIDWba v=\"{}\", did=\"{}\", nonce=\"{}\", timestamp=\"{}\", verification_method=\"{}\", signature=\"{}\"",
+        parsed.version,
+        parsed.did,
+        parsed.nonce,
+        parsed.timestamp,
+        parsed.verification_method,
+        parsed.signature,
+    )
 }
 
 fn verify_auth_payload(
@@ -1284,7 +1526,11 @@ fn verify_auth_payload(
     });
     let canonical = canonicalize_json(&payload).map_err(|_| AuthenticationError::JsonFailure)?;
     let content_hash = Sha256::digest(canonical).to_vec();
-    let verification_method_id = format!("{}#{}", parsed.did, parsed.verification_method);
+    let verification_method_id =
+        normalize_authentication_kid(&parsed.did, &parsed.verification_method)?;
+    if !is_authentication_authorized(did_document, &verification_method_id) {
+        return Err(AuthenticationError::UnauthorizedVerificationMethod);
+    }
     let method = find_verification_method(did_document, &verification_method_id)
         .ok_or(AuthenticationError::VerificationMethodNotFound)?;
     let verifier = create_verification_method(&method)
@@ -1296,7 +1542,25 @@ fn verify_auth_payload(
 
 fn select_authentication_method(
     did_document: &Value,
+    kid: Option<&str>,
 ) -> Result<(Value, String), AuthenticationError> {
+    let did = did_document
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or(AuthenticationError::InvalidDidDocument)?;
+    if let Some(kid) = kid {
+        let method_id = normalize_authentication_kid(did, kid)?;
+        if !is_authentication_authorized(did_document, &method_id) {
+            return Err(AuthenticationError::UnauthorizedVerificationMethod);
+        }
+        let method = find_verification_method(did_document, &method_id)
+            .ok_or(AuthenticationError::VerificationMethodNotFound)?;
+        let fragment = method_id
+            .strip_prefix(&format!("{did}#"))
+            .ok_or(AuthenticationError::InvalidDidDocument)?
+            .to_string();
+        return Ok((method, fragment));
+    }
     let authentication = did_document
         .get("authentication")
         .and_then(Value::as_array)
@@ -1305,19 +1569,46 @@ fn select_authentication_method(
         .first()
         .ok_or(AuthenticationError::InvalidDidDocument)?;
     if let Some(reference) = first.as_str() {
-        let method = find_verification_method(did_document, reference)
+        let method_id = normalize_authentication_kid(did, reference)?;
+        let method = find_verification_method(did_document, &method_id)
             .ok_or(AuthenticationError::VerificationMethodNotFound)?;
-        let fragment = reference.split('#').last().unwrap_or_default().to_string();
+        let fragment = method_id
+            .strip_prefix(&format!("{did}#"))
+            .ok_or(AuthenticationError::InvalidDidDocument)?
+            .to_string();
         return Ok((method, fragment));
     }
     let id = first
         .get("id")
         .and_then(Value::as_str)
         .ok_or(AuthenticationError::InvalidDidDocument)?;
-    Ok((
-        first.clone(),
-        id.split('#').last().unwrap_or_default().to_string(),
-    ))
+    let method_id = normalize_authentication_kid(did, id)?;
+    let fragment = method_id
+        .strip_prefix(&format!("{did}#"))
+        .ok_or(AuthenticationError::InvalidDidDocument)?
+        .to_string();
+    Ok((first.clone(), fragment))
+}
+
+pub(crate) fn normalize_authentication_kid(
+    did: &str,
+    kid: &str,
+) -> Result<String, AuthenticationError> {
+    let kid = kid.trim();
+    let prefix = format!("{did}#");
+    let fragment = if let Some(fragment) = kid.strip_prefix('#') {
+        fragment
+    } else if let Some(fragment) = kid.strip_prefix(&prefix) {
+        fragment
+    } else if !kid.contains(':') && !kid.contains('#') {
+        kid
+    } else {
+        return Err(AuthenticationError::InvalidDidDocument);
+    };
+    if fragment.is_empty() || fragment.contains('#') {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    Ok(format!("{prefix}{fragment}"))
 }
 
 fn build_service_entries(
@@ -1345,6 +1636,64 @@ fn build_service_entries(
         output.push(copy);
     }
     output
+}
+
+fn validate_supplied_key(key: &SuppliedDidKey) -> Result<(), AuthenticationError> {
+    let fragment = key.fragment.trim();
+    if fragment.is_empty()
+        || fragment != key.fragment
+        || !fragment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    let relationships = key.relationships.iter().copied().collect::<BTreeSet<_>>();
+    if relationships.len() != key.relationships.len() {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    let expected = match key.role {
+        DidKeyRole::RootControl => BTreeSet::from([
+            DidVerificationRelationship::Authentication,
+            DidVerificationRelationship::AssertionMethod,
+        ]),
+        DidKeyRole::RequestSigning => BTreeSet::from([DidVerificationRelationship::Authentication]),
+        DidKeyRole::E2eeSigning => BTreeSet::from([DidVerificationRelationship::AssertionMethod]),
+        DidKeyRole::E2eeAgreement => BTreeSet::from([DidVerificationRelationship::KeyAgreement]),
+    };
+    if relationships != expected {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    match (&key.role, &key.public_key) {
+        (
+            DidKeyRole::RootControl | DidKeyRole::RequestSigning | DidKeyRole::E2eeSigning,
+            PublicKeyMaterial::Ed25519(_),
+        )
+        | (DidKeyRole::E2eeAgreement, PublicKeyMaterial::X25519(_)) => Ok(()),
+        _ => Err(AuthenticationError::UnsupportedProfile),
+    }
+}
+
+fn supplied_verification_method(
+    did: &str,
+    key_id: &str,
+    key: &SuppliedDidKey,
+) -> Result<Value, AuthenticationError> {
+    match &key.public_key {
+        PublicKeyMaterial::Ed25519(public_key) => Ok(json!({
+            "id": key_id,
+            "type": "Multikey",
+            "controller": did,
+            "publicKeyMultibase": ed25519_public_key_to_multibase(public_key),
+        })),
+        PublicKeyMaterial::X25519(public_key) => Ok(json!({
+            "id": key_id,
+            "type": "X25519KeyAgreementKey2019",
+            "controller": did,
+            "publicKeyMultibase": x25519_public_key_to_multibase(public_key),
+        })),
+        _ => Err(AuthenticationError::UnsupportedProfile),
+    }
 }
 
 fn normalize_did_method_reference(
@@ -1390,12 +1739,22 @@ fn normalize_additional_verification_methods(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or(AuthenticationError::InvalidDidDocument)?;
-        if method_type.is_empty()
-            || !(method_object.contains_key("publicKeyMultibase")
-                || method_object.contains_key("publicKeyJwk"))
+        let material_count = ["publicKeyJwk", "publicKeyMultibase", "publicKeyBase58"]
+            .into_iter()
+            .filter(|field| method_object.contains_key(*field))
+            .count();
+        if method_type.is_empty() || material_count != 1 {
+            return Err(AuthenticationError::InvalidDidDocument);
+        }
+        if method_object
+            .get("publicKeyJwk")
+            .and_then(Value::as_object)
+            .is_some_and(|jwk| jwk.contains_key("d"))
         {
             return Err(AuthenticationError::InvalidDidDocument);
         }
+        extract_public_key(method)
+            .map_err(|err| AuthenticationError::VerificationMethod(err.to_string()))?;
         if method_object
             .get("controller")
             .and_then(Value::as_str)

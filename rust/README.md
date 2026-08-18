@@ -33,6 +33,15 @@ cargo add anp
 
 ## Compatibility Notes
 
+- The supplied-public-key E1 builder and two-phase proof/authentication APIs let
+  callers keep private keys behind an external signer. Existing private-key APIs
+  remain available and use the same signing inputs.
+- DID-WBA legacy and HTTP Message Signature verification now requires the signing
+  KID to be authorized by the DID document's `authentication` relationship. A key
+  present only in `assertionMethod`, `keyAgreement`, or `verificationMethod` is
+  rejected for authentication.
+- Additional verification methods reject JWK objects that contain private `d`
+  material and require exactly one supported public-key representation.
 - `create_did_wba_document_with_key_binding` is deprecated. Use `create_did_wba_document` with `DidDocumentOptions::with_profile(DidProfile::K1)` when you need a `k1_` DID.
 - Group MLS operations are library calls, not `anp-mls` subprocess calls. Use
   `CompatDataDirStore` for the legacy `state.db` layout or `ImCoreSqliteGroupMlsStore`

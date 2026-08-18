@@ -5,19 +5,26 @@ use std::fs;
 
 use anp::authentication::{
     build_agent_message_service, build_agent_message_service_with_options,
-    build_anp_message_service, build_group_message_service, create_did_wba_document,
+    build_anp_message_service, build_group_message_service, build_unsigned_e1_did_document,
+    complete_http_signature_headers, complete_legacy_did_wba_auth_header, create_did_wba_document,
     create_did_wba_document_with_creation_options, extract_signature_metadata,
-    generate_auth_header, generate_http_signature_headers, validate_did_document_binding,
+    generate_auth_header, generate_auth_header_with_kid, generate_http_signature_headers,
+    generate_http_signature_headers_with_kid, prepare_http_signature_headers,
+    prepare_legacy_did_wba_auth_header, validate_did_document_binding,
     verify_auth_header_signature, verify_federated_http_request, verify_http_message_signature,
     AnpMessageServiceOptions, AuthMode, DIDWbaAuthHeader, DidDocumentCreationOptions,
-    DidDocumentOptions, DidProfile, DidWbaVerifier, DidWbaVerifierConfig,
-    FederatedVerificationOptions, HttpSignatureError,
+    DidDocumentOptions, DidKeyRole, DidProfile, DidVerificationRelationship, DidWbaVerifier,
+    DidWbaVerifierConfig, FederatedVerificationOptions, HttpSignatureError, HttpSignatureOptions,
+    SuppliedDidKey, SuppliedE1DidDocumentOptions,
 };
 #[cfg(feature = "network")]
 use anp::authentication::{
     resolve_did_document_with_options, resolve_did_wba_document_with_options, DidResolutionOptions,
 };
-use anp::proof::{verify_w3c_proof, ProofVerificationOptions};
+use anp::proof::{
+    complete_w3c_proof, prepare_w3c_proof, verify_w3c_proof, ProofGenerationOptions,
+    ProofVerificationOptions, CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use common::tempdir;
 #[cfg(feature = "network")]
@@ -69,6 +76,113 @@ fn test_create_did_document_profiles() {
     let bare = create_did_wba_document("example.com", DidDocumentOptions::default())
         .expect("bare DID creation should succeed");
     assert_eq!(bare.did_document["id"], json!("did:wba:example.com"));
+}
+
+#[test]
+fn test_supplied_public_keys_build_and_sign_a_root_bound_e1_document() {
+    let root = anp::PrivateKeyMaterial::Ed25519(SigningKey::from_bytes(&[7_u8; 32]));
+    let request = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let e2ee_signing =
+        anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let agreement = anp::PrivateKeyMaterial::X25519(x25519_dalek::StaticSecret::random_from_rng(
+        rand::rngs::OsRng,
+    ));
+    let unsigned = build_unsigned_e1_did_document(
+        "example.com",
+        SuppliedE1DidDocumentOptions {
+            port: None,
+            path_segments: vec!["agents".to_string(), "alice".to_string()],
+            agent_description_url: Some("https://example.com/agents/alice".to_string()),
+            services: Vec::new(),
+            root_key: supplied_key(
+                "root",
+                DidKeyRole::RootControl,
+                root.public_key(),
+                &[
+                    DidVerificationRelationship::Authentication,
+                    DidVerificationRelationship::AssertionMethod,
+                ],
+            ),
+            additional_keys: vec![
+                supplied_key(
+                    "request",
+                    DidKeyRole::RequestSigning,
+                    request.public_key(),
+                    &[DidVerificationRelationship::Authentication],
+                ),
+                supplied_key(
+                    "e2ee-signing",
+                    DidKeyRole::E2eeSigning,
+                    e2ee_signing.public_key(),
+                    &[DidVerificationRelationship::AssertionMethod],
+                ),
+                supplied_key(
+                    "agreement",
+                    DidKeyRole::E2eeAgreement,
+                    agreement.public_key(),
+                    &[DidVerificationRelationship::KeyAgreement],
+                ),
+            ],
+        },
+    )
+    .expect("supplied-key E1 builder should succeed");
+    let did = unsigned["id"].as_str().expect("DID id");
+    assert_eq!(
+        did,
+        "did:wba:example.com:agents:alice:e1_--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"
+    );
+    assert!(unsigned.get("proof").is_none());
+    assert_eq!(unsigned["verificationMethod"].as_array().unwrap().len(), 4);
+    assert_eq!(unsigned["authentication"].as_array().unwrap().len(), 2);
+    assert_eq!(unsigned["assertionMethod"].as_array().unwrap().len(), 2);
+    assert_eq!(unsigned["keyAgreement"].as_array().unwrap().len(), 1);
+
+    let root_kid = format!("{did}#root");
+    let prepared = prepare_w3c_proof(
+        &unsigned,
+        &root.public_key(),
+        &root_kid,
+        ProofGenerationOptions {
+            proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_string()),
+            cryptosuite: Some(CRYPTOSUITE_EDDSA_JCS_2022.to_string()),
+            proof_purpose: Some("assertionMethod".to_string()),
+            created: Some("2026-08-18T10:00:00Z".to_string()),
+            ..ProofGenerationOptions::default()
+        },
+    )
+    .expect("proof preparation should succeed");
+    let signature = root
+        .sign_message(prepared.signing_input())
+        .expect("root signer should sign");
+    let signed = complete_w3c_proof(prepared, &signature).expect("proof should complete");
+
+    assert!(validate_did_document_binding(&signed, true));
+}
+
+#[test]
+fn test_supplied_e1_builder_rejects_empty_path() {
+    let root = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let result = build_unsigned_e1_did_document(
+        "example.com",
+        SuppliedE1DidDocumentOptions {
+            port: None,
+            path_segments: Vec::new(),
+            agent_description_url: None,
+            services: Vec::new(),
+            root_key: supplied_key(
+                "root",
+                DidKeyRole::RootControl,
+                root.public_key(),
+                &[
+                    DidVerificationRelationship::Authentication,
+                    DidVerificationRelationship::AssertionMethod,
+                ],
+            ),
+            additional_keys: Vec::new(),
+        },
+    );
+
+    assert!(result.is_err());
 }
 
 #[test]
@@ -189,6 +303,27 @@ fn test_additional_verification_method_rejects_controller_mismatch() {
 }
 
 #[test]
+fn test_additional_verification_method_rejects_private_jwk_material() {
+    let delegated_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let options = DidDocumentCreationOptions::new(DidDocumentOptions {
+        path_segments: vec!["user".to_string(), "alice".to_string()],
+        ..DidDocumentOptions::default()
+    })
+    .with_additional_verification_method(json!({
+        "id": "#daemon-key-1",
+        "type": "JsonWebKey2020",
+        "publicKeyJwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": URL_SAFE_NO_PAD.encode(delegated_key.verifying_key().to_bytes()),
+            "d": "must-not-be-accepted",
+        },
+    }));
+
+    assert!(create_did_wba_document_with_creation_options("example.com", options).is_err());
+}
+
+#[test]
 fn test_additional_authentication_rejects_unknown_reference() {
     let options = DidDocumentCreationOptions::new(DidDocumentOptions {
         path_segments: vec!["user".to_string(), "alice".to_string()],
@@ -227,6 +362,64 @@ fn ed25519_public_key_to_multibase(key: &ed25519_dalek::VerifyingKey) -> String 
     let mut bytes = vec![0xed, 0x01];
     bytes.extend_from_slice(&key.to_bytes());
     format!("z{}", bs58::encode(bytes).into_string())
+}
+
+fn supplied_key(
+    fragment: &str,
+    role: DidKeyRole,
+    public_key: anp::PublicKeyMaterial,
+    relationships: &[DidVerificationRelationship],
+) -> SuppliedDidKey {
+    SuppliedDidKey {
+        fragment: fragment.to_string(),
+        role,
+        public_key,
+        relationships: relationships.to_vec(),
+    }
+}
+
+fn supplied_authentication_fixture() -> (
+    serde_json::Value,
+    anp::PrivateKeyMaterial,
+    anp::PrivateKeyMaterial,
+) {
+    let root = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let request = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let e2ee = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let document = build_unsigned_e1_did_document(
+        "example.com",
+        SuppliedE1DidDocumentOptions {
+            port: None,
+            path_segments: vec!["agents".to_string(), "alice".to_string()],
+            agent_description_url: None,
+            services: Vec::new(),
+            root_key: supplied_key(
+                "root",
+                DidKeyRole::RootControl,
+                root.public_key(),
+                &[
+                    DidVerificationRelationship::Authentication,
+                    DidVerificationRelationship::AssertionMethod,
+                ],
+            ),
+            additional_keys: vec![
+                supplied_key(
+                    "request",
+                    DidKeyRole::RequestSigning,
+                    request.public_key(),
+                    &[DidVerificationRelationship::Authentication],
+                ),
+                supplied_key(
+                    "e2ee-signing",
+                    DidKeyRole::E2eeSigning,
+                    e2ee.public_key(),
+                    &[DidVerificationRelationship::AssertionMethod],
+                ),
+            ],
+        },
+    )
+    .expect("supplied authentication fixture should build");
+    (document, request, e2ee)
 }
 
 #[test]
@@ -294,6 +487,201 @@ fn test_legacy_auth_header_generation_and_verification() {
         .expect("auth header generation should succeed");
     verify_auth_header_signature(&header, &bundle.did_document, "api.example.com")
         .expect("verification should succeed");
+}
+
+#[test]
+fn test_legacy_generators_keep_returning_headers_for_a_mismatched_private_key() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "alice".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID creation should succeed");
+    let wrong_key = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let legacy = generate_auth_header(&bundle.did_document, "api.example.com", &wrong_key, "1.1")
+        .expect("the legacy generator historically returns an unverifiable header");
+    assert!(
+        verify_auth_header_signature(&legacy, &bundle.did_document, "api.example.com").is_err()
+    );
+
+    let http = generate_http_signature_headers(
+        &bundle.did_document,
+        "https://api.example.com/orders",
+        "POST",
+        &wrong_key,
+        None,
+        None,
+        HttpSignatureOptions::default(),
+    )
+    .expect("the legacy HTTP generator historically returns unverifiable headers");
+    assert!(verify_http_message_signature(
+        &bundle.did_document,
+        "POST",
+        "https://api.example.com/orders",
+        &http,
+        None,
+    )
+    .is_err());
+
+    assert!(generate_auth_header_with_kid(
+        &bundle.did_document,
+        "api.example.com",
+        &wrong_key,
+        "1.1",
+        "#key-1",
+    )
+    .is_err());
+    assert!(generate_http_signature_headers_with_kid(
+        &bundle.did_document,
+        "https://api.example.com/orders",
+        "POST",
+        &wrong_key,
+        None,
+        None,
+        "#key-1",
+        HttpSignatureOptions::default(),
+    )
+    .is_err());
+}
+
+#[test]
+fn test_legacy_auth_explicit_kid_external_signer_and_relationship_authorization() {
+    let (document, request_key, e2ee_key) = supplied_authentication_fixture();
+    let did = document["id"].as_str().expect("DID id");
+    let request_kid = format!("{did}#request");
+    let prepared =
+        prepare_legacy_did_wba_auth_header(&document, "api.example.com", "1.1", &request_kid)
+            .expect("authorized request KID should prepare");
+    let signature = request_key
+        .sign_message(prepared.signing_input())
+        .expect("request signer should sign");
+    let header = complete_legacy_did_wba_auth_header(prepared, &signature)
+        .expect("external signature should complete");
+    verify_auth_header_signature(&header, &document, "api.example.com")
+        .expect("authorized request KID should verify");
+
+    let fragment_header = generate_auth_header_with_kid(
+        &document,
+        "api.example.com",
+        &request_key,
+        "1.1",
+        "#request",
+    )
+    .expect("fragment KID should normalize");
+    verify_auth_header_signature(&fragment_header, &document, "api.example.com")
+        .expect("fragment and absolute KIDs should be equivalent");
+    assert!(prepare_legacy_did_wba_auth_header(
+        &document,
+        "api.example.com",
+        "1.1",
+        "did:wba:evil.example#request",
+    )
+    .is_err());
+
+    let e2ee_kid = format!("{did}#e2ee-signing");
+    let mut attacker_document = document.clone();
+    attacker_document["authentication"] = json!([e2ee_kid]);
+    let unauthorized_header = generate_auth_header_with_kid(
+        &attacker_document,
+        "api.example.com",
+        &e2ee_key,
+        "1.1",
+        "#e2ee-signing",
+    )
+    .expect("attacker fixture authorizes the key only to create the test signature");
+    let error = verify_auth_header_signature(&unauthorized_header, &document, "api.example.com")
+        .expect_err("assertionMethod-only key must not authenticate");
+    assert!(matches!(
+        error,
+        anp::authentication::AuthenticationError::UnauthorizedVerificationMethod
+    ));
+
+    let mut no_relationship = document.clone();
+    no_relationship["assertionMethod"] = json!([format!("{did}#root")]);
+    assert!(verify_auth_header_signature(
+        &unauthorized_header,
+        &no_relationship,
+        "api.example.com"
+    )
+    .is_err());
+
+    let mut agreement_only = no_relationship;
+    agreement_only["keyAgreement"] = json!([format!("{did}#e2ee-signing")]);
+    assert!(
+        verify_auth_header_signature(&unauthorized_header, &agreement_only, "api.example.com")
+            .is_err()
+    );
+}
+
+#[test]
+fn test_http_signature_explicit_kid_and_relationship_authorization() {
+    let (document, request_key, e2ee_key) = supplied_authentication_fixture();
+    let did = document["id"].as_str().expect("DID id");
+    let prepared = prepare_http_signature_headers(
+        &document,
+        "https://api.example.com/orders",
+        "POST",
+        None,
+        Some(br#"{"item":"book"}"#),
+        HttpSignatureOptions {
+            keyid: Some("#request".to_string()),
+            ..HttpSignatureOptions::default()
+        },
+    )
+    .expect("authorized request key should prepare");
+    let signature = request_key
+        .sign_message(prepared.signing_input())
+        .expect("request signer should sign");
+    let headers = complete_http_signature_headers(prepared, &signature)
+        .expect("external signature should complete");
+    verify_http_message_signature(
+        &document,
+        "POST",
+        "https://api.example.com/orders",
+        &headers,
+        Some(br#"{"item":"book"}"#),
+    )
+    .expect("authorized request key should verify");
+
+    let mut attacker_document = document.clone();
+    attacker_document["authentication"] = json!([format!("{did}#e2ee-signing")]);
+    let unauthorized_headers = generate_http_signature_headers_with_kid(
+        &attacker_document,
+        "https://api.example.com/orders",
+        "POST",
+        &e2ee_key,
+        None,
+        None,
+        "#e2ee-signing",
+        HttpSignatureOptions::default(),
+    )
+    .expect("attacker fixture should produce a cryptographically valid signature");
+    let error = verify_http_message_signature(
+        &document,
+        "POST",
+        "https://api.example.com/orders",
+        &unauthorized_headers,
+        None,
+    )
+    .expect_err("assertionMethod-only key must not authenticate");
+    assert!(matches!(
+        error,
+        HttpSignatureError::UnauthorizedVerificationMethod
+    ));
+
+    assert!(generate_http_signature_headers_with_kid(
+        &document,
+        "https://api.example.com/orders",
+        "POST",
+        &request_key,
+        None,
+        None,
+        "did:wba:evil.example#request",
+        HttpSignatureOptions::default(),
+    )
+    .is_err());
 }
 
 #[test]

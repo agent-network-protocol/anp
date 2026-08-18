@@ -1,7 +1,7 @@
 use anp::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
 use anp::proof::{
-    generate_did_wba_binding, generate_group_receipt_proof, generate_w3c_proof,
-    verify_did_wba_binding, verify_group_receipt_proof, verify_w3c_proof,
+    complete_w3c_proof, generate_did_wba_binding, generate_group_receipt_proof, generate_w3c_proof,
+    prepare_w3c_proof, verify_did_wba_binding, verify_group_receipt_proof, verify_w3c_proof,
     DidWbaBindingVerificationOptions, ProofGenerationOptions, ProofVerificationOptions,
     CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
 };
@@ -53,6 +53,49 @@ fn test_generate_and_verify_ed25519_data_integrity_proof() {
     .expect("proof generation should succeed");
     assert!(verify_w3c_proof(
         &signed,
+        &public_key,
+        ProofVerificationOptions::default(),
+    ));
+}
+
+#[test]
+fn test_external_signer_uses_the_same_proof_input_as_the_private_key_api() {
+    let private_key =
+        PrivateKeyMaterial::Ed25519(ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng));
+    let public_key = private_key.public_key();
+    let document = json!({
+        "id": "did:wba:example.com:agents:alice:e1_test",
+        "assertionMethod": ["did:wba:example.com:agents:alice:e1_test#root"],
+    });
+    let options = ProofGenerationOptions {
+        proof_type: Some(PROOF_TYPE_DATA_INTEGRITY.to_string()),
+        cryptosuite: Some(CRYPTOSUITE_EDDSA_JCS_2022.to_string()),
+        created: Some("2026-08-18T10:00:00Z".to_string()),
+        ..ProofGenerationOptions::default()
+    };
+    let prepared = prepare_w3c_proof(
+        &document,
+        &public_key,
+        "did:wba:example.com:agents:alice:e1_test#root",
+        options.clone(),
+    )
+    .expect("proof preparation should succeed");
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .expect("external signer should sign the prepared bytes");
+    let externally_signed =
+        complete_w3c_proof(prepared, &signature).expect("proof completion should succeed");
+    let privately_signed = generate_w3c_proof(
+        &document,
+        &private_key,
+        "did:wba:example.com:agents:alice:e1_test#root",
+        options,
+    )
+    .expect("legacy private-key API should succeed");
+
+    assert_eq!(externally_signed, privately_signed);
+    assert!(verify_w3c_proof(
+        &externally_signed,
         &public_key,
         ProofVerificationOptions::default(),
     ));
