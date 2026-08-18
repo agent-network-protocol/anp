@@ -76,7 +76,9 @@ describe('AWiki IM client', () => {
     expect(persisted).toContain('test-access-token');
     expect(JSON.stringify(identity)).not.toContain('PRIVATE KEY');
     expect(JSON.stringify(identity)).not.toContain('token');
-    expect((await stat(statePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect((await stat(statePath)).mode & 0o777).toBe(0o600);
+    }
 
     await client.dispose();
     const restored = createClient(service, statePath);

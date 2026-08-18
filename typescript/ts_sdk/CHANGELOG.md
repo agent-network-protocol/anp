@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.2.0
+## 0.2.1 - 2026-08-18
+
+- Export the vNext device-manifest profiles, data model, builder, and validator.
+- Export RFC 9421 origin-proof generation and verification helpers.
+- Verify the compiled package exposes the APIs required by AWiki Lite before packing.
+- Document POSIX mode and Windows ACL requirements for plaintext identity state.
+
+## 0.2.0 - 2026-08-16
 
 - Add the high-level AWiki IM client for Legacy single-device registration, direct and existing-group messaging, history, and P7 attachments.
 - Add durable, restart-safe idempotency state for text and attachment sends.

@@ -59,6 +59,14 @@ describe('public API aliases', () => {
     expect(buildVnextDidDocument).toBeTypeOf('function');
     expect(validateDeviceManifest).toBeTypeOf('function');
     expect(authentication.deviceManifest.buildVnextDidDocument).toBeTypeOf('function');
+    expect(sdk).toMatchObject({
+      PROFILE_CORE_BINDING_V1: 'anp.core.binding.v1',
+      PROFILE_DIRECT_BASE_V1: 'anp.direct.base.v1',
+      PROFILE_DIRECT_E2EE_V2: 'anp.direct.e2ee.v2',
+      PROFILE_GROUP_BASE_V1: 'anp.group.base.v1',
+      PROFILE_GROUP_E2EE_V2: 'anp.group.e2ee.v2',
+      PROFILE_IDENTITY_DISCOVERY_V1: 'anp.identity.discovery.v1',
+    });
     expect('buildOriginAuthentication' in sdk).toBe(false);
     expect((sdk as Record<string, unknown>).buildOriginAuthentication).toBeUndefined();
   });
