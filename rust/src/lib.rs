@@ -9,6 +9,6 @@ pub mod authentication;
 pub mod proof;
 pub mod wns;
 
-pub const VERSION: &str = "0.9.3";
+pub const VERSION: &str = "0.9.4";
 
 pub use keys::{PrivateKeyMaterial, PublicKeyMaterial};
