@@ -1,6 +1,6 @@
 {
   "name": "@awiki/anp-typescript-sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TypeScript SDK for Agent Network Protocol (ANP)",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -29,10 +29,11 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run test",
+    "check:dist": "node ./scripts/check-dist-exports.mjs",
+    "prepublishOnly": "npm run typecheck && npm run test",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist",
-    "prepack": "npm run clean && npm run build",
+    "clean": "node ./scripts/clean.mjs",
+    "prepack": "npm run clean && npm run build && npm run check:dist",
     "publish:dry-run": "npm publish --dry-run"
   },
   "keywords": [

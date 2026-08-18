@@ -125,6 +125,7 @@ Low-level Rust-aligned names are still exported for compatibility.
 ### authentication
 
 - Create DID-WBA documents for `e1`, `k1`, and `plain_legacy`
+- Build and validate vNext device manifests and their capability profiles
 - Resolve DID documents
 - Generate and verify legacy `DIDWba` authorization headers
 - Generate and verify HTTP Message Signatures
@@ -133,6 +134,7 @@ Low-level Rust-aligned names are still exported for compatibility.
 ### proof
 
 - Generate W3C Data Integrity / legacy secp256k1 proofs
+- Generate and verify RFC 9421 origin proofs for AWiki RPC requests
 - Verify proofs with domain / challenge / purpose constraints
 
 ### wns
@@ -150,7 +152,7 @@ Low-level Rust-aligned names are still exported for compatibility.
 
 The first IM version intentionally uses the Legacy single-device identity profile. The legacy `send_otp` wire request contains only the phone number; the SDK retains the handle locally and requires the same handle and phone when registration is completed. Manifest registration, multiple identities, multiple devices, end-to-end encryption, real-time subscriptions, and group creation are not included.
 
-The SDK stores private identity material and access tokens as plaintext JSON at `statePath` and writes the state file with mode `0600`. This prevents access by other OS accounts under normal permission enforcement, but the same OS account and anyone who can read backups can recover the private key and token. Production deployments should use disk encryption and encrypted, access-controlled backups. Integration with a credential vault is deferred. Production service URLs must use HTTPS. HTTP loopback is available only with `allowInsecureLoopbackForTesting: true`.
+The SDK stores private identity material and access tokens as plaintext JSON at `statePath`. On POSIX systems, it writes the state file with mode `0600`. On Windows, Node.js mode bits do not configure owner-only ACLs, so the state directory must already be protected by a per-user ACL. The same OS account and anyone who can read backups can recover the private key and token. Production deployments should use disk encryption and encrypted, access-controlled backups. Integration with a credential vault is deferred. Production service URLs must use HTTPS. HTTP loopback is available only with `allowInsecureLoopbackForTesting: true`.
 
 `userServiceDomain`, `messageServicePublicUrl`, and the bare-domain `did:wba` `messageServiceDid` are explicit because an internal API origin does not necessarily equal the public identity domain or advertised Message Service. `allowedAttachmentOrigins` is an exact origin allowlist for untrusted sender DID resolution, advertised attachment endpoints, upload URLs, and object URLs. Add every trusted cross-Home and object-store origin needed by the deployment; the SDK rejects other origins instead of following them.
 

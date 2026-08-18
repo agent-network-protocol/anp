@@ -43,8 +43,10 @@ describe('DID-WBA HTTP examples', () => {
         ...env,
         PYTHONPATH: repoRoot,
       };
+      const pythonCommand =
+        process.env.ANP_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
       const pythonClient = await runCommand(
-        'python3',
+        pythonCommand,
         [join('typescript', 'ts_sdk', 'examples', 'python_to_ts_did_wba_client.py')],
         repoRoot,
         pythonEnv
