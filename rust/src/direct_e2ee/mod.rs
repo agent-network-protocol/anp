@@ -17,10 +17,11 @@ pub mod x3dh;
 
 pub use aad::{build_init_aad, build_message_aad};
 pub use bundle::{
-    build_prekey_bundle, checked_prekey_bundle_get_request, extract_x25519_public_key,
-    prekey_bundle_get_body, prekey_bundle_get_request, prekey_bundle_publish_body,
-    prekey_bundle_publish_request, should_retry_without_opk, should_retry_without_opk_message,
-    signed_prekey_from_private_key, validate_prekey_bundle_get_operation_id, verify_prekey_bundle,
+    build_prekey_bundle, checked_prekey_bundle_get_request, complete_prekey_bundle,
+    extract_x25519_public_key, prekey_bundle_get_body, prekey_bundle_get_request,
+    prekey_bundle_publish_body, prekey_bundle_publish_request, prepare_prekey_bundle,
+    should_retry_without_opk, should_retry_without_opk_message, signed_prekey_from_private_key,
+    validate_prekey_bundle_get_operation_id, verify_prekey_bundle, PreparedPrekeyBundle,
 };
 pub use envelope::{
     direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,

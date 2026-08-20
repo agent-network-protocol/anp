@@ -4,8 +4,10 @@ use crate::authentication::{
     create_verification_method, find_verification_method, validate_did_document_binding,
 };
 use crate::keys::base64url_encode;
-use crate::proof::{generate_object_proof, verify_object_proof};
-use crate::PrivateKeyMaterial;
+use crate::proof::{
+    complete_object_proof, prepare_object_proof, verify_object_proof, PreparedObjectProof,
+};
+use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 use serde_json::{json, Value};
 use std::error::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -23,6 +25,71 @@ pub fn signed_prekey_from_private_key(
     }
 }
 
+pub struct PreparedPrekeyBundle {
+    bundle_id: String,
+    owner_did: String,
+    static_key_agreement_id: String,
+    signed_prekey: SignedPrekey,
+    proof: PreparedObjectProof,
+}
+
+impl PreparedPrekeyBundle {
+    pub fn signing_input(&self) -> &[u8] {
+        self.proof.signing_input()
+    }
+}
+
+pub fn prepare_prekey_bundle(
+    bundle_id: &str,
+    owner_did: &str,
+    static_key_agreement_id: &str,
+    signed_prekey: SignedPrekey,
+    signing_public_key: &PublicKeyMaterial,
+    verification_method: &str,
+    created: Option<&str>,
+) -> Result<PreparedPrekeyBundle, DirectE2eeError> {
+    let unsigned = json!({
+        "bundle_id": bundle_id,
+        "owner_did": owner_did,
+        "suite": MTI_DIRECT_E2EE_SUITE,
+        "static_key_agreement_id": static_key_agreement_id,
+        "signed_prekey": signed_prekey,
+    });
+    let proof = prepare_object_proof(
+        &unsigned,
+        signing_public_key,
+        verification_method,
+        owner_did,
+        created.map(ToOwned::to_owned),
+    )?;
+    Ok(PreparedPrekeyBundle {
+        bundle_id: bundle_id.to_owned(),
+        owner_did: owner_did.to_owned(),
+        static_key_agreement_id: static_key_agreement_id.to_owned(),
+        signed_prekey,
+        proof,
+    })
+}
+
+pub fn complete_prekey_bundle(
+    prepared: PreparedPrekeyBundle,
+    signature: &[u8],
+) -> Result<PrekeyBundle, DirectE2eeError> {
+    let signed = complete_object_proof(prepared.proof, signature)?;
+    let proof = signed
+        .get("proof")
+        .cloned()
+        .ok_or(DirectE2eeError::MissingField("proof"))?;
+    Ok(PrekeyBundle {
+        bundle_id: prepared.bundle_id,
+        owner_did: prepared.owner_did,
+        suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
+        static_key_agreement_id: prepared.static_key_agreement_id,
+        signed_prekey: prepared.signed_prekey,
+        proof,
+    })
+}
+
 pub fn build_prekey_bundle(
     bundle_id: &str,
     owner_did: &str,
@@ -32,32 +99,19 @@ pub fn build_prekey_bundle(
     verification_method: &str,
     created: Option<&str>,
 ) -> Result<PrekeyBundle, DirectE2eeError> {
-    let unsigned = json!({
-        "bundle_id": bundle_id,
-        "owner_did": owner_did,
-        "suite": MTI_DIRECT_E2EE_SUITE,
-        "static_key_agreement_id": static_key_agreement_id,
-        "signed_prekey": signed_prekey,
-    });
-    let signed = generate_object_proof(
-        &unsigned,
-        signing_private_key,
-        verification_method,
+    let prepared = prepare_prekey_bundle(
+        bundle_id,
         owner_did,
-        created.map(ToOwned::to_owned),
-    )?;
-    let proof = signed
-        .get("proof")
-        .cloned()
-        .ok_or(DirectE2eeError::MissingField("proof"))?;
-    Ok(PrekeyBundle {
-        bundle_id: bundle_id.to_owned(),
-        owner_did: owner_did.to_owned(),
-        suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
-        static_key_agreement_id: static_key_agreement_id.to_owned(),
+        static_key_agreement_id,
         signed_prekey,
-        proof,
-    })
+        &signing_private_key.public_key(),
+        verification_method,
+        created,
+    )?;
+    let signature = signing_private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| DirectE2eeError::crypto("PreKey bundle signing failed"))?;
+    complete_prekey_bundle(prepared, &signature)
 }
 
 pub fn prekey_bundle_publish_body(
