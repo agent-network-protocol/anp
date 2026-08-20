@@ -6,8 +6,10 @@ use serde_json::Value;
 
 use crate::authentication::{find_eligible_device, PROFILE_GROUP_E2EE_V2};
 use crate::canonical_json::canonicalize_json;
-use crate::proof::{generate_object_proof, verify_object_proof};
-use crate::PrivateKeyMaterial;
+use crate::proof::{
+    complete_object_proof, prepare_object_proof, verify_object_proof, PreparedObjectProof,
+};
+use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
 use super::v2_errors::GroupE2eeV2Error;
 use super::v2_models::{
@@ -25,6 +27,45 @@ pub struct V2DidWbaBindingUnsigned {
     pub leaf_signature_key_b64u: String,
     pub issued_at: String,
     pub expires_at: String,
+}
+
+pub struct PreparedV2DidWbaBinding {
+    proof: PreparedObjectProof,
+}
+
+impl PreparedV2DidWbaBinding {
+    pub fn signing_input(&self) -> &[u8] {
+        self.proof.signing_input()
+    }
+}
+
+pub fn prepare_did_wba_binding_v2(
+    unsigned: V2DidWbaBindingUnsigned,
+    public_key: &PublicKeyMaterial,
+    created: Option<String>,
+) -> Result<PreparedV2DidWbaBinding, GroupE2eeV2Error> {
+    unsigned.validate()?;
+    let verification_method = unsigned.verification_method.clone();
+    let issuer_did = unsigned.agent_did.clone();
+    let unsigned_value = serde_json::to_value(unsigned)?;
+    let proof = prepare_object_proof(
+        &unsigned_value,
+        public_key,
+        &verification_method,
+        &issuer_did,
+        created,
+    )?;
+    Ok(PreparedV2DidWbaBinding { proof })
+}
+
+pub fn complete_did_wba_binding_v2(
+    prepared: PreparedV2DidWbaBinding,
+    signature: &[u8],
+) -> Result<V2DidWbaBinding, GroupE2eeV2Error> {
+    let signed = complete_object_proof(prepared.proof, signature)?;
+    let binding: V2DidWbaBinding = serde_json::from_value(signed)?;
+    binding.validate_structure()?;
+    Ok(binding)
 }
 
 impl V2DidWbaBindingUnsigned {
@@ -87,20 +128,11 @@ pub fn generate_did_wba_binding_v2(
     private_key: &PrivateKeyMaterial,
     created: Option<String>,
 ) -> Result<V2DidWbaBinding, GroupE2eeV2Error> {
-    unsigned.validate()?;
-    let verification_method = unsigned.verification_method.clone();
-    let issuer_did = unsigned.agent_did.clone();
-    let unsigned_value = serde_json::to_value(unsigned)?;
-    let signed = generate_object_proof(
-        &unsigned_value,
-        private_key,
-        &verification_method,
-        &issuer_did,
-        created,
-    )?;
-    let binding: V2DidWbaBinding = serde_json::from_value(signed)?;
-    binding.validate_structure()?;
-    Ok(binding)
+    let prepared = prepare_did_wba_binding_v2(unsigned, &private_key.public_key(), created)?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| GroupE2eeV2Error::invalid("DID WBA binding signing failed"))?;
+    complete_did_wba_binding_v2(prepared, &signature)
 }
 
 /// Verify the DID/Manifest/Object-Proof/MLS-leaf chain required by P6 v2.
