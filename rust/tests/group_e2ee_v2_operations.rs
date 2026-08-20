@@ -9,18 +9,20 @@ use anp::authentication::{
     create_did_wba_document, validate_device_manifest, DidDocumentOptions, DidProfile,
 };
 use anp::group_e2ee::operations::v2::{
-    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2, complete_key_package_v2,
-    create_group_prepare_v2, decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2,
-    inspect_local_group_v2, list_local_group_member_endpoints_v2,
-    mark_local_group_terminal_intent_v2, prepare_key_package_v2,
+    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2,
+    complete_key_package_publish_signing_v2, complete_key_package_v2, create_group_prepare_v2,
+    decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
+    list_local_group_member_endpoints_v2, mark_local_group_terminal_intent_v2,
+    prepare_key_package_v2, prepare_or_resume_key_package_publish_signing_v2,
     prepare_or_resume_key_package_publish_v2, process_commit_v2, process_notice_v2,
     process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
     V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput, V2DecryptInput,
     V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
-    V2InspectLocalGroupInput, V2KeyPackagePublishStatus, V2LocalGroupMemberEndpoint,
-    V2LocalGroupReadiness, V2MarkTerminalIntentInput, V2MembershipCommitMethod,
-    V2PrepareKeyPackagePublishInput, V2ProcessCommitInput, V2ProcessNoticeInput,
-    V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput, V2TerminalSignal,
+    V2InspectLocalGroupInput, V2KeyPackagePublishPreparation, V2KeyPackagePublishStatus,
+    V2LocalGroupMemberEndpoint, V2LocalGroupReadiness, V2MarkTerminalIntentInput,
+    V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput, V2ProcessCommitInput,
+    V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput,
+    V2TerminalSignal,
 };
 use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{
@@ -2191,13 +2193,23 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
         draft_extension_negotiated: true,
         request_id: "req-publish-a1".to_owned(),
     };
-    let a1_prepared = prepare_or_resume_key_package_publish_v2(
-        &a1_store,
-        a1_publish_input.clone(),
-        &alice.document,
-        &signing_key(a1_device),
-    )
-    .expect("prepare A1 KeyPackage without Host acceptance");
+    let a1_signing_key = signing_key(a1_device);
+    let V2KeyPackagePublishPreparation::Signing(a1_signing) =
+        prepare_or_resume_key_package_publish_signing_v2(
+            &a1_store,
+            a1_publish_input.clone(),
+            &alice.document,
+            &a1_signing_key.public_key(),
+        )
+        .expect("prepare A1 KeyPackage signing")
+    else {
+        panic!("fresh A1 publish must require an external signature")
+    };
+    let a1_signature = a1_signing_key
+        .sign_message(a1_signing.signing_input())
+        .expect("sign A1 KeyPackage binding");
+    let a1_prepared = complete_key_package_publish_signing_v2(&a1_store, a1_signing, &a1_signature)
+        .expect("complete A1 KeyPackage without Host acceptance");
     let a1_package = a1_prepared.body.group_key_package;
     let a2_package = generate_key_package_v2(
         &a2_store,

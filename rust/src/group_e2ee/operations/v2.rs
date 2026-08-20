@@ -14,18 +14,18 @@ use super::{
 use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsOwnerScope, GroupMlsStore};
 use crate::group_e2ee::{
     canonical_group_application_plaintext_v2, complete_did_wba_binding_v2,
-    generate_did_wba_binding_v2, group_add_submission_binding_v2,
-    group_remove_submission_binding_v2, group_send_authenticated_data_v2,
-    parse_group_application_plaintext_v2, prepare_did_wba_binding_v2,
-    validate_group_key_package_binding_v2, validate_leaf_identity_set_v2,
-    verify_did_wba_binding_v2, PreparedV2DidWbaBinding, V2DidWbaBinding, V2DidWbaBindingUnsigned,
-    V2E2eeNotice, V2GroupAddBody, V2GroupApplicationPlaintext, V2GroupCipherObject,
-    V2GroupControlMetadata, V2GroupCreateBody, V2GroupKeyPackage, V2GroupNoticeMetadata,
-    V2GroupRemoveBody, V2GroupSendMetadata, V2GroupStateRef, V2KeyPackageBindingEvidence,
-    V2LeafBindingEvidence, V2LeafExtension, V2LeafIdentity, V2PublishKeyPackageBody,
-    V2PublishKeyPackageResult, V2ServiceMetadata, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2,
-    GROUP_E2EE_MTI_SUITE_V2, GROUP_E2EE_SECURITY_PROFILE_V2, GROUP_E2EE_TRANSPORT_PROFILE_V2,
-    METHOD_GROUP_ADD_V2, METHOD_GROUP_REMOVE_V2,
+    group_add_submission_binding_v2, group_remove_submission_binding_v2,
+    group_send_authenticated_data_v2, parse_group_application_plaintext_v2,
+    prepare_did_wba_binding_v2, validate_group_key_package_binding_v2,
+    validate_leaf_identity_set_v2, verify_did_wba_binding_v2, PreparedV2DidWbaBinding,
+    V2DidWbaBinding, V2DidWbaBindingUnsigned, V2E2eeNotice, V2GroupAddBody,
+    V2GroupApplicationPlaintext, V2GroupCipherObject, V2GroupControlMetadata, V2GroupCreateBody,
+    V2GroupKeyPackage, V2GroupNoticeMetadata, V2GroupRemoveBody, V2GroupSendMetadata,
+    V2GroupStateRef, V2KeyPackageBindingEvidence, V2LeafBindingEvidence, V2LeafExtension,
+    V2LeafIdentity, V2PublishKeyPackageBody, V2PublishKeyPackageResult, V2ServiceMetadata,
+    DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2, GROUP_E2EE_MTI_SUITE_V2,
+    GROUP_E2EE_SECURITY_PROFILE_V2, GROUP_E2EE_TRANSPORT_PROFILE_V2, METHOD_GROUP_ADD_V2,
+    METHOD_GROUP_REMOVE_V2,
 };
 use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -577,12 +577,46 @@ pub fn generate_key_package_v2<S: GroupMlsStore>(
 
 /// Persist the public P6 publish before any host/network call and resume it
 /// byte-for-byte after a retry or process restart.
-pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
+pub enum V2KeyPackagePublishPreparation {
+    Ready(V2PreparedKeyPackagePublish),
+    Signing(V2PreparedKeyPackagePublishSigning),
+}
+
+pub struct V2PreparedKeyPackagePublishSigning {
+    input: V2PrepareKeyPackagePublishInput,
+    did_document: Value,
+    journal: V2KeyPackagePublishJournal,
+    package: V2PreparedKeyPackageSigning,
+}
+
+impl V2PreparedKeyPackagePublishSigning {
+    pub fn signing_input(&self) -> &[u8] {
+        self.package.signing_input()
+    }
+}
+
+pub fn prepare_or_resume_key_package_publish_signing_v2<S: GroupMlsStore>(
     store: &S,
     input: V2PrepareKeyPackagePublishInput,
     did_document: &Value,
-    device_signing_private_key: &PrivateKeyMaterial,
-) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    device_signing_public_key: &PublicKeyMaterial,
+) -> GroupMlsOperationResult<V2KeyPackagePublishPreparation> {
+    prepare_or_resume_key_package_publish_inner(
+        store,
+        input,
+        did_document,
+        device_signing_public_key,
+        None,
+    )
+}
+
+fn prepare_or_resume_key_package_publish_inner<S: GroupMlsStore>(
+    store: &S,
+    input: V2PrepareKeyPackagePublishInput,
+    did_document: &Value,
+    device_signing_public_key: &PublicKeyMaterial,
+    device_signing_private_key: Option<&PrivateKeyMaterial>,
+) -> GroupMlsOperationResult<V2KeyPackagePublishPreparation> {
     validate_key_package_publish_input(store.owner_scope().as_ref(), &input)?;
     let input_digest = key_package_publish_input_digest(&input)?;
     let family_digest = key_package_publish_family_digest(&input)?;
@@ -647,7 +681,8 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                 &status,
                 &input,
                 did_document,
-            );
+            )
+            .map(V2KeyPackagePublishPreparation::Ready);
         }
         if status == "prepared" {
             if !key_package_publish_attempt_expired(&scope, &journal, &input, did_document)? {
@@ -664,7 +699,8 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
                     &status,
                     &input,
                     did_document,
-                );
+                )
+                .map(V2KeyPackagePublishPreparation::Ready);
             }
             journal = rotate_expired_key_package_publish_attempt(
                 &mut scope,
@@ -783,22 +819,50 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
         }
         package
     } else {
-        generate_key_package_in_scope(
-            &scope,
-            &V2GenerateKeyPackageInput {
-                owner_did: input.owner_did.clone(),
-                owner_device_id: input.owner_device_id.clone(),
-                verification_method: input.verification_method.clone(),
-                key_package_id: current_key_package_id,
-                issued_at: input.issued_at.clone(),
-                expires_at: input.expires_at.clone(),
-                now: input.now.clone(),
-                draft_extension_negotiated: input.draft_extension_negotiated,
-                request_id: input.request_id.clone(),
-            },
-            did_document,
-            device_signing_private_key,
-        )?
+        if let Some(device_signing_private_key) = device_signing_private_key {
+            generate_key_package_in_scope(
+                &scope,
+                &V2GenerateKeyPackageInput {
+                    owner_did: input.owner_did.clone(),
+                    owner_device_id: input.owner_device_id.clone(),
+                    verification_method: input.verification_method.clone(),
+                    key_package_id: current_key_package_id,
+                    issued_at: input.issued_at.clone(),
+                    expires_at: input.expires_at.clone(),
+                    now: input.now.clone(),
+                    draft_extension_negotiated: input.draft_extension_negotiated,
+                    request_id: input.request_id.clone(),
+                },
+                did_document,
+                device_signing_private_key,
+            )?
+        } else {
+            drop(scope);
+            let package = prepare_key_package_v2(
+                store,
+                V2GenerateKeyPackageInput {
+                    owner_did: input.owner_did.clone(),
+                    owner_device_id: input.owner_device_id.clone(),
+                    verification_method: input.verification_method.clone(),
+                    key_package_id: current_key_package_id,
+                    issued_at: input.issued_at.clone(),
+                    expires_at: input.expires_at.clone(),
+                    now: input.now.clone(),
+                    draft_extension_negotiated: input.draft_extension_negotiated,
+                    request_id: input.request_id.clone(),
+                },
+                did_document,
+                device_signing_public_key,
+            )?;
+            return Ok(V2KeyPackagePublishPreparation::Signing(
+                V2PreparedKeyPackagePublishSigning {
+                    input,
+                    did_document: did_document.clone(),
+                    journal,
+                    package,
+                },
+            ));
+        }
     };
     journal.body = Some(V2PublishKeyPackageBody {
         group_key_package: package,
@@ -812,6 +876,107 @@ pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
         &input.request_id,
     )?;
     validate_key_package_publish_journal(&scope, journal, "prepared", &input, did_document)
+        .map(V2KeyPackagePublishPreparation::Ready)
+}
+
+pub fn complete_key_package_publish_signing_v2<S: GroupMlsStore>(
+    store: &S,
+    mut prepared: V2PreparedKeyPackagePublishSigning,
+    signature: &[u8],
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    validate_key_package_publish_input(store.owner_scope().as_ref(), &prepared.input)?;
+    let mut scope = open_scope(store, &prepared.input.request_id)?;
+    let current_key_package_id = prepared.package.input.key_package_id.clone();
+    let package = if let Some(package) =
+        load_public_key_package(&scope, &current_key_package_id, &prepared.input.request_id)?
+    {
+        package
+    } else {
+        drop(scope);
+        let package = complete_key_package_v2(store, prepared.package, signature)?;
+        scope = open_scope(store, &prepared.input.request_id)?;
+        package
+    };
+    let existing = load_key_package_publish_operation(
+        &scope.app_conn,
+        &prepared.input.meta.operation_id,
+        &prepared.input.request_id,
+    )?
+    .ok_or_else(|| {
+        operation_error(
+            "group.e2ee.state_not_ready",
+            "KeyPackage publish journal disappeared during signing",
+            &prepared.input.request_id,
+        )
+    })?;
+    if existing.0 != KEY_PACKAGE_PUBLISH_COMMAND || existing.3 != "preparing" {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "KeyPackage publish journal changed during signing",
+            &prepared.input.request_id,
+        ));
+    }
+    let stored_journal =
+        parse_key_package_publish_journal(&existing.2, &prepared.input.request_id)?;
+    if stored_journal.base_operation_id != prepared.journal.base_operation_id
+        || stored_journal.base_key_package_id != prepared.journal.base_key_package_id
+        || stored_journal.generation != prepared.journal.generation
+        || stored_journal.family_digest != prepared.journal.family_digest
+        || stored_journal.body.is_some()
+    {
+        return Err(operation_error(
+            "group.e2ee.commit_invalid",
+            "KeyPackage publish journal changed during signing",
+            &prepared.input.request_id,
+        ));
+    }
+    prepared.journal.body = Some(V2PublishKeyPackageBody {
+        group_key_package: package,
+    });
+    prepared.journal.accepted_result = None;
+    persist_key_package_publish_journal(
+        &scope.app_conn,
+        &prepared.journal.base_operation_id,
+        &prepared.journal,
+        "prepared",
+        &prepared.input.request_id,
+    )?;
+    validate_key_package_publish_journal(
+        &scope,
+        prepared.journal,
+        "prepared",
+        &prepared.input,
+        &prepared.did_document,
+    )
+}
+
+pub fn prepare_or_resume_key_package_publish_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2PrepareKeyPackagePublishInput,
+    did_document: &Value,
+    device_signing_private_key: &PrivateKeyMaterial,
+) -> GroupMlsOperationResult<V2PreparedKeyPackagePublish> {
+    match prepare_or_resume_key_package_publish_inner(
+        store,
+        input,
+        did_document,
+        &device_signing_private_key.public_key(),
+        Some(device_signing_private_key),
+    )? {
+        V2KeyPackagePublishPreparation::Ready(prepared) => Ok(prepared),
+        V2KeyPackagePublishPreparation::Signing(prepared) => {
+            let signature = device_signing_private_key
+                .sign_message(prepared.signing_input())
+                .map_err(|err| {
+                    operation_error(
+                        "group.e2ee.did_binding_invalid",
+                        err,
+                        &prepared.input.request_id,
+                    )
+                })?;
+            complete_key_package_publish_signing_v2(store, prepared, &signature)
+        }
+    }
 }
 
 /// Record the typed host acceptance for a previously prepared P6 publish.
@@ -920,7 +1085,7 @@ fn generate_key_package_in_scope(
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
-    let binding = generate_did_wba_binding_v2(
+    let binding = crate::group_e2ee::generate_did_wba_binding_v2(
         V2DidWbaBindingUnsigned {
             agent_did: input.owner_did.clone(),
             device_id: input.owner_device_id.clone(),
