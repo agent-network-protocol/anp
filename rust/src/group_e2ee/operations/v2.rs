@@ -13,20 +13,21 @@ use super::{
 };
 use crate::group_e2ee::storage::{GroupMlsOperationScope, GroupMlsOwnerScope, GroupMlsStore};
 use crate::group_e2ee::{
-    canonical_group_application_plaintext_v2, generate_did_wba_binding_v2,
-    group_add_submission_binding_v2, group_remove_submission_binding_v2,
-    group_send_authenticated_data_v2, parse_group_application_plaintext_v2,
+    canonical_group_application_plaintext_v2, complete_did_wba_binding_v2,
+    generate_did_wba_binding_v2, group_add_submission_binding_v2,
+    group_remove_submission_binding_v2, group_send_authenticated_data_v2,
+    parse_group_application_plaintext_v2, prepare_did_wba_binding_v2,
     validate_group_key_package_binding_v2, validate_leaf_identity_set_v2,
-    verify_did_wba_binding_v2, V2DidWbaBinding, V2DidWbaBindingUnsigned, V2E2eeNotice,
-    V2GroupAddBody, V2GroupApplicationPlaintext, V2GroupCipherObject, V2GroupControlMetadata,
-    V2GroupCreateBody, V2GroupKeyPackage, V2GroupNoticeMetadata, V2GroupRemoveBody,
-    V2GroupSendMetadata, V2GroupStateRef, V2KeyPackageBindingEvidence, V2LeafBindingEvidence,
-    V2LeafExtension, V2LeafIdentity, V2PublishKeyPackageBody, V2PublishKeyPackageResult,
-    V2ServiceMetadata, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2, GROUP_E2EE_MTI_SUITE_V2,
-    GROUP_E2EE_SECURITY_PROFILE_V2, GROUP_E2EE_TRANSPORT_PROFILE_V2, METHOD_GROUP_ADD_V2,
-    METHOD_GROUP_REMOVE_V2,
+    verify_did_wba_binding_v2, PreparedV2DidWbaBinding, V2DidWbaBinding, V2DidWbaBindingUnsigned,
+    V2E2eeNotice, V2GroupAddBody, V2GroupApplicationPlaintext, V2GroupCipherObject,
+    V2GroupControlMetadata, V2GroupCreateBody, V2GroupKeyPackage, V2GroupNoticeMetadata,
+    V2GroupRemoveBody, V2GroupSendMetadata, V2GroupStateRef, V2KeyPackageBindingEvidence,
+    V2LeafBindingEvidence, V2LeafExtension, V2LeafIdentity, V2PublishKeyPackageBody,
+    V2PublishKeyPackageResult, V2ServiceMetadata, DID_WBA_DEVICE_BINDING_EXTENSION_DRAFT_V2,
+    GROUP_E2EE_MTI_SUITE_V2, GROUP_E2EE_SECURITY_PROFILE_V2, GROUP_E2EE_TRANSPORT_PROFILE_V2,
+    METHOD_GROUP_ADD_V2, METHOD_GROUP_REMOVE_V2,
 };
-use crate::PrivateKeyMaterial;
+use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::DateTime;
 use openmls::prelude::{
@@ -457,12 +458,24 @@ pub struct V2DecryptOutput {
     pub sender_leaf_signature_key_b64u: String,
 }
 
-pub fn generate_key_package_v2<S: GroupMlsStore>(
+pub struct V2PreparedKeyPackageSigning {
+    input: V2GenerateKeyPackageInput,
+    did_document: Value,
+    binding: PreparedV2DidWbaBinding,
+}
+
+impl V2PreparedKeyPackageSigning {
+    pub fn signing_input(&self) -> &[u8] {
+        self.binding.signing_input()
+    }
+}
+
+pub fn prepare_key_package_v2<S: GroupMlsStore>(
     store: &S,
     input: V2GenerateKeyPackageInput,
     did_document: &Value,
-    device_signing_private_key: &PrivateKeyMaterial,
-) -> GroupMlsOperationResult<V2GroupKeyPackage> {
+    device_signing_public_key: &PublicKeyMaterial,
+) -> GroupMlsOperationResult<V2PreparedKeyPackageSigning> {
     validate_store_scope(
         store.owner_scope().as_ref(),
         &input.owner_did,
@@ -478,7 +491,88 @@ pub fn generate_key_package_v2<S: GroupMlsStore>(
             &input.request_id,
         ));
     }
-    generate_key_package_in_scope(&scope, &input, did_document, device_signing_private_key)
+    let (_, signer) = ensure_agent(
+        &scope.provider,
+        &scope.app_conn,
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
+    let binding = prepare_did_wba_binding_v2(
+        V2DidWbaBindingUnsigned {
+            agent_did: input.owner_did.clone(),
+            device_id: input.owner_device_id.clone(),
+            verification_method: input.verification_method.clone(),
+            leaf_signature_key_b64u: URL_SAFE_NO_PAD.encode(signer.to_public_vec()),
+            issued_at: input.issued_at.clone(),
+            expires_at: input.expires_at.clone(),
+        },
+        device_signing_public_key,
+        Some(input.issued_at.clone()),
+    )
+    .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    Ok(V2PreparedKeyPackageSigning {
+        input,
+        did_document: did_document.clone(),
+        binding,
+    })
+}
+
+pub fn complete_key_package_v2<S: GroupMlsStore>(
+    store: &S,
+    prepared: V2PreparedKeyPackageSigning,
+    signature: &[u8],
+) -> GroupMlsOperationResult<V2GroupKeyPackage> {
+    let binding = complete_did_wba_binding_v2(prepared.binding, signature).map_err(|err| {
+        v2_error(
+            "group.e2ee.did_binding_invalid",
+            err,
+            &prepared.input.request_id,
+        )
+    })?;
+    let scope = open_scope(store, &prepared.input.request_id)?;
+    if key_package_id_exists(
+        &scope,
+        &prepared.input.key_package_id,
+        &prepared.input.request_id,
+    )? {
+        return Err(operation_error(
+            "group.e2ee.key_package_consumed",
+            "key_package_id already exists in this device store",
+            &prepared.input.request_id,
+        ));
+    }
+    generate_key_package_in_scope_with_binding(
+        &scope,
+        &prepared.input,
+        &prepared.did_document,
+        binding,
+    )
+}
+
+pub fn generate_key_package_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2GenerateKeyPackageInput,
+    did_document: &Value,
+    device_signing_private_key: &PrivateKeyMaterial,
+) -> GroupMlsOperationResult<V2GroupKeyPackage> {
+    let prepared = prepare_key_package_v2(
+        store,
+        input,
+        did_document,
+        &device_signing_private_key.public_key(),
+    )?;
+    let signature = device_signing_private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|err| {
+            operation_error(
+                "group.e2ee.did_binding_invalid",
+                err,
+                &prepared.input.request_id,
+            )
+        })?;
+    complete_key_package_v2(store, prepared, &signature)
 }
 
 /// Persist the public P6 publish before any host/network call and resume it
@@ -818,7 +912,7 @@ fn generate_key_package_in_scope(
     did_document: &Value,
     device_signing_private_key: &PrivateKeyMaterial,
 ) -> GroupMlsOperationResult<V2GroupKeyPackage> {
-    let (credential, signer) = ensure_agent(
+    let (_, signer) = ensure_agent(
         &scope.provider,
         &scope.app_conn,
         &input.owner_did,
@@ -839,6 +933,23 @@ fn generate_key_package_in_scope(
         Some(input.issued_at.clone()),
     )
     .map_err(|err| v2_error("group.e2ee.did_binding_invalid", err, &input.request_id))?;
+    generate_key_package_in_scope_with_binding(scope, input, did_document, binding)
+}
+
+fn generate_key_package_in_scope_with_binding(
+    scope: &GroupMlsOperationScope,
+    input: &V2GenerateKeyPackageInput,
+    did_document: &Value,
+    binding: V2DidWbaBinding,
+) -> GroupMlsOperationResult<V2GroupKeyPackage> {
+    let (credential, signer) = ensure_agent(
+        &scope.provider,
+        &scope.app_conn,
+        &input.owner_did,
+        &input.owner_device_id,
+        &input.request_id,
+    )
+    .map_err(GroupMlsOperationError::from)?;
     let bundle = KeyPackage::builder()
         .leaf_node_capabilities(v2_capabilities())
         .leaf_node_extensions(binding_extensions(&binding, &input.request_id)?)

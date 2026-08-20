@@ -9,9 +9,10 @@ use anp::authentication::{
     create_did_wba_document, validate_device_manifest, DidDocumentOptions, DidProfile,
 };
 use anp::group_e2ee::operations::v2::{
-    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2, create_group_prepare_v2,
-    decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
-    list_local_group_member_endpoints_v2, mark_local_group_terminal_intent_v2,
+    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2, complete_key_package_v2,
+    create_group_prepare_v2, decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2,
+    inspect_local_group_v2, list_local_group_member_endpoints_v2,
+    mark_local_group_terminal_intent_v2, prepare_key_package_v2,
     prepare_or_resume_key_package_publish_v2, process_commit_v2, process_notice_v2,
     process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
     V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput, V2DecryptInput,
@@ -2152,7 +2153,8 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .is_err());
 
-    let owner_package = generate_key_package_v2(
+    let owner_signing_key = signing_key(owner_device);
+    let owner_prepared = prepare_key_package_v2(
         &owner_store,
         V2GenerateKeyPackageInput {
             owner_did: owner.did.clone(),
@@ -2166,9 +2168,14 @@ fn persistent_v2_operations_keep_same_did_devices_independent() {
             request_id: "req-kp-owner".to_owned(),
         },
         &owner.document,
-        &signing_key(owner_device),
+        &owner_signing_key.public_key(),
     )
-    .expect("owner KeyPackage");
+    .expect("owner KeyPackage preparation");
+    let owner_signature = owner_signing_key
+        .sign_message(owner_prepared.signing_input())
+        .expect("owner external KeyPackage signature");
+    let owner_package = complete_key_package_v2(&owner_store, owner_prepared, &owner_signature)
+        .expect("owner KeyPackage completion");
     let mut a1_publish_meta = service_meta(&alice.did, &a1_device.device_id, "op-publish-a1");
     a1_publish_meta.security_profile = GROUP_E2EE_TRANSPORT_PROFILE_V2.to_owned();
     a1_publish_meta.created_at = None;
