@@ -72,6 +72,7 @@ pub use v2_wire::{
     parse_publish_prekey_bundle_result_v2, publish_prekey_bundle_request_v2, V2DirectSendResult,
 };
 pub use x3dh::{
-    derive_initial_material_for_initiator, derive_initial_material_for_responder,
+    derive_initial_material_for_initiator, derive_initial_material_for_initiator_with_static_dh,
+    derive_initial_material_for_responder, derive_initial_material_for_responder_with_static_dh,
     initial_secret_key_and_nonce, InitialMaterial,
 };

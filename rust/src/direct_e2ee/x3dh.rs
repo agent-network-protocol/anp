@@ -32,13 +32,32 @@ pub fn derive_initial_material_for_initiator_with_opk(
     recipient_signed_prekey_public: &[u8; 32],
     recipient_one_time_prekey_public: Option<&[u8; 32]>,
 ) -> Result<InitialMaterial, DirectE2eeError> {
+    let recipient_signed_prekey_public = X25519PublicKey::from(*recipient_signed_prekey_public);
+    let static_dh = sender_static_private
+        .diffie_hellman(&recipient_signed_prekey_public)
+        .to_bytes();
+    derive_initial_material_for_initiator_with_static_dh(
+        &static_dh,
+        sender_ephemeral_private,
+        recipient_static_public,
+        recipient_signed_prekey_public.as_bytes(),
+        recipient_one_time_prekey_public,
+    )
+}
+
+pub fn derive_initial_material_for_initiator_with_static_dh(
+    sender_static_to_signed_prekey_dh: &[u8; 32],
+    sender_ephemeral_private: &X25519StaticSecret,
+    recipient_static_public: &[u8; 32],
+    recipient_signed_prekey_public: &[u8; 32],
+    recipient_one_time_prekey_public: Option<&[u8; 32]>,
+) -> Result<InitialMaterial, DirectE2eeError> {
     let recipient_static_public = X25519PublicKey::from(*recipient_static_public);
     let recipient_signed_prekey_public = X25519PublicKey::from(*recipient_signed_prekey_public);
-    let dh1 = sender_static_private.diffie_hellman(&recipient_signed_prekey_public);
     let dh2 = sender_ephemeral_private.diffie_hellman(&recipient_static_public);
     let dh3 = sender_ephemeral_private.diffie_hellman(&recipient_signed_prekey_public);
     let mut chunks = vec![
-        dh1.to_bytes().to_vec(),
+        sender_static_to_signed_prekey_dh.to_vec(),
         dh2.to_bytes().to_vec(),
         dh3.to_bytes().to_vec(),
     ];
@@ -76,14 +95,33 @@ pub fn derive_initial_material_for_responder_with_opk(
     sender_static_public: &[u8; 32],
     sender_ephemeral_public: &[u8; 32],
 ) -> Result<InitialMaterial, DirectE2eeError> {
+    let sender_ephemeral_public = X25519PublicKey::from(*sender_ephemeral_public);
+    let static_dh = recipient_static_private
+        .diffie_hellman(&sender_ephemeral_public)
+        .to_bytes();
+    derive_initial_material_for_responder_with_static_dh(
+        &static_dh,
+        recipient_signed_prekey_private,
+        recipient_one_time_prekey_private,
+        sender_static_public,
+        sender_ephemeral_public.as_bytes(),
+    )
+}
+
+pub fn derive_initial_material_for_responder_with_static_dh(
+    recipient_static_to_ephemeral_dh: &[u8; 32],
+    recipient_signed_prekey_private: &X25519StaticSecret,
+    recipient_one_time_prekey_private: Option<&X25519StaticSecret>,
+    sender_static_public: &[u8; 32],
+    sender_ephemeral_public: &[u8; 32],
+) -> Result<InitialMaterial, DirectE2eeError> {
     let sender_static_public = X25519PublicKey::from(*sender_static_public);
     let sender_ephemeral_public = X25519PublicKey::from(*sender_ephemeral_public);
     let dh1 = recipient_signed_prekey_private.diffie_hellman(&sender_static_public);
-    let dh2 = recipient_static_private.diffie_hellman(&sender_ephemeral_public);
     let dh3 = recipient_signed_prekey_private.diffie_hellman(&sender_ephemeral_public);
     let mut chunks = vec![
         dh1.to_bytes().to_vec(),
-        dh2.to_bytes().to_vec(),
+        recipient_static_to_ephemeral_dh.to_vec(),
         dh3.to_bytes().to_vec(),
     ];
     if let Some(opk) = recipient_one_time_prekey_private {
@@ -166,7 +204,12 @@ pub(crate) fn hkdf_expand_prk(
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_initial_material_for_initiator, derive_initial_material_for_responder};
+    use super::{
+        derive_initial_material_for_initiator,
+        derive_initial_material_for_initiator_with_static_dh,
+        derive_initial_material_for_responder,
+        derive_initial_material_for_responder_with_static_dh,
+    };
     use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
     #[test]
@@ -191,5 +234,56 @@ mod tests {
         .expect("responder material");
         assert_eq!(initiator.initial_secret, responder.initial_secret);
         assert_eq!(initiator.session_id, responder.session_id);
+    }
+
+    #[test]
+    fn precomputed_identity_dh_matches_private_key_paths() {
+        let sender_static = X25519StaticSecret::from([11_u8; 32]);
+        let sender_ephemeral = X25519StaticSecret::from([12_u8; 32]);
+        let recipient_static = X25519StaticSecret::from([13_u8; 32]);
+        let recipient_signed_prekey = X25519StaticSecret::from([14_u8; 32]);
+        let recipient_static_public = X25519PublicKey::from(&recipient_static).to_bytes();
+        let recipient_signed_prekey_public =
+            X25519PublicKey::from(&recipient_signed_prekey).to_bytes();
+        let sender_static_public = X25519PublicKey::from(&sender_static).to_bytes();
+        let sender_ephemeral_public = X25519PublicKey::from(&sender_ephemeral).to_bytes();
+        let initiator_private = derive_initial_material_for_initiator(
+            &sender_static,
+            &sender_ephemeral,
+            &recipient_static_public,
+            &recipient_signed_prekey_public,
+        )
+        .unwrap();
+        let initiator_external = derive_initial_material_for_initiator_with_static_dh(
+            &sender_static
+                .diffie_hellman(&X25519PublicKey::from(recipient_signed_prekey_public))
+                .to_bytes(),
+            &sender_ephemeral,
+            &recipient_static_public,
+            &recipient_signed_prekey_public,
+            None,
+        )
+        .unwrap();
+        let responder_private = derive_initial_material_for_responder(
+            &recipient_static,
+            &recipient_signed_prekey,
+            &sender_static_public,
+            &sender_ephemeral_public,
+        )
+        .unwrap();
+        let responder_external = derive_initial_material_for_responder_with_static_dh(
+            &recipient_static
+                .diffie_hellman(&X25519PublicKey::from(sender_ephemeral_public))
+                .to_bytes(),
+            &recipient_signed_prekey,
+            None,
+            &sender_static_public,
+            &sender_ephemeral_public,
+        )
+        .unwrap();
+
+        assert_eq!(initiator_private, initiator_external);
+        assert_eq!(responder_private, responder_external);
+        assert_eq!(initiator_external, responder_external);
     }
 }
