@@ -29,15 +29,31 @@ pub struct ObjectProofVerificationResult {
     pub verification_method: Value,
 }
 
-pub fn generate_object_proof(
+/// An object proof whose deterministic signing input is ready for an external signer.
+pub struct PreparedObjectProof {
+    document: Value,
+    proof_object: Map<String, Value>,
+    signing_input: Vec<u8>,
+    public_key: PublicKeyMaterial,
+}
+
+impl PreparedObjectProof {
+    /// Returns the exact object-proof bytes that an external signer must sign.
+    pub fn signing_input(&self) -> &[u8] {
+        &self.signing_input
+    }
+}
+
+/// Prepares an object proof without accepting private key material.
+pub fn prepare_object_proof(
     document: &Value,
-    private_key: &PrivateKeyMaterial,
+    public_key: &PublicKeyMaterial,
     verification_method: &str,
     issuer_did: &str,
     created: Option<String>,
-) -> Result<Value, ProofError> {
+) -> Result<PreparedObjectProof, ProofError> {
     ensure_object(document)?;
-    ensure_ed25519_private_key(private_key)?;
+    ensure_ed25519_public_key(public_key)?;
     ensure_verification_method_matches_issuer(verification_method, issuer_did)?;
     let created_value = normalize_rfc3339(created)?;
 
@@ -63,20 +79,55 @@ pub fn generate_object_proof(
     let signing_document = document_without_top_level_proof(document)?;
     let signing_input =
         compute_signing_input(&signing_document, &Value::Object(proof_object.clone()))?;
-    let signature = private_key
-        .sign_message(&signing_input)
-        .map_err(|_| ProofError::SigningError)?;
-    proof_object.insert(
-        "proofValue".to_string(),
-        Value::String(encode_signature_multibase(&signature)),
-    );
+    Ok(PreparedObjectProof {
+        document: document.clone(),
+        proof_object,
+        signing_input,
+        public_key: public_key.clone(),
+    })
+}
 
-    let mut signed_document = document.clone();
-    signed_document
+/// Completes a prepared object proof with bytes produced by an external signer.
+pub fn complete_object_proof(
+    mut prepared: PreparedObjectProof,
+    signature: &[u8],
+) -> Result<Value, ProofError> {
+    prepared
+        .public_key
+        .verify_message(&prepared.signing_input, signature)
+        .map_err(|_| ProofError::InvalidSignature)?;
+    prepared.proof_object.insert(
+        "proofValue".to_string(),
+        Value::String(encode_signature_multibase(signature)),
+    );
+    prepared
+        .document
         .as_object_mut()
         .ok_or_else(|| ProofError::InvalidProofField("document must be an object".to_string()))?
-        .insert("proof".to_string(), Value::Object(proof_object));
-    Ok(signed_document)
+        .insert("proof".to_string(), Value::Object(prepared.proof_object));
+    Ok(prepared.document)
+}
+
+pub fn generate_object_proof(
+    document: &Value,
+    private_key: &PrivateKeyMaterial,
+    verification_method: &str,
+    issuer_did: &str,
+    created: Option<String>,
+) -> Result<Value, ProofError> {
+    ensure_ed25519_private_key(private_key)?;
+    let public_key = private_key.public_key();
+    let prepared = prepare_object_proof(
+        document,
+        &public_key,
+        verification_method,
+        issuer_did,
+        created,
+    )?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| ProofError::SigningError)?;
+    complete_object_proof(prepared, &signature)
 }
 
 pub fn verify_object_proof(
@@ -183,6 +234,13 @@ fn ensure_ed25519_private_key(private_key: &PrivateKeyMaterial) -> Result<(), Pr
     }
 }
 
+fn ensure_ed25519_public_key(public_key: &PublicKeyMaterial) -> Result<(), ProofError> {
+    match public_key {
+        PublicKeyMaterial::Ed25519(_) => Ok(()),
+        _ => Err(ProofError::InvalidPublicKey),
+    }
+}
+
 fn ensure_verification_method_matches_issuer(
     verification_method: &str,
     issuer_did: &str,
@@ -255,7 +313,12 @@ pub(crate) fn document_without_top_level_proof(document: &Value) -> Result<Value
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_signature_multibase, encode_signature_multibase};
+    use super::{
+        complete_object_proof, decode_signature_multibase, encode_signature_multibase,
+        generate_object_proof, prepare_object_proof,
+    };
+    use crate::PrivateKeyMaterial;
+    use serde_json::json;
 
     #[test]
     fn signature_multibase_decoder_removes_only_the_prefix() {
@@ -270,5 +333,43 @@ mod tests {
 
         assert!(encoded.starts_with("zz"));
         assert_eq!(decode_signature_multibase(&encoded).unwrap(), signature);
+    }
+
+    #[test]
+    fn external_signer_matches_private_key_object_proof() {
+        let private_key =
+            PrivateKeyMaterial::Ed25519(ed25519_dalek::SigningKey::from_bytes(&[17_u8; 32]));
+        let public_key = private_key.public_key();
+        let issuer_did = "did:wba:example.com:agents:alice:e1_alice";
+        let verification_method = format!("{issuer_did}#device-signing");
+        let document = json!({
+            "type": "example-object",
+            "issuer": issuer_did,
+            "sequence": 7,
+        });
+        let created = Some("2026-08-21T00:00:00Z".to_string());
+        let prepared = prepare_object_proof(
+            &document,
+            &public_key,
+            &verification_method,
+            issuer_did,
+            created.clone(),
+        )
+        .expect("object proof preparation should succeed");
+        let signature = private_key
+            .sign_message(prepared.signing_input())
+            .expect("external signer should sign prepared object proof bytes");
+        let externally_signed = complete_object_proof(prepared, &signature)
+            .expect("object proof completion should succeed");
+        let privately_signed = generate_object_proof(
+            &document,
+            &private_key,
+            &verification_method,
+            issuer_did,
+            created,
+        )
+        .expect("private-key object proof generation should succeed");
+
+        assert_eq!(externally_signed, privately_signed);
     }
 }
