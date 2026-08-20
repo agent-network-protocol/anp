@@ -13,7 +13,9 @@ use super::ratchet::{
 };
 use super::x3dh::{
     derive_initial_material_for_initiator, derive_initial_material_for_initiator_with_opk,
-    derive_initial_material_for_responder, derive_initial_material_for_responder_with_opk,
+    derive_initial_material_for_initiator_with_static_dh, derive_initial_material_for_responder,
+    derive_initial_material_for_responder_with_opk,
+    derive_initial_material_for_responder_with_static_dh, InitialMaterial,
 };
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
@@ -65,7 +67,6 @@ impl DirectE2eeSession {
             ));
         }
         let sender_ephemeral_private = X25519StaticSecret::random_from_rng(OsRng);
-        let sender_ephemeral_public = X25519PublicKey::from(&sender_ephemeral_private).to_bytes();
         let initial = if recipient_one_time_prekey_public.is_some() {
             derive_initial_material_for_initiator_with_opk(
                 local_static_private,
@@ -82,6 +83,69 @@ impl DirectE2eeSession {
                 recipient_signed_prekey_public,
             )?
         };
+        Self::finish_initiate_session(
+            metadata,
+            operation_id,
+            local_static_key_id,
+            recipient_bundle,
+            recipient_one_time_prekey_id,
+            plaintext,
+            &sender_ephemeral_private,
+            initial,
+        )
+    }
+
+    /// Creates a Direct E2EE init using a caller-provided identity-key DH result.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initiate_session_with_static_dh(
+        metadata: &DirectEnvelopeMetadata,
+        operation_id: &str,
+        local_static_key_id: &str,
+        sender_static_to_signed_prekey_dh: &[u8; 32],
+        recipient_bundle: &PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_signed_prekey_public: &[u8; 32],
+        recipient_one_time_prekey_public: Option<&[u8; 32]>,
+        recipient_one_time_prekey_id: Option<String>,
+        plaintext: &ApplicationPlaintext,
+    ) -> Result<(DirectSessionState, PendingOutboundRecord, DirectInitBody), DirectE2eeError> {
+        if recipient_bundle.suite != MTI_DIRECT_E2EE_SUITE {
+            return Err(DirectE2eeError::UnsupportedSuite(
+                recipient_bundle.suite.clone(),
+            ));
+        }
+        let sender_ephemeral_private = X25519StaticSecret::random_from_rng(OsRng);
+        let initial = derive_initial_material_for_initiator_with_static_dh(
+            sender_static_to_signed_prekey_dh,
+            &sender_ephemeral_private,
+            recipient_static_public,
+            recipient_signed_prekey_public,
+            recipient_one_time_prekey_public,
+        )?;
+        Self::finish_initiate_session(
+            metadata,
+            operation_id,
+            local_static_key_id,
+            recipient_bundle,
+            recipient_one_time_prekey_id,
+            plaintext,
+            &sender_ephemeral_private,
+            initial,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_initiate_session(
+        metadata: &DirectEnvelopeMetadata,
+        operation_id: &str,
+        local_static_key_id: &str,
+        recipient_bundle: &PrekeyBundle,
+        recipient_one_time_prekey_id: Option<String>,
+        plaintext: &ApplicationPlaintext,
+        sender_ephemeral_private: &X25519StaticSecret,
+        initial: InitialMaterial,
+    ) -> Result<(DirectSessionState, PendingOutboundRecord, DirectInitBody), DirectE2eeError> {
+        let sender_ephemeral_public = X25519PublicKey::from(sender_ephemeral_private).to_bytes();
         let mut body = DirectInitBody {
             session_id: initial.session_id.clone(),
             suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
@@ -174,6 +238,37 @@ impl DirectE2eeSession {
                 &sender_ephemeral_public,
             )?
         };
+        Self::finish_accept_incoming_init(metadata, local_static_key_id, body, initial)
+    }
+
+    /// Accepts a Direct E2EE init using a caller-provided identity-key DH result.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_incoming_init_with_static_dh(
+        metadata: &DirectEnvelopeMetadata,
+        local_static_key_id: &str,
+        recipient_static_to_ephemeral_dh: &[u8; 32],
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey_private: Option<&X25519StaticSecret>,
+        sender_static_public: &[u8; 32],
+        body: &DirectInitBody,
+    ) -> Result<(DirectSessionState, ApplicationPlaintext), DirectE2eeError> {
+        let sender_ephemeral_public = decode_fixed_32(&body.sender_ephemeral_pub_b64u)?;
+        let initial = derive_initial_material_for_responder_with_static_dh(
+            recipient_static_to_ephemeral_dh,
+            local_signed_prekey_private,
+            local_one_time_prekey_private,
+            sender_static_public,
+            &sender_ephemeral_public,
+        )?;
+        Self::finish_accept_incoming_init(metadata, local_static_key_id, body, initial)
+    }
+
+    fn finish_accept_incoming_init(
+        metadata: &DirectEnvelopeMetadata,
+        local_static_key_id: &str,
+        body: &DirectInitBody,
+        initial: InitialMaterial,
+    ) -> Result<(DirectSessionState, ApplicationPlaintext), DirectE2eeError> {
         if body.session_id != initial.session_id {
             return Err(DirectE2eeError::invalid_field(
                 "session_id does not match derived session",
@@ -188,6 +283,7 @@ impl DirectE2eeSession {
             serde_json::from_slice(&plaintext_bytes).map_err(|error| {
                 DirectE2eeError::invalid_field(format!("invalid plaintext json: {error}"))
             })?;
+        let sender_ephemeral_public = decode_fixed_32(&body.sender_ephemeral_pub_b64u)?;
         let ratchet_private = X25519StaticSecret::random_from_rng(OsRng);
         let ratchet_public = X25519PublicKey::from(&ratchet_private).to_bytes();
         let dh = ratchet_private.diffie_hellman(&X25519PublicKey::from(sender_ephemeral_public));
@@ -501,6 +597,65 @@ mod tests {
     use super::*;
     use crate::direct_e2ee::models::{PrekeyBundle, SignedPrekey, MTI_DIRECT_E2EE_SUITE};
     use serde_json::json;
+
+    #[test]
+    fn external_identity_dh_establishes_v1_session() {
+        let alice_static = X25519StaticSecret::from([31_u8; 32]);
+        let bob_static = X25519StaticSecret::from([33_u8; 32]);
+        let bob_spk = X25519StaticSecret::from([35_u8; 32]);
+        let alice_did = "did:wba:a.example:agents:alice";
+        let bob_did = "did:wba:b.example:agents:bob";
+        let bob_spk_public = X25519PublicKey::from(&bob_spk).to_bytes();
+        let bob_bundle = PrekeyBundle {
+            bundle_id: "bundle-bob-external".to_owned(),
+            owner_did: bob_did.to_owned(),
+            suite: MTI_DIRECT_E2EE_SUITE.to_owned(),
+            static_key_agreement_id: format!("{bob_did}#key-3"),
+            signed_prekey: SignedPrekey {
+                key_id: "spk-bob-external".to_owned(),
+                public_key_b64u: crate::keys::base64url_encode(&bob_spk_public),
+                expires_at: "2026-09-21T00:00:00Z".to_owned(),
+            },
+            proof: json!({}),
+        };
+        let metadata = DirectEnvelopeMetadata {
+            sender_did: alice_did.to_owned(),
+            recipient_did: bob_did.to_owned(),
+            message_id: "msg-external-init".to_owned(),
+            profile: "anp.direct.e2ee.v1".to_owned(),
+            security_profile: "direct-e2ee".to_owned(),
+        };
+        let (_, _, init) = DirectE2eeSession::initiate_session_with_static_dh(
+            &metadata,
+            "op-external-init",
+            &format!("{alice_did}#key-3"),
+            &alice_static
+                .diffie_hellman(&X25519PublicKey::from(bob_spk_public))
+                .to_bytes(),
+            &bob_bundle,
+            &X25519PublicKey::from(&bob_static).to_bytes(),
+            &bob_spk_public,
+            None,
+            None,
+            &ApplicationPlaintext::new_text("text/plain", "external v1 DH"),
+        )
+        .unwrap();
+        let sender_ephemeral = decode_fixed_32(&init.sender_ephemeral_pub_b64u).unwrap();
+        let (_, plaintext) = DirectE2eeSession::accept_incoming_init_with_static_dh(
+            &metadata,
+            &format!("{bob_did}#key-3"),
+            &bob_static
+                .diffie_hellman(&X25519PublicKey::from(sender_ephemeral))
+                .to_bytes(),
+            &bob_spk,
+            None,
+            &X25519PublicKey::from(&alice_static).to_bytes(),
+            &init,
+        )
+        .unwrap();
+
+        assert_eq!(plaintext.text.as_deref(), Some("external v1 DH"));
+    }
 
     #[test]
     fn skipped_message_key_is_deleted_after_failed_authentication() {
