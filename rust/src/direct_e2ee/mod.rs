@@ -42,8 +42,9 @@ pub use session::DirectE2eeSession;
 pub use store::{IdentityKeyStore, PendingOutboundStore, SessionStore, SignedPrekeyStore};
 pub use v2_aad::{build_init_aad_v2, build_message_aad_v2, canonical_application_plaintext_v2};
 pub use v2_bundle::{
-    build_prekey_bundle_v2, key_service_metadata_v2, signed_bundle_object_jcs_v2,
-    verify_prekey_bundle_v2, V2GetPrekeyBundleBody, V2GetPrekeyBundleResult,
+    build_prekey_bundle_v2, complete_prekey_bundle_v2, key_service_metadata_v2,
+    prepare_prekey_bundle_v2, signed_bundle_object_jcs_v2, verify_prekey_bundle_v2,
+    PreparedV2PrekeyBundle, V2GetPrekeyBundleBody, V2GetPrekeyBundleResult,
     V2PublishPrekeyBundleBody, V2PublishPrekeyBundleResult,
 };
 pub use v2_errors::{

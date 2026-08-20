@@ -10,8 +10,85 @@ use super::v2_models::{
 };
 use crate::authentication::{find_eligible_device, PROFILE_DIRECT_E2EE_V2};
 use crate::canonical_json::canonicalize_json;
-use crate::proof::{generate_object_proof, verify_object_proof};
-use crate::PrivateKeyMaterial;
+use crate::proof::{
+    complete_object_proof, prepare_object_proof, verify_object_proof, PreparedObjectProof,
+};
+use crate::{PrivateKeyMaterial, PublicKeyMaterial};
+
+/// A P5 v2 PreKey bundle whose object proof is ready for an external signer.
+pub struct PreparedV2PrekeyBundle {
+    bundle_id: String,
+    owner_did: String,
+    owner_device_id: String,
+    static_key_agreement_id: String,
+    signed_prekey: V2SignedPrekey,
+    proof: PreparedObjectProof,
+}
+
+impl PreparedV2PrekeyBundle {
+    /// Returns the exact object-proof bytes that the device signer must sign.
+    pub fn signing_input(&self) -> &[u8] {
+        self.proof.signing_input()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_prekey_bundle_v2(
+    bundle_id: &str,
+    owner_did: &str,
+    owner_device_id: &str,
+    static_key_agreement_id: &str,
+    signed_prekey: V2SignedPrekey,
+    signing_public_key: &PublicKeyMaterial,
+    verification_method: &str,
+    created: Option<&str>,
+) -> Result<PreparedV2PrekeyBundle, DirectE2eeV2Error> {
+    signed_prekey.validate()?;
+    let unsigned = json!({
+        "bundle_id": bundle_id,
+        "owner_did": owner_did,
+        "owner_device_id": owner_device_id,
+        "suite": MTI_DIRECT_E2EE_SUITE_V2,
+        "static_key_agreement_id": static_key_agreement_id,
+        "signed_prekey": signed_prekey,
+    });
+    let proof = prepare_object_proof(
+        &unsigned,
+        signing_public_key,
+        verification_method,
+        owner_did,
+        created.map(str::to_owned),
+    )?;
+    Ok(PreparedV2PrekeyBundle {
+        bundle_id: bundle_id.to_owned(),
+        owner_did: owner_did.to_owned(),
+        owner_device_id: owner_device_id.to_owned(),
+        static_key_agreement_id: static_key_agreement_id.to_owned(),
+        signed_prekey,
+        proof,
+    })
+}
+
+pub fn complete_prekey_bundle_v2(
+    prepared: PreparedV2PrekeyBundle,
+    signature: &[u8],
+) -> Result<V2PrekeyBundle, DirectE2eeV2Error> {
+    let signed = complete_object_proof(prepared.proof, signature)?;
+    let bundle = V2PrekeyBundle {
+        bundle_id: prepared.bundle_id,
+        owner_did: prepared.owner_did,
+        owner_device_id: prepared.owner_device_id,
+        suite: MTI_DIRECT_E2EE_SUITE_V2.to_owned(),
+        static_key_agreement_id: prepared.static_key_agreement_id,
+        signed_prekey: prepared.signed_prekey,
+        proof: signed
+            .get("proof")
+            .cloned()
+            .ok_or_else(|| DirectE2eeV2Error::invalid("generated bundle has no proof"))?,
+    };
+    bundle.validate_structure()?;
+    Ok(bundle)
+}
 
 pub fn build_prekey_bundle_v2(
     bundle_id: &str,
@@ -23,36 +100,20 @@ pub fn build_prekey_bundle_v2(
     verification_method: &str,
     created: Option<&str>,
 ) -> Result<V2PrekeyBundle, DirectE2eeV2Error> {
-    signed_prekey.validate()?;
-    let unsigned = json!({
-        "bundle_id": bundle_id,
-        "owner_did": owner_did,
-        "owner_device_id": owner_device_id,
-        "suite": MTI_DIRECT_E2EE_SUITE_V2,
-        "static_key_agreement_id": static_key_agreement_id,
-        "signed_prekey": signed_prekey,
-    });
-    let signed = generate_object_proof(
-        &unsigned,
-        signing_private_key,
-        verification_method,
+    let prepared = prepare_prekey_bundle_v2(
+        bundle_id,
         owner_did,
-        created.map(str::to_owned),
-    )?;
-    let bundle = V2PrekeyBundle {
-        bundle_id: bundle_id.to_owned(),
-        owner_did: owner_did.to_owned(),
-        owner_device_id: owner_device_id.to_owned(),
-        suite: MTI_DIRECT_E2EE_SUITE_V2.to_owned(),
-        static_key_agreement_id: static_key_agreement_id.to_owned(),
+        owner_device_id,
+        static_key_agreement_id,
         signed_prekey,
-        proof: signed
-            .get("proof")
-            .cloned()
-            .ok_or_else(|| DirectE2eeV2Error::invalid("generated bundle has no proof"))?,
-    };
-    bundle.validate_structure()?;
-    Ok(bundle)
+        &signing_private_key.public_key(),
+        verification_method,
+        created,
+    )?;
+    let signature = signing_private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| DirectE2eeV2Error::invalid("PreKey bundle signing failed"))?;
+    complete_prekey_bundle_v2(prepared, &signature)
 }
 
 pub fn signed_bundle_object_jcs_v2(bundle: &V2PrekeyBundle) -> Result<Vec<u8>, DirectE2eeV2Error> {
