@@ -116,19 +116,23 @@ impl PrivateKeyMaterial {
         if label != "PRIVATE KEY" {
             return Err(KeyMaterialError::InvalidPemLabel(label));
         }
-        if let Ok(bytes) = ed25519_private_from_pkcs8_der(&bytes) {
+        Self::from_pkcs8_der(&bytes)
+    }
+
+    pub fn from_pkcs8_der(bytes: &[u8]) -> Result<Self, KeyMaterialError> {
+        if let Ok(bytes) = ed25519_private_from_pkcs8_der(bytes) {
             return Ok(Self::Ed25519(Ed25519SigningKey::from_bytes(&bytes)));
         }
-        if let Ok(key) = Ed25519SigningKey::from_pkcs8_der(&bytes) {
+        if let Ok(key) = Ed25519SigningKey::from_pkcs8_der(bytes) {
             return Ok(Self::Ed25519(key));
         }
-        if let Ok(key) = Secp256r1SigningKey::from_pkcs8_der(&bytes) {
+        if let Ok(key) = Secp256r1SigningKey::from_pkcs8_der(bytes) {
             return Ok(Self::Secp256r1(key));
         }
-        if let Ok(key) = Secp256k1SigningKey::from_pkcs8_der(&bytes) {
+        if let Ok(key) = Secp256k1SigningKey::from_pkcs8_der(bytes) {
             return Ok(Self::Secp256k1(key));
         }
-        if let Ok(bytes) = x25519_private_from_pkcs8_der(&bytes) {
+        if let Ok(bytes) = x25519_private_from_pkcs8_der(bytes) {
             return Ok(Self::X25519(X25519StaticSecret::from(bytes)));
         }
         Err(KeyMaterialError::InvalidKeyBytes)

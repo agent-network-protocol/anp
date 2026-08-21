@@ -28,6 +28,26 @@ fn test_generated_did_keys_use_standard_pkcs8_and_spki_pem() {
 }
 
 #[test]
+fn test_private_key_material_accepts_raw_pkcs8_der_without_pem() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["user".to_string(), "rust-der".to_string()],
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("E1 DID should generate");
+
+    for fragment in ["key-1", "key-2", "key-3"] {
+        let pair = &bundle.keys[fragment];
+        let der = pem_contents(&pair.private_key_pem);
+        let parsed = PrivateKeyMaterial::from_pkcs8_der(&der).expect("PKCS#8 DER should parse");
+        let expected = PublicKeyMaterial::from_pem(&pair.public_key_pem).unwrap();
+        assert_eq!(parsed.public_key().to_pem(), expected.to_pem());
+    }
+}
+
+#[test]
 fn test_legacy_anp_pem_rejected_by_runtime_parsers() {
     let legacy_private = "-----BEGIN ANP ED25519 PRIVATE KEY-----\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n-----END ANP ED25519 PRIVATE KEY-----\n";
     assert!(
@@ -157,6 +177,14 @@ fn assert_standard_key_bundle(bundle: &anp::authentication::DidDocumentBundle, f
 
 fn first_line(value: &str) -> &str {
     value.lines().next().unwrap_or_default()
+}
+
+fn pem_contents(value: &str) -> Vec<u8> {
+    let encoded = value
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect::<String>();
+    STANDARD.decode(encoded).expect("PEM body should decode")
 }
 
 fn pem(label: &str, contents: impl AsRef<[u8]>) -> String {
