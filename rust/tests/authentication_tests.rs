@@ -82,6 +82,7 @@ fn test_create_did_document_profiles() {
 fn test_supplied_public_keys_build_and_sign_a_root_bound_e1_document() {
     let root = anp::PrivateKeyMaterial::Ed25519(SigningKey::from_bytes(&[7_u8; 32]));
     let request = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
+    let device = anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
     let e2ee_signing =
         anp::PrivateKeyMaterial::Ed25519(SigningKey::generate(&mut rand::rngs::OsRng));
     let agreement = anp::PrivateKeyMaterial::X25519(x25519_dalek::StaticSecret::random_from_rng(
@@ -104,6 +105,15 @@ fn test_supplied_public_keys_build_and_sign_a_root_bound_e1_document() {
                 ],
             ),
             additional_keys: vec![
+                supplied_key(
+                    "device",
+                    DidKeyRole::DeviceSigning,
+                    device.public_key(),
+                    &[
+                        DidVerificationRelationship::Authentication,
+                        DidVerificationRelationship::AssertionMethod,
+                    ],
+                ),
                 supplied_key(
                     "request",
                     DidKeyRole::RequestSigning,
@@ -132,9 +142,9 @@ fn test_supplied_public_keys_build_and_sign_a_root_bound_e1_document() {
         "did:wba:example.com:agents:alice:e1_--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"
     );
     assert!(unsigned.get("proof").is_none());
-    assert_eq!(unsigned["verificationMethod"].as_array().unwrap().len(), 4);
-    assert_eq!(unsigned["authentication"].as_array().unwrap().len(), 2);
-    assert_eq!(unsigned["assertionMethod"].as_array().unwrap().len(), 2);
+    assert_eq!(unsigned["verificationMethod"].as_array().unwrap().len(), 5);
+    assert_eq!(unsigned["authentication"].as_array().unwrap().len(), 3);
+    assert_eq!(unsigned["assertionMethod"].as_array().unwrap().len(), 3);
     assert_eq!(unsigned["keyAgreement"].as_array().unwrap().len(), 1);
 
     let root_kid = format!("{did}#root");

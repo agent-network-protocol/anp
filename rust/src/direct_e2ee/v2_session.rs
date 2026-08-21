@@ -18,7 +18,8 @@ use super::v2_models::{
     CONTENT_TYPE_DIRECT_INIT_V2, MTI_DIRECT_E2EE_SUITE_V2,
 };
 use super::x3dh::{
-    derive_initial_material_for_initiator_with_opk, derive_initial_material_for_responder_with_opk,
+    derive_initial_material_for_initiator_with_static_dh,
+    derive_initial_material_for_responder_with_static_dh,
 };
 
 pub const DIRECT_E2EE_V2_SESSION_STATE_FORMAT: &str = "anp.direct.e2ee.v2.session-state.v1";
@@ -621,6 +622,72 @@ impl V2DirectE2eeSession {
         )
     }
 
+    /// Creates a v2 init using the caller-provided result of the local identity
+    /// agreement key with the recipient signed PreKey.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initiate_session_with_static_dh(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_signed_prekey_dh: &[u8; 32],
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext: &V2ApplicationPlaintext,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
+        let ephemeral = X25519StaticSecret::random_from_rng(OsRng);
+        plaintext.validate()?;
+        let plaintext_bytes = Zeroizing::new(canonical_application_plaintext_v2(plaintext)?);
+        Self::initiate_session_with_static_dh_bytes_impl(
+            binding,
+            metadata,
+            local_static_to_signed_prekey_dh,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            &plaintext_bytes,
+            &ephemeral,
+        )
+    }
+
+    /// Secret-payload equivalent of [`Self::initiate_session_with_static_dh`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn initiate_session_secret_json_with_static_dh(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_signed_prekey_dh: &[u8; 32],
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext: &V2SecretJsonPayload,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
+        let ephemeral = X25519StaticSecret::random_from_rng(OsRng);
+        let plaintext_bytes = plaintext.canonical_application_bytes();
+        Self::initiate_session_with_static_dh_bytes_impl(
+            binding,
+            metadata,
+            local_static_to_signed_prekey_dh,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            &plaintext_bytes,
+            &ephemeral,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn initiate_session_with_ephemeral_bytes(
         binding: &V2SessionBinding,
@@ -702,6 +769,43 @@ impl V2DirectE2eeSession {
         ),
         DirectE2eeV2Error,
     > {
+        let recipient_signed_prekey_public = decode_fixed::<32>(
+            "prekey_bundle.signed_prekey.public_key_b64u",
+            &recipient_bundle.signed_prekey.public_key_b64u,
+        )?;
+        let static_dh = local_static_private
+            .diffie_hellman(&X25519PublicKey::from(recipient_signed_prekey_public))
+            .to_bytes();
+        Self::initiate_session_with_static_dh_bytes_impl(
+            binding,
+            metadata,
+            &static_dh,
+            recipient_bundle,
+            recipient_static_public,
+            recipient_one_time_prekey,
+            plaintext_bytes,
+            sender_ephemeral_private,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn initiate_session_with_static_dh_bytes_impl(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_signed_prekey_dh: &[u8; 32],
+        recipient_bundle: &V2PrekeyBundle,
+        recipient_static_public: &[u8; 32],
+        recipient_one_time_prekey: Option<&V2OneTimePrekey>,
+        plaintext_bytes: &[u8],
+        sender_ephemeral_private: &X25519StaticSecret,
+    ) -> Result<
+        (
+            V2DirectSessionState,
+            V2PendingOutboundRecord,
+            V2DirectInitBody,
+        ),
+        DirectE2eeV2Error,
+    > {
         binding.validate_outbound_metadata(metadata, CONTENT_TYPE_DIRECT_INIT_V2)?;
         validate_recipient_bundle(binding, recipient_bundle)?;
 
@@ -715,8 +819,8 @@ impl V2DirectE2eeSession {
                 decode_fixed::<32>("one_time_prekey.public_key_b64u", &opk.public_key_b64u)
             })
             .transpose()?;
-        let initial = derive_initial_material_for_initiator_with_opk(
-            local_static_private,
+        let initial = derive_initial_material_for_initiator_with_static_dh(
+            local_static_to_signed_prekey_dh,
             sender_ephemeral_private,
             recipient_static_public,
             &recipient_signed_prekey_public,
@@ -837,11 +941,102 @@ impl V2DirectE2eeSession {
         ))
     }
 
+    /// Accepts an init using the caller-provided result of the local identity
+    /// agreement key with the sender ephemeral public key.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_incoming_init_with_static_dh(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_ephemeral_dh: &[u8; 32],
+        local_bundle: &V2PrekeyBundle,
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
+        sender_static_public: &[u8; 32],
+        body: &V2DirectInitBody,
+    ) -> Result<(V2DirectSessionState, V2ApplicationPlaintext, Option<String>), DirectE2eeV2Error>
+    {
+        let (state, plaintext, consumed_opk_id) = Self::accept_incoming_init_bytes_with_static_dh(
+            binding,
+            metadata,
+            local_static_to_ephemeral_dh,
+            local_bundle,
+            local_signed_prekey_private,
+            local_one_time_prekey,
+            sender_static_public,
+            body,
+        )?;
+        Ok((
+            state,
+            parse_application_plaintext(&plaintext)?,
+            consumed_opk_id,
+        ))
+    }
+
+    /// Secret-payload equivalent of [`Self::accept_incoming_init_with_static_dh`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_incoming_init_secret_json_with_static_dh(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_ephemeral_dh: &[u8; 32],
+        local_bundle: &V2PrekeyBundle,
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
+        sender_static_public: &[u8; 32],
+        body: &V2DirectInitBody,
+    ) -> Result<(V2DirectSessionState, V2SecretJsonPayload, Option<String>), DirectE2eeV2Error>
+    {
+        let (state, plaintext, consumed_opk_id) = Self::accept_incoming_init_bytes_with_static_dh(
+            binding,
+            metadata,
+            local_static_to_ephemeral_dh,
+            local_bundle,
+            local_signed_prekey_private,
+            local_one_time_prekey,
+            sender_static_public,
+            body,
+        )?;
+        Ok((
+            state,
+            V2SecretJsonPayload::from_canonical_application_bytes(plaintext)?,
+            consumed_opk_id,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn accept_incoming_init_bytes(
         binding: &V2SessionBinding,
         metadata: &V2DirectMetadata,
         local_static_private: &X25519StaticSecret,
+        local_bundle: &V2PrekeyBundle,
+        local_signed_prekey_private: &X25519StaticSecret,
+        local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
+        sender_static_public: &[u8; 32],
+        body: &V2DirectInitBody,
+    ) -> Result<(V2DirectSessionState, Zeroizing<Vec<u8>>, Option<String>), DirectE2eeV2Error> {
+        let sender_ephemeral_public = decode_fixed::<32>(
+            "body.sender_ephemeral_pub_b64u",
+            &body.sender_ephemeral_pub_b64u,
+        )?;
+        let static_dh = local_static_private
+            .diffie_hellman(&X25519PublicKey::from(sender_ephemeral_public))
+            .to_bytes();
+        Self::accept_incoming_init_bytes_with_static_dh(
+            binding,
+            metadata,
+            &static_dh,
+            local_bundle,
+            local_signed_prekey_private,
+            local_one_time_prekey,
+            sender_static_public,
+            body,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accept_incoming_init_bytes_with_static_dh(
+        binding: &V2SessionBinding,
+        metadata: &V2DirectMetadata,
+        local_static_to_ephemeral_dh: &[u8; 32],
         local_bundle: &V2PrekeyBundle,
         local_signed_prekey_private: &X25519StaticSecret,
         local_one_time_prekey: Option<(&V2OneTimePrekey, &X25519StaticSecret)>,
@@ -893,8 +1088,8 @@ impl V2DirectE2eeSession {
             "body.sender_ephemeral_pub_b64u",
             &body.sender_ephemeral_pub_b64u,
         )?;
-        let initial = derive_initial_material_for_responder_with_opk(
-            local_static_private,
+        let initial = derive_initial_material_for_responder_with_static_dh(
+            local_static_to_ephemeral_dh,
             local_signed_prekey_private,
             local_opk_private,
             sender_static_public,
@@ -1582,6 +1777,62 @@ mod tests {
         )
         .expect("accept pending pair init");
         (alice_binding, bob_binding, alice_state, bob_state)
+    }
+
+    #[test]
+    fn external_identity_dh_establishes_the_same_v2_protocol_flow() {
+        let alice_binding = binding(ALICE_DID, ALICE_DEVICE, BOB_DID, BOB_DEVICE);
+        let bob_binding = binding(BOB_DID, BOB_DEVICE, ALICE_DID, ALICE_DEVICE);
+        let alice_static = X25519StaticSecret::from([81_u8; 32]);
+        let bob_static = X25519StaticSecret::from([83_u8; 32]);
+        let bob_spk = X25519StaticSecret::from([85_u8; 32]);
+        let bob_bundle = bundle(
+            BOB_DID,
+            BOB_DEVICE,
+            &bob_binding.local_e2ee_key_id,
+            &bob_spk,
+        );
+        let init_meta = metadata(
+            &alice_binding,
+            "msg-external-dh",
+            CONTENT_TYPE_DIRECT_INIT_V2,
+        );
+        let plaintext = text_plaintext("external identity DH");
+        let alice_static_dh = alice_static
+            .diffie_hellman(&X25519PublicKey::from(&bob_spk))
+            .to_bytes();
+        let (_, _, init_body) = V2DirectE2eeSession::initiate_session_with_static_dh(
+            &alice_binding,
+            &init_meta,
+            &alice_static_dh,
+            &bob_bundle,
+            &X25519PublicKey::from(&bob_static).to_bytes(),
+            None,
+            &plaintext,
+        )
+        .expect("external initiator identity DH should establish init");
+        let sender_ephemeral: [u8; 32] =
+            crate::keys::base64url_decode(&init_body.sender_ephemeral_pub_b64u)
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let bob_static_dh = bob_static
+            .diffie_hellman(&X25519PublicKey::from(sender_ephemeral))
+            .to_bytes();
+        let (_, received, consumed_opk) = V2DirectE2eeSession::accept_incoming_init_with_static_dh(
+            &bob_binding,
+            &init_meta,
+            &bob_static_dh,
+            &bob_bundle,
+            &bob_spk,
+            None,
+            &X25519PublicKey::from(&alice_static).to_bytes(),
+            &init_body,
+        )
+        .expect("external responder identity DH should accept init");
+
+        assert_eq!(received, plaintext);
+        assert_eq!(consumed_opk, None);
     }
 
     fn bundle(

@@ -12,7 +12,7 @@ use crate::proof::{
     ImProof, ImProofError, ImProofGenerationOptions, ImProofVerificationResult,
     IM_PROOF_DEFAULT_COMPONENTS,
 };
-use crate::PrivateKeyMaterial;
+use crate::{PrivateKeyMaterial, PublicKeyMaterial};
 
 const RFC3986_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b' ')
@@ -95,6 +95,22 @@ pub struct Rfc9421OriginProof {
     #[serde(rename = "signatureInput")]
     pub signature_input: String,
     pub signature: String,
+}
+
+/// An RFC 9421 origin proof whose signature base is ready for an external signer.
+pub struct PreparedRfc9421OriginProof {
+    content_digest: String,
+    signature_input: String,
+    signing_input: Vec<u8>,
+    label: String,
+    public_key: PublicKeyMaterial,
+}
+
+impl PreparedRfc9421OriginProof {
+    /// Returns the exact RFC 9421 signature-base bytes that an external signer must sign.
+    pub fn signing_input(&self) -> &[u8] {
+        &self.signing_input
+    }
 }
 
 impl From<ImProof> for Rfc9421OriginProof {
@@ -263,14 +279,15 @@ pub fn build_rfc9421_origin_signature_base(
     Ok(lines.join("\n").into_bytes())
 }
 
-pub fn generate_rfc9421_origin_proof(
+/// Prepares an RFC 9421 origin proof without accepting private key material.
+pub fn prepare_rfc9421_origin_proof(
     method: &str,
     meta: &Value,
     body: &Value,
-    private_key: &PrivateKeyMaterial,
+    public_key: &PublicKeyMaterial,
     keyid: &str,
     options: Rfc9421OriginProofGenerationOptions,
-) -> Result<Rfc9421OriginProof, Rfc9421OriginProofError> {
+) -> Result<PreparedRfc9421OriginProof, Rfc9421OriginProofError> {
     let normalized_label = normalized_label(options.label.as_deref())?;
     let signed_request_object = build_signed_request_object(method, meta, body)?;
     let canonical_request = canonicalize_signed_request_object(&signed_request_object)?;
@@ -283,27 +300,58 @@ pub fn generate_rfc9421_origin_proof(
             .collect(),
         created: options.created,
         expires: options.expires,
-        nonce: options.nonce.clone(),
+        nonce: options.nonce,
     };
-    let signature_input = build_im_signature_input(keyid, proof_options.clone())?;
+    let signature_input = build_im_signature_input(keyid, proof_options)?;
     let content_digest = build_im_content_digest(&canonical_request);
-    let signature_base = build_rfc9421_origin_signature_base(
+    let signing_input = build_rfc9421_origin_signature_base(
         method,
         &logical_target_uri,
         &content_digest,
         &signature_input,
     )?;
-    let signature = private_key
-        .sign_message(&signature_base)
-        .map_err(|_| Rfc9421OriginProofError::ImProof(ImProofError::SigningError))?;
-    let proof = Rfc9421OriginProof {
+    Ok(PreparedRfc9421OriginProof {
         content_digest,
         signature_input,
-        signature: encode_im_signature(&signature, normalized_label),
+        signing_input,
+        label: normalized_label.to_owned(),
+        public_key: public_key.clone(),
+    })
+}
+
+/// Completes a prepared RFC 9421 origin proof with an external signature.
+pub fn complete_rfc9421_origin_proof(
+    prepared: PreparedRfc9421OriginProof,
+    signature: &[u8],
+) -> Result<Rfc9421OriginProof, Rfc9421OriginProofError> {
+    prepared
+        .public_key
+        .verify_message(&prepared.signing_input, signature)
+        .map_err(|_| Rfc9421OriginProofError::ImProof(ImProofError::VerificationFailed))?;
+    let proof = Rfc9421OriginProof {
+        content_digest: prepared.content_digest,
+        signature_input: prepared.signature_input,
+        signature: encode_im_signature(signature, &prepared.label),
     };
     let parsed = parse_im_signature_input(&proof.signature_input)?;
     validate_parsed_signature_input(&parsed.label, &parsed.components)?;
-    Ok(proof.into())
+    Ok(proof)
+}
+
+pub fn generate_rfc9421_origin_proof(
+    method: &str,
+    meta: &Value,
+    body: &Value,
+    private_key: &PrivateKeyMaterial,
+    keyid: &str,
+    options: Rfc9421OriginProofGenerationOptions,
+) -> Result<Rfc9421OriginProof, Rfc9421OriginProofError> {
+    let public_key = private_key.public_key();
+    let prepared = prepare_rfc9421_origin_proof(method, meta, body, &public_key, keyid, options)?;
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .map_err(|_| Rfc9421OriginProofError::ImProof(ImProofError::SigningError))?;
+    complete_rfc9421_origin_proof(prepared, &signature)
 }
 
 pub fn verify_rfc9421_origin_proof(
@@ -392,9 +440,10 @@ fn validate_parsed_signature_input(
 mod tests {
     use super::{
         build_logical_target_uri, build_signed_request_object, canonicalize_signed_request_object,
-        generate_rfc9421_origin_proof, verify_rfc9421_origin_proof, Rfc9421OriginProofError,
-        Rfc9421OriginProofGenerationOptions, Rfc9421OriginProofVerificationOptions, TargetKind,
-        RFC9421_ORIGIN_PROOF_DEFAULT_COMPONENTS, RFC9421_ORIGIN_PROOF_DEFAULT_LABEL,
+        complete_rfc9421_origin_proof, generate_rfc9421_origin_proof, prepare_rfc9421_origin_proof,
+        verify_rfc9421_origin_proof, Rfc9421OriginProofError, Rfc9421OriginProofGenerationOptions,
+        Rfc9421OriginProofVerificationOptions, TargetKind, RFC9421_ORIGIN_PROOF_DEFAULT_COMPONENTS,
+        RFC9421_ORIGIN_PROOF_DEFAULT_LABEL,
     };
     use crate::authentication::{create_did_wba_document, DidDocumentOptions};
     use crate::PrivateKeyMaterial;
@@ -500,6 +549,65 @@ mod tests {
                 .map(|component| (*component).to_owned())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn external_signer_matches_private_key_origin_proof() {
+        let bundle = create_did_wba_document(
+            "example.com",
+            DidDocumentOptions {
+                path_segments: vec!["user".to_owned(), "alice".to_owned()],
+                ..DidDocumentOptions::default()
+            },
+        )
+        .expect("bundle should be created");
+        let private_key = PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+            .expect("private key should load");
+        let public_key = private_key.public_key();
+        let did = bundle.did().expect("did should exist").to_owned();
+        let keyid = format!("{did}#key-1");
+        let meta = json!({
+            "anp_version": "1.0",
+            "profile": "anp.direct.base.v1",
+            "security_profile": "transport-protected",
+            "sender_did": did,
+            "target": {"kind": "agent", "did": "did:wba:example.com:user:bob:e1_bob"},
+            "operation_id": "op-external-1",
+            "message_id": "msg-external-1",
+            "content_type": "text/plain"
+        });
+        let body = json!({"text": "hello from external signer"});
+        let options = Rfc9421OriginProofGenerationOptions {
+            created: Some(1_712_000_300),
+            expires: Some(1_712_000_600),
+            nonce: Some("nonce-external-1".to_owned()),
+            ..Rfc9421OriginProofGenerationOptions::default()
+        };
+        let prepared = prepare_rfc9421_origin_proof(
+            "direct.send",
+            &meta,
+            &body,
+            &public_key,
+            &keyid,
+            options.clone(),
+        )
+        .expect("origin proof preparation should succeed");
+        let signature = private_key
+            .sign_message(prepared.signing_input())
+            .expect("external signer should sign prepared origin proof bytes");
+        let externally_signed = complete_rfc9421_origin_proof(prepared, &signature)
+            .expect("origin proof completion should succeed");
+        let privately_signed = generate_rfc9421_origin_proof(
+            "direct.send",
+            &meta,
+            &body,
+            &private_key,
+            &keyid,
+            options,
+        )
+        .expect("private-key origin proof generation should succeed");
+
+        assert_eq!(externally_signed, privately_signed);
     }
 
     #[test]

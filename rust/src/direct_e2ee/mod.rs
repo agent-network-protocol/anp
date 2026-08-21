@@ -17,10 +17,11 @@ pub mod x3dh;
 
 pub use aad::{build_init_aad, build_message_aad};
 pub use bundle::{
-    build_prekey_bundle, checked_prekey_bundle_get_request, extract_x25519_public_key,
-    prekey_bundle_get_body, prekey_bundle_get_request, prekey_bundle_publish_body,
-    prekey_bundle_publish_request, should_retry_without_opk, should_retry_without_opk_message,
-    signed_prekey_from_private_key, validate_prekey_bundle_get_operation_id, verify_prekey_bundle,
+    build_prekey_bundle, checked_prekey_bundle_get_request, complete_prekey_bundle,
+    extract_x25519_public_key, prekey_bundle_get_body, prekey_bundle_get_request,
+    prekey_bundle_publish_body, prekey_bundle_publish_request, prepare_prekey_bundle,
+    should_retry_without_opk, should_retry_without_opk_message, signed_prekey_from_private_key,
+    validate_prekey_bundle_get_operation_id, verify_prekey_bundle, PreparedPrekeyBundle,
 };
 pub use envelope::{
     direct_body_from_content_type, direct_cipher_body_from_value, direct_cipher_body_to_value,
@@ -42,8 +43,9 @@ pub use session::DirectE2eeSession;
 pub use store::{IdentityKeyStore, PendingOutboundStore, SessionStore, SignedPrekeyStore};
 pub use v2_aad::{build_init_aad_v2, build_message_aad_v2, canonical_application_plaintext_v2};
 pub use v2_bundle::{
-    build_prekey_bundle_v2, key_service_metadata_v2, signed_bundle_object_jcs_v2,
-    verify_prekey_bundle_v2, V2GetPrekeyBundleBody, V2GetPrekeyBundleResult,
+    build_prekey_bundle_v2, complete_prekey_bundle_v2, key_service_metadata_v2,
+    prepare_prekey_bundle_v2, signed_bundle_object_jcs_v2, verify_prekey_bundle_v2,
+    PreparedV2PrekeyBundle, V2GetPrekeyBundleBody, V2GetPrekeyBundleResult,
     V2PublishPrekeyBundleBody, V2PublishPrekeyBundleResult,
 };
 pub use v2_errors::{
@@ -71,6 +73,7 @@ pub use v2_wire::{
     parse_publish_prekey_bundle_result_v2, publish_prekey_bundle_request_v2, V2DirectSendResult,
 };
 pub use x3dh::{
-    derive_initial_material_for_initiator, derive_initial_material_for_responder,
+    derive_initial_material_for_initiator, derive_initial_material_for_initiator_with_static_dh,
+    derive_initial_material_for_responder, derive_initial_material_for_responder_with_static_dh,
     initial_secret_key_and_nonce, InitialMaterial,
 };

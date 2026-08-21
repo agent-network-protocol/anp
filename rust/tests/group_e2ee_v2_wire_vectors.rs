@@ -361,19 +361,32 @@ fn p6_v2_binding_verifies_manifest_leaf_and_extension_chain() {
     .expect("resigned DID document");
 
     let leaf_key = URL_SAFE_NO_PAD.encode([7u8; 32]);
+    let unsigned = V2DidWbaBindingUnsigned {
+        agent_did: did.clone(),
+        device_id: "dev-a".to_owned(),
+        verification_method: format!("{did}#key-1"),
+        leaf_signature_key_b64u: leaf_key.clone(),
+        issued_at: "2026-07-19T00:00:00Z".to_owned(),
+        expires_at: "2026-08-19T00:00:00Z".to_owned(),
+    };
+    let prepared = prepare_did_wba_binding_v2(
+        unsigned.clone(),
+        &signing_key.public_key(),
+        Some("2026-07-19T00:00:00Z".to_owned()),
+    )
+    .expect("binding preparation");
+    let signature = signing_key
+        .sign_message(prepared.signing_input())
+        .expect("external binding signature");
+    let external_binding =
+        complete_did_wba_binding_v2(prepared, &signature).expect("binding completion");
     let binding = generate_did_wba_binding_v2(
-        V2DidWbaBindingUnsigned {
-            agent_did: did.clone(),
-            device_id: "dev-a".to_owned(),
-            verification_method: format!("{did}#key-1"),
-            leaf_signature_key_b64u: leaf_key.clone(),
-            issued_at: "2026-07-19T00:00:00Z".to_owned(),
-            expires_at: "2026-08-19T00:00:00Z".to_owned(),
-        },
+        unsigned,
         &signing_key,
         Some("2026-07-19T00:00:00Z".to_owned()),
     )
     .expect("binding proof");
+    assert_eq!(external_binding, binding);
     let extension_data = serde_json_canonicalizer::to_vec(&binding).expect("binding JCS");
     let evidence = V2LeafBindingEvidence {
         credential_identity: did.as_bytes().to_vec(),

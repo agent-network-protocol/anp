@@ -1,8 +1,12 @@
 use anp::authentication::{create_did_wba_document, DidDocumentOptions, DidProfile};
 use anp::proof::{
-    complete_w3c_proof, generate_did_wba_binding, generate_group_receipt_proof, generate_w3c_proof,
-    prepare_w3c_proof, verify_did_wba_binding, verify_group_receipt_proof, verify_w3c_proof,
+    complete_object_proof, complete_rfc9421_origin_proof, complete_w3c_proof,
+    generate_did_wba_binding, generate_group_receipt_proof, generate_object_proof,
+    generate_rfc9421_origin_proof, generate_w3c_proof, prepare_object_proof,
+    prepare_rfc9421_origin_proof, prepare_w3c_proof, verify_did_wba_binding,
+    verify_group_receipt_proof, verify_object_proof, verify_rfc9421_origin_proof, verify_w3c_proof,
     DidWbaBindingVerificationOptions, ProofGenerationOptions, ProofVerificationOptions,
+    Rfc9421OriginProofGenerationOptions, Rfc9421OriginProofVerificationOptions,
     CRYPTOSUITE_EDDSA_JCS_2022, PROOF_TYPE_DATA_INTEGRITY,
 };
 use anp::PrivateKeyMaterial;
@@ -99,6 +103,116 @@ fn test_external_signer_uses_the_same_proof_input_as_the_private_key_api() {
         &public_key,
         ProofVerificationOptions::default(),
     ));
+}
+
+#[test]
+fn test_external_signer_matches_object_proof_private_key_api() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_owned(), "alice".to_owned()],
+            did_profile: DidProfile::E1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID document should be created");
+    let did = bundle.did().expect("DID should exist").to_owned();
+    let verification_method = format!("{did}#key-1");
+    let private_key =
+        PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem).expect("private key");
+    let public_key = private_key.public_key();
+    let document = json!({
+        "type": "anp.test.external-signer.v1",
+        "issuer": did,
+        "payload": {"message": "hello"},
+    });
+    let created = Some("2026-08-21T01:00:00Z".to_owned());
+    let prepared = prepare_object_proof(
+        &document,
+        &public_key,
+        &verification_method,
+        &did,
+        created.clone(),
+    )
+    .expect("object proof should prepare");
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .expect("prepared object proof should sign");
+    let external =
+        complete_object_proof(prepared, &signature).expect("object proof should complete");
+    let direct =
+        generate_object_proof(&document, &private_key, &verification_method, &did, created)
+            .expect("object proof should generate");
+
+    assert_eq!(external, direct);
+    verify_object_proof(&external, &did, &bundle.did_document)
+        .expect("external object proof should verify");
+}
+
+#[test]
+fn test_external_signer_matches_origin_proof_private_key_api() {
+    let bundle = create_did_wba_document(
+        "example.com",
+        DidDocumentOptions {
+            path_segments: vec!["agents".to_owned(), "alice".to_owned()],
+            did_profile: DidProfile::E1,
+            ..DidDocumentOptions::default()
+        },
+    )
+    .expect("DID document should be created");
+    let did = bundle.did().expect("DID should exist").to_owned();
+    let keyid = format!("{did}#key-1");
+    let private_key =
+        PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem).expect("private key");
+    let public_key = private_key.public_key();
+    let meta = json!({
+        "anp_version": "1.0",
+        "profile": "anp.direct.base.v1",
+        "security_profile": "transport-protected",
+        "sender_did": did,
+        "target": {"kind": "agent", "did": "did:wba:example.com:agents:bob:e1_bob"},
+        "operation_id": "op-external-proof",
+        "message_id": "msg-external-proof",
+        "content_type": "text/plain",
+    });
+    let body = json!({"text": "hello"});
+    let options = Rfc9421OriginProofGenerationOptions {
+        created: Some(1_777_000_000),
+        expires: Some(1_777_000_300),
+        nonce: Some("external-proof-nonce".to_owned()),
+        ..Rfc9421OriginProofGenerationOptions::default()
+    };
+    let prepared = prepare_rfc9421_origin_proof(
+        "direct.send",
+        &meta,
+        &body,
+        &public_key,
+        &keyid,
+        options.clone(),
+    )
+    .expect("origin proof should prepare");
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .expect("prepared origin proof should sign");
+    let external =
+        complete_rfc9421_origin_proof(prepared, &signature).expect("origin proof should complete");
+    let direct =
+        generate_rfc9421_origin_proof("direct.send", &meta, &body, &private_key, &keyid, options)
+            .expect("origin proof should generate");
+
+    assert_eq!(external, direct);
+    verify_rfc9421_origin_proof(
+        &external,
+        "direct.send",
+        &meta,
+        &body,
+        Rfc9421OriginProofVerificationOptions {
+            did_document: Some(bundle.did_document),
+            expected_signer_did: Some(did),
+            ..Rfc9421OriginProofVerificationOptions::default()
+        },
+    )
+    .expect("external origin proof should verify");
 }
 
 #[test]

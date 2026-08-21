@@ -28,9 +28,10 @@ pub use v2_aad::{
     parse_group_application_plaintext_v2,
 };
 pub use v2_binding::{
-    ensure_p6_v2_public_release_ready, generate_did_wba_binding_v2,
-    validate_group_key_package_binding_v2, validate_group_required_capabilities_v2,
-    validate_leaf_identity_set_v2, verify_did_wba_binding_v2, V2DidWbaBindingUnsigned,
+    complete_did_wba_binding_v2, ensure_p6_v2_public_release_ready, generate_did_wba_binding_v2,
+    prepare_did_wba_binding_v2, validate_group_key_package_binding_v2,
+    validate_group_required_capabilities_v2, validate_leaf_identity_set_v2,
+    verify_did_wba_binding_v2, PreparedV2DidWbaBinding, V2DidWbaBindingUnsigned,
     V2KeyPackageBindingEvidence, V2LeafBindingEvidence, V2LeafExtension, V2LeafIdentity,
 };
 pub use v2_errors::{

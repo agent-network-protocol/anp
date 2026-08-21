@@ -8,7 +8,10 @@ use anp::direct_e2ee::{
     signed_bundle_object_jcs_v2, V2ApplicationPlaintext, V2DirectBody, V2GetPrekeyBundleBody,
     V2PrekeyBundle, V2PublishPrekeyBundleBody, DIRECT_E2EE_V2_ERRORS,
 };
-use anp::direct_e2ee::{build_prekey_bundle_v2, V2SignedPrekey, MTI_DIRECT_E2EE_SUITE_V2};
+use anp::direct_e2ee::{
+    build_prekey_bundle_v2, complete_prekey_bundle_v2, prepare_prekey_bundle_v2, V2SignedPrekey,
+    MTI_DIRECT_E2EE_SUITE_V2,
+};
 use anp::proof::{
     generate_w3c_proof, ProofGenerationOptions, CRYPTOSUITE_EDDSA_JCS_2022,
     PROOF_TYPE_DATA_INTEGRITY,
@@ -89,6 +92,48 @@ fn shared_signed_bundle_golden_verifies() {
         anp::direct_e2ee::verify_prekey_bundle_v2(&tampered, &golden["did_document"], now,)
             .is_err()
     );
+}
+
+#[test]
+fn external_signer_matches_private_key_prekey_bundle() {
+    let private_key =
+        PrivateKeyMaterial::Ed25519(ed25519_dalek::SigningKey::from_bytes(&[43_u8; 32]));
+    let owner_did = "did:wba:example.com:agents:alice:e1_alice";
+    let verification_method = format!("{owner_did}#device-signing");
+    let signed_prekey = V2SignedPrekey {
+        key_id: "spk-external".to_owned(),
+        public_key_b64u: URL_SAFE_NO_PAD.encode([19_u8; 32]),
+        expires_at: "2026-09-21T00:00:00Z".to_owned(),
+    };
+    let prepared = prepare_prekey_bundle_v2(
+        "bundle-external",
+        owner_did,
+        "device-a",
+        &format!("{owner_did}#device-e2ee"),
+        signed_prekey.clone(),
+        &private_key.public_key(),
+        &verification_method,
+        Some("2026-08-21T00:00:00Z"),
+    )
+    .expect("PreKey bundle should prepare");
+    let signature = private_key
+        .sign_message(prepared.signing_input())
+        .expect("external signer should sign PreKey bundle bytes");
+    let external = complete_prekey_bundle_v2(prepared, &signature)
+        .expect("external PreKey bundle should complete");
+    let direct = build_prekey_bundle_v2(
+        "bundle-external",
+        owner_did,
+        "device-a",
+        &format!("{owner_did}#device-e2ee"),
+        signed_prekey,
+        &private_key,
+        &verification_method,
+        Some("2026-08-21T00:00:00Z"),
+    )
+    .expect("private-key PreKey bundle should build");
+
+    assert_eq!(external, direct);
 }
 
 #[test]
