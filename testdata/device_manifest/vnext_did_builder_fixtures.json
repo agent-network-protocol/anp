@@ -200,6 +200,7 @@
       }
     ],
     "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
       "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
     ],
     "assertionMethod": [
@@ -302,6 +303,7 @@
       }
     ],
     "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
       "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
       "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign"
     ],
@@ -420,6 +422,7 @@
       }
     ],
     "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
       "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign",
       "did:wba:example.com:agents:alice:e1_fixture#dev-b-rotated-sign"
     ],
@@ -516,6 +519,7 @@
       }
     ],
     "authentication": [
+      "did:wba:example.com:agents:alice:e1_fixture#root",
       "did:wba:example.com:agents:alice:e1_fixture#dev-a-sign"
     ],
     "assertionMethod": [

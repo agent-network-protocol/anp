@@ -338,7 +338,7 @@ def build_vnext_did_document(
                 copy.deepcopy(device_signing_verification_method),
                 copy.deepcopy(device_e2ee_verification_method),
             ],
-            "authentication": [device.signing_key_id],
+            "authentication": [root_key_id, device.signing_key_id],
             "assertionMethod": [root_key_id, device.signing_key_id],
             "keyAgreement": [device.e2ee_key_id],
             "deviceManifest": {

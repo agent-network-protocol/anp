@@ -280,7 +280,10 @@ pub fn build_vnext_did_document(
     );
     document.insert(
         "authentication".to_string(),
-        Value::Array(vec![Value::String(device.signing_key_id.clone())]),
+        Value::Array(vec![
+            Value::String(root_key_id.to_string()),
+            Value::String(device.signing_key_id.clone()),
+        ]),
     );
     document.insert(
         "assertionMethod".to_string(),
