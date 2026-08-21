@@ -171,6 +171,7 @@ impl DidDocumentCreationOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DidKeyRole {
     RootControl,
+    DeviceSigning,
     RequestSigning,
     E2eeSigning,
     E2eeAgreement,
@@ -1657,6 +1658,10 @@ fn validate_supplied_key(key: &SuppliedDidKey) -> Result<(), AuthenticationError
             DidVerificationRelationship::Authentication,
             DidVerificationRelationship::AssertionMethod,
         ]),
+        DidKeyRole::DeviceSigning => BTreeSet::from([
+            DidVerificationRelationship::Authentication,
+            DidVerificationRelationship::AssertionMethod,
+        ]),
         DidKeyRole::RequestSigning => BTreeSet::from([DidVerificationRelationship::Authentication]),
         DidKeyRole::E2eeSigning => BTreeSet::from([DidVerificationRelationship::AssertionMethod]),
         DidKeyRole::E2eeAgreement => BTreeSet::from([DidVerificationRelationship::KeyAgreement]),
@@ -1666,7 +1671,10 @@ fn validate_supplied_key(key: &SuppliedDidKey) -> Result<(), AuthenticationError
     }
     match (&key.role, &key.public_key) {
         (
-            DidKeyRole::RootControl | DidKeyRole::RequestSigning | DidKeyRole::E2eeSigning,
+            DidKeyRole::RootControl
+            | DidKeyRole::DeviceSigning
+            | DidKeyRole::RequestSigning
+            | DidKeyRole::E2eeSigning,
             PublicKeyMaterial::Ed25519(_),
         )
         | (DidKeyRole::E2eeAgreement, PublicKeyMaterial::X25519(_)) => Ok(()),
