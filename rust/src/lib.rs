@@ -7,6 +7,7 @@ mod keys;
 
 pub mod authentication;
 pub mod proof;
+pub mod sealed_handoff;
 pub mod wns;
 
 pub const VERSION: &str = "0.9.4";

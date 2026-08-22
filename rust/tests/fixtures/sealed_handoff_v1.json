@@ -1,0 +1,10 @@
+{
+  "suite": "hpke-base-x25519-hkdf-sha256-chacha20poly1305-v1",
+  "recipient_private_key_hex": "df3db7b142563a7021918db3e8291f190b048a2b25b54eb64367ac18e62d0bc8",
+  "recipient_public_key_hex": "f72b8b94bad317aad8c6f73d1b7c52990c391828f3bf958b200a9427761b424d",
+  "encapped_key_hex": "f575f4767982cad9c2378619588ba8e27b0bde04e400440f507eb3a85ceefb34",
+  "ciphertext_hex": "b1ba2eed250b2e97ae0f70f36ef011350d40ce600cf19c9341a53c52c89882fa0ebed095",
+  "info_utf8": "anp.identity.sealed-handoff.v1",
+  "aad_utf8": "provider=fixture;operation=forward",
+  "plaintext_utf8": "private-key-material"
+}
