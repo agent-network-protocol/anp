@@ -30,12 +30,16 @@ pub const IDENTITY_ENROLLMENT_ECDH_OPERATION: &str = "enrollment_ecdh_sealed";
 pub const IDENTITY_ROOT_EXPORT_OPERATION: &str = "export_root_key_sealed";
 /// Legacy Root import operation identifier.
 pub const IDENTITY_ROOT_IMPORT_OPERATION: &str = "import_legacy_root_transfer_sealed";
+/// Legacy identity-material import operation identifier.
+pub const IDENTITY_MATERIAL_IMPORT_OPERATION: &str = "import_identity_material_sealed";
 /// Capability required by both active and enrollment ECDH.
 pub const IDENTITY_ECDH_CAPABILITY: &str = "IDENTITY_ECDH_SEALED";
 /// Capability required by the AWiki legacy Root transfer exception.
 pub const IDENTITY_ROOT_EXPORT_CAPABILITY: &str = "AWIKI_LEGACY_ROOT_TRANSFER_V1";
 /// Capability required by sealed legacy Root import.
 pub const IDENTITY_ROOT_IMPORT_CAPABILITY: &str = IDENTITY_ROOT_EXPORT_CAPABILITY;
+/// Capability required by sealed legacy identity-material import.
+pub const IDENTITY_MATERIAL_IMPORT_CAPABILITY: &str = "IDENTITY_IMPORT";
 /// Maximum secret payload accepted by the handoff helper.
 pub const MAX_SEALED_HANDOFF_PLAINTEXT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -56,7 +60,8 @@ pub struct SealedHandoff {
 }
 
 /// Public identity fields bound into one sealed operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SealedIdentityContext {
     pub store_id: String,
     pub identity_id: String,
@@ -116,6 +121,26 @@ pub struct SealedLegacyRootImportEvidence {
 pub enum SealedPrivateKeyEncoding {
     Raw32,
     Pkcs8Der,
+}
+
+/// Purpose declared for one private key in a sealed identity-material import.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SealedIdentityMaterialKeyPurpose {
+    RootControl,
+    Authentication,
+    DeviceAssertion,
+    ApplicationAssertion,
+    KeyAgreement,
+}
+
+/// Public metadata for one private key in a sealed identity-material import.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SealedIdentityMaterialKeySpec {
+    pub kid: String,
+    pub purpose: SealedIdentityMaterialKeyPurpose,
+    pub encoding: SealedPrivateKeyEncoding,
 }
 
 /// Redacted, stable failures for the sealed handoff boundary.
@@ -329,6 +354,88 @@ pub fn identity_root_import_binding(
         request_id,
         digest,
     ))
+}
+
+/// Builds the shared request binding for a legacy identity-material import.
+#[allow(clippy::too_many_arguments)]
+pub fn identity_material_import_binding(
+    target: &SealedIdentityContext,
+    request_id: &str,
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    did_wba: bool,
+    document_digest: &str,
+    document_version: u64,
+    registry_version: u64,
+    keys: &[SealedIdentityMaterialKeySpec],
+) -> Result<SealedOperationBinding, SealedHandoffError> {
+    validate_operation_context(target, "identity-material", request_id)?;
+    if document_digest.trim().is_empty()
+        || keys.is_empty()
+        || keys.iter().any(|key| key.kid.trim().is_empty())
+    {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    let unique_kids = keys
+        .iter()
+        .map(|key| key.kid.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique_kids.len() != keys.len() {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        protocol: &'static str,
+        operation: &'static str,
+        target: &'a SealedIdentityContext,
+        request_id: &'a str,
+        recipient_public_key_digest: String,
+        did_wba: bool,
+        document_digest: &'a str,
+        document_version: u64,
+        registry_version: u64,
+        keys: &'a [SealedIdentityMaterialKeySpec],
+    }
+    let digest = sealed_operation_digest(&DigestInput {
+        protocol: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: IDENTITY_MATERIAL_IMPORT_OPERATION,
+        target,
+        request_id,
+        recipient_public_key_digest: sealed_recipient_public_key_digest(recipient_public_key),
+        did_wba,
+        document_digest,
+        document_version,
+        registry_version,
+        keys,
+    })?;
+    Ok(operation_binding(
+        IDENTITY_MATERIAL_IMPORT_CAPABILITY,
+        IDENTITY_MATERIAL_IMPORT_OPERATION,
+        target,
+        "",
+        recipient_public_key,
+        request_id,
+        digest,
+    ))
+}
+
+/// Produces the exact AAD for one key in a sealed identity-material import.
+pub fn identity_material_import_item_aad(
+    authorization: &SealedAuthorizationContext,
+    binding: &SealedOperationBinding,
+    target: &SealedIdentityContext,
+    index: usize,
+    kid: &str,
+) -> Result<Vec<u8>, SealedHandoffError> {
+    if binding.operation != IDENTITY_MATERIAL_IMPORT_OPERATION
+        || binding.capability != IDENTITY_MATERIAL_IMPORT_CAPABILITY
+        || kid.trim().is_empty()
+    {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    let mut item_binding = binding.clone();
+    item_binding.kid = kid.to_owned();
+    item_binding.request_id = format!("{}:{index}", binding.request_id);
+    identity_operation_aad(authorization, &item_binding, target)
 }
 
 /// Produces the exact canonical AAD authenticated by a sealed delivery.
@@ -827,6 +934,90 @@ mod tests {
             .unwrap()
             .operation_input_digest,
             binding.operation_input_digest
+        );
+    }
+
+    #[test]
+    fn identity_material_import_contract_binds_keys_and_item_order() {
+        let target = SealedIdentityContext {
+            store_id: "store-1".to_owned(),
+            identity_id: "identity-1".to_owned(),
+            did: "did:wba:example.test:alice".to_owned(),
+        };
+        let keys = vec![
+            SealedIdentityMaterialKeySpec {
+                kid: format!("{}#root", target.did),
+                purpose: SealedIdentityMaterialKeyPurpose::RootControl,
+                encoding: SealedPrivateKeyEncoding::Raw32,
+            },
+            SealedIdentityMaterialKeySpec {
+                kid: format!("{}#device", target.did),
+                purpose: SealedIdentityMaterialKeyPurpose::DeviceAssertion,
+                encoding: SealedPrivateKeyEncoding::Pkcs8Der,
+            },
+        ];
+        let recipient = SealedHandoffRecipient::generate();
+        let binding = identity_material_import_binding(
+            &target,
+            "migration-1",
+            recipient.public_key(),
+            true,
+            "sha256:document",
+            3,
+            4,
+            &keys,
+        )
+        .unwrap();
+        assert_eq!(binding.operation, IDENTITY_MATERIAL_IMPORT_OPERATION);
+        assert_eq!(binding.capability, IDENTITY_MATERIAL_IMPORT_CAPABILITY);
+
+        let authorization = SealedAuthorizationContext {
+            provider_instance_id: "provider-1".to_owned(),
+            parent_lease_id: "lease-1".to_owned(),
+            consumer: "dsh-awiki".to_owned(),
+            capability: IDENTITY_MATERIAL_IMPORT_CAPABILITY.to_owned(),
+            store_id: target.store_id.clone(),
+            expires_at: 2_000_000_000,
+        };
+        let first =
+            identity_material_import_item_aad(&authorization, &binding, &target, 0, &keys[0].kid)
+                .unwrap();
+        let second =
+            identity_material_import_item_aad(&authorization, &binding, &target, 1, &keys[1].kid)
+                .unwrap();
+        assert_ne!(first, second);
+
+        let mut changed = keys.clone();
+        changed[1].purpose = SealedIdentityMaterialKeyPurpose::ApplicationAssertion;
+        assert_ne!(
+            identity_material_import_binding(
+                &target,
+                "migration-1",
+                recipient.public_key(),
+                true,
+                "sha256:document",
+                3,
+                4,
+                &changed,
+            )
+            .unwrap()
+            .operation_input_digest,
+            binding.operation_input_digest
+        );
+        let duplicate = vec![keys[0].clone(), keys[0].clone()];
+        assert_eq!(
+            identity_material_import_binding(
+                &target,
+                "migration-1",
+                recipient.public_key(),
+                true,
+                "sha256:document",
+                3,
+                4,
+                &duplicate,
+            )
+            .unwrap_err(),
+            SealedHandoffError::InvalidContext
         );
     }
 
