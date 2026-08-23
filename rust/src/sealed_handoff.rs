@@ -1,10 +1,14 @@
 //! Fixed-suite HPKE handoff for secrets crossing an untrusted bridge.
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use hpke::{
     aead::ChaCha20Poly1305, kdf::HkdfSha256, kem::X25519HkdfSha256, Deserializable,
     Kem as KemTrait, OpModeR, OpModeS, Serializable,
 };
 use rand09::{rngs::StdRng, CryptoRng, SeedableRng};
+use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -14,6 +18,20 @@ type HandoffAead = ChaCha20Poly1305;
 
 /// Protocol identifier for the only supported handoff suite.
 pub const SEALED_HANDOFF_SUITE: &str = "hpke-base-x25519-hkdf-sha256-chacha20poly1305-v1";
+/// ANP Identity protocol identifier for sealed secret delivery.
+pub const IDENTITY_SEALED_SECRET_PROTOCOL: &str = "anp-sealed-secret/1";
+/// Fixed HPKE info bytes for ANP Identity sealed secret delivery.
+pub const IDENTITY_SEALED_SECRET_INFO: &[u8] = b"anp.identity.sealed-secret.v1";
+/// Active-identity ECDH operation identifier.
+pub const IDENTITY_ECDH_OPERATION: &str = "ecdh_sealed";
+/// Pending-enrollment ECDH operation identifier.
+pub const IDENTITY_ENROLLMENT_ECDH_OPERATION: &str = "enrollment_ecdh_sealed";
+/// User-confirmed legacy Root export operation identifier.
+pub const IDENTITY_ROOT_EXPORT_OPERATION: &str = "export_root_key_sealed";
+/// Capability required by both active and enrollment ECDH.
+pub const IDENTITY_ECDH_CAPABILITY: &str = "IDENTITY_ECDH_SEALED";
+/// Capability required by the AWiki legacy Root transfer exception.
+pub const IDENTITY_ROOT_EXPORT_CAPABILITY: &str = "AWIKI_LEGACY_ROOT_TRANSFER_V1";
 /// Maximum secret payload accepted by the handoff helper.
 pub const MAX_SEALED_HANDOFF_PLAINTEXT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -33,6 +51,37 @@ pub struct SealedHandoff {
     ciphertext: Vec<u8>,
 }
 
+/// Public identity fields bound into one sealed operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedIdentityContext {
+    pub store_id: String,
+    pub identity_id: String,
+    pub did: String,
+}
+
+/// Public authorization fields authenticated by a sealed delivery's AAD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedAuthorizationContext {
+    pub provider_instance_id: String,
+    pub parent_lease_id: String,
+    pub consumer: String,
+    pub capability: String,
+    pub store_id: String,
+    pub expires_at: i64,
+}
+
+/// Canonical request binding shared by the provider and native host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedOperationBinding {
+    pub capability: String,
+    pub identity_id: String,
+    pub operation: String,
+    pub kid: String,
+    pub request_id: String,
+    pub recipient_public_key: [u8; X25519_KEY_BYTES],
+    pub operation_input_digest: String,
+}
+
 /// Redacted, stable failures for the sealed handoff boundary.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SealedHandoffError {
@@ -45,6 +94,257 @@ pub enum SealedHandoffError {
     /// HPKE setup, authentication, or decryption failed.
     #[error("the sealed handoff operation failed")]
     Crypto,
+    /// Required identity, authorization, or operation context is inconsistent.
+    #[error("the sealed handoff context is invalid")]
+    InvalidContext,
+}
+
+/// Builds the shared request binding for active-identity X25519 agreement.
+pub fn identity_ecdh_binding(
+    identity: &SealedIdentityContext,
+    kid: &str,
+    peer_public: &[u8; X25519_KEY_BYTES],
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    request_id: &str,
+) -> Result<SealedOperationBinding, SealedHandoffError> {
+    validate_operation_context(identity, kid, request_id)?;
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        protocol: &'static str,
+        operation: &'static str,
+        store_id: &'a str,
+        identity_id: &'a str,
+        did: &'a str,
+        kid: &'a str,
+        algorithm: &'static str,
+        peer_public_b64u: String,
+        recipient_public_key_digest: String,
+        request_id: &'a str,
+    }
+    let digest = sealed_operation_digest(&DigestInput {
+        protocol: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: IDENTITY_ECDH_OPERATION,
+        store_id: &identity.store_id,
+        identity_id: &identity.identity_id,
+        did: &identity.did,
+        kid,
+        algorithm: "X25519",
+        peer_public_b64u: URL_SAFE_NO_PAD.encode(peer_public),
+        recipient_public_key_digest: sealed_recipient_public_key_digest(recipient_public_key),
+        request_id,
+    })?;
+    Ok(operation_binding(
+        IDENTITY_ECDH_CAPABILITY,
+        IDENTITY_ECDH_OPERATION,
+        identity,
+        kid,
+        recipient_public_key,
+        request_id,
+        digest,
+    ))
+}
+
+/// Builds the shared request binding for pending-enrollment X25519 agreement.
+pub fn identity_enrollment_ecdh_binding(
+    identity: &SealedIdentityContext,
+    enrollment_id: &str,
+    kid: &str,
+    peer_public: &[u8; X25519_KEY_BYTES],
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    request_id: &str,
+) -> Result<SealedOperationBinding, SealedHandoffError> {
+    validate_operation_context(identity, kid, request_id)?;
+    if enrollment_id.trim().is_empty() {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        protocol: &'static str,
+        operation: &'static str,
+        store_id: &'a str,
+        identity_id: &'a str,
+        did: &'a str,
+        enrollment_id: &'a str,
+        kid: &'a str,
+        algorithm: &'static str,
+        peer_public_b64u: String,
+        recipient_public_key_digest: String,
+        request_id: &'a str,
+    }
+    let digest = sealed_operation_digest(&DigestInput {
+        protocol: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: IDENTITY_ENROLLMENT_ECDH_OPERATION,
+        store_id: &identity.store_id,
+        identity_id: &identity.identity_id,
+        did: &identity.did,
+        enrollment_id,
+        kid,
+        algorithm: "X25519",
+        peer_public_b64u: URL_SAFE_NO_PAD.encode(peer_public),
+        recipient_public_key_digest: sealed_recipient_public_key_digest(recipient_public_key),
+        request_id,
+    })?;
+    Ok(operation_binding(
+        IDENTITY_ECDH_CAPABILITY,
+        IDENTITY_ENROLLMENT_ECDH_OPERATION,
+        identity,
+        kid,
+        recipient_public_key,
+        request_id,
+        digest,
+    ))
+}
+
+/// Builds the shared request binding for user-confirmed legacy Root export.
+pub fn identity_root_export_binding(
+    identity: &SealedIdentityContext,
+    kid: &str,
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    request_id: &str,
+    user_presence_confirmed: bool,
+) -> Result<SealedOperationBinding, SealedHandoffError> {
+    validate_operation_context(identity, kid, request_id)?;
+    if !user_presence_confirmed {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        protocol: &'static str,
+        operation: &'static str,
+        store_id: &'a str,
+        identity_id: &'a str,
+        did: &'a str,
+        kid: &'a str,
+        recipient_public_key_digest: String,
+        request_id: &'a str,
+        user_presence_confirmed: bool,
+    }
+    let digest = sealed_operation_digest(&DigestInput {
+        protocol: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: IDENTITY_ROOT_EXPORT_OPERATION,
+        store_id: &identity.store_id,
+        identity_id: &identity.identity_id,
+        did: &identity.did,
+        kid,
+        recipient_public_key_digest: sealed_recipient_public_key_digest(recipient_public_key),
+        request_id,
+        user_presence_confirmed,
+    })?;
+    Ok(operation_binding(
+        IDENTITY_ROOT_EXPORT_CAPABILITY,
+        IDENTITY_ROOT_EXPORT_OPERATION,
+        identity,
+        kid,
+        recipient_public_key,
+        request_id,
+        digest,
+    ))
+}
+
+/// Produces the exact canonical AAD authenticated by a sealed delivery.
+pub fn identity_operation_aad(
+    authorization: &SealedAuthorizationContext,
+    binding: &SealedOperationBinding,
+    identity: &SealedIdentityContext,
+) -> Result<Vec<u8>, SealedHandoffError> {
+    if authorization.store_id != identity.store_id
+        || authorization.capability != binding.capability
+        || binding.identity_id != identity.identity_id
+        || authorization.provider_instance_id.trim().is_empty()
+        || authorization.parent_lease_id.trim().is_empty()
+        || authorization.consumer.trim().is_empty()
+        || authorization.expires_at <= 0
+    {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    #[derive(Serialize)]
+    struct Aad<'a> {
+        protocol_version: &'static str,
+        operation: &'a str,
+        provider_instance_id: &'a str,
+        parent_lease_id: &'a str,
+        consumer: &'a str,
+        capability: &'a str,
+        store_id: &'a str,
+        identity_id: &'a str,
+        kid: &'a str,
+        request_id: &'a str,
+        recipient_public_key_digest: String,
+        canonical_request_digest: &'a str,
+    }
+    serde_json_canonicalizer::to_vec(&Aad {
+        protocol_version: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: &binding.operation,
+        provider_instance_id: &authorization.provider_instance_id,
+        parent_lease_id: &authorization.parent_lease_id,
+        consumer: &authorization.consumer,
+        capability: &authorization.capability,
+        store_id: &identity.store_id,
+        identity_id: &identity.identity_id,
+        kid: &binding.kid,
+        request_id: &binding.request_id,
+        recipient_public_key_digest: sealed_recipient_public_key_digest(
+            &binding.recipient_public_key,
+        ),
+        canonical_request_digest: &binding.operation_input_digest,
+    })
+    .map_err(|_| SealedHandoffError::InvalidContext)
+}
+
+/// Stable digest of an HPKE recipient public key used by operation tokens and AAD.
+pub fn sealed_recipient_public_key_digest(public_key: &[u8; X25519_KEY_BYTES]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"anp.identity.recipient-public-key.v1\0");
+    digest.update(public_key);
+    format!("sha256:{}", URL_SAFE_NO_PAD.encode(digest.finalize()))
+}
+
+fn operation_binding(
+    capability: &str,
+    operation: &str,
+    identity: &SealedIdentityContext,
+    kid: &str,
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    request_id: &str,
+    operation_input_digest: String,
+) -> SealedOperationBinding {
+    SealedOperationBinding {
+        capability: capability.to_owned(),
+        identity_id: identity.identity_id.clone(),
+        operation: operation.to_owned(),
+        kid: kid.to_owned(),
+        request_id: request_id.to_owned(),
+        recipient_public_key: *recipient_public_key,
+        operation_input_digest,
+    }
+}
+
+fn sealed_operation_digest(value: &impl Serialize) -> Result<String, SealedHandoffError> {
+    let canonical =
+        serde_json_canonicalizer::to_vec(value).map_err(|_| SealedHandoffError::InvalidContext)?;
+    let mut digest = Sha256::new();
+    digest.update(b"anp.identity.sealed-operation.v1\0");
+    digest.update(canonical);
+    Ok(format!(
+        "sha256:{}",
+        URL_SAFE_NO_PAD.encode(digest.finalize())
+    ))
+}
+
+fn validate_operation_context(
+    identity: &SealedIdentityContext,
+    kid: &str,
+    request_id: &str,
+) -> Result<(), SealedHandoffError> {
+    if identity.store_id.trim().is_empty()
+        || identity.identity_id.trim().is_empty()
+        || identity.did.trim().is_empty()
+        || kid.trim().is_empty()
+        || request_id.trim().is_empty()
+    {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    Ok(())
 }
 
 impl SealedHandoffRecipient {
@@ -321,6 +621,60 @@ mod tests {
             SealedHandoff::from_parts(&[0; 32], vec![0; 15]),
             Err(SealedHandoffError::Crypto)
         ));
+    }
+
+    #[test]
+    fn identity_operation_contract_binds_request_authorization_and_recipient() {
+        let identity = SealedIdentityContext {
+            store_id: "store-1".to_owned(),
+            identity_id: "identity-1".to_owned(),
+            did: "did:wba:example.test:alice".to_owned(),
+        };
+        let recipient = SealedHandoffRecipient::generate();
+        let binding = identity_ecdh_binding(
+            &identity,
+            "did:wba:example.test:alice#agreement",
+            &[0x31; 32],
+            recipient.public_key(),
+            "request-1",
+        )
+        .unwrap();
+        let authorization = SealedAuthorizationContext {
+            provider_instance_id: "provider-1".to_owned(),
+            parent_lease_id: "lease-1".to_owned(),
+            consumer: "dsh-awiki".to_owned(),
+            capability: IDENTITY_ECDH_CAPABILITY.to_owned(),
+            store_id: identity.store_id.clone(),
+            expires_at: 2_000_000_000,
+        };
+        let aad = identity_operation_aad(&authorization, &binding, &identity).unwrap();
+        let sealed = SealedHandoff::seal(
+            recipient.public_key(),
+            IDENTITY_SEALED_SECRET_INFO,
+            &aad,
+            &[0x42; 32],
+        )
+        .unwrap();
+        assert_eq!(
+            recipient
+                .open(&sealed, IDENTITY_SEALED_SECRET_INFO, &aad)
+                .unwrap()
+                .as_slice(),
+            &[0x42; 32]
+        );
+
+        let mut changed = binding.clone();
+        changed.request_id = "request-2".to_owned();
+        assert_ne!(
+            identity_operation_aad(&authorization, &changed, &identity).unwrap(),
+            aad
+        );
+        let mut wrong_capability = authorization;
+        wrong_capability.capability = IDENTITY_ROOT_EXPORT_CAPABILITY.to_owned();
+        assert_eq!(
+            identity_operation_aad(&wrong_capability, &binding, &identity).unwrap_err(),
+            SealedHandoffError::InvalidContext
+        );
     }
 
     fn encode_hex(bytes: &[u8]) -> String {
