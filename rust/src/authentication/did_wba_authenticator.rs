@@ -316,7 +316,7 @@ fn normalize_covered_components(
     body: Option<&[u8]>,
 ) -> Option<Vec<String>> {
     let covered_components = covered_components?;
-    let body_present = body.map(|bytes| !bytes.is_empty()).unwrap_or(false);
+    let body_present = body.is_some();
     let normalized_headers = headers
         .cloned()
         .unwrap_or_default()

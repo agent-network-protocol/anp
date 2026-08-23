@@ -695,6 +695,34 @@ fn test_http_signature_explicit_kid_and_relationship_authorization() {
 }
 
 #[test]
+fn test_http_signature_binds_an_explicitly_empty_body() {
+    let bundle = create_did_wba_document("example.com", DidDocumentOptions::default())
+        .expect("DID creation should succeed");
+    let private_key = anp::PrivateKeyMaterial::from_pem(&bundle.keys["key-1"].private_key_pem)
+        .expect("private key should load");
+    let headers = generate_http_signature_headers(
+        &bundle.did_document,
+        "https://api.example.com/empty",
+        "POST",
+        &private_key,
+        None,
+        Some(&[]),
+        Default::default(),
+    )
+    .expect("an explicitly empty body should be signed");
+
+    assert!(headers.contains_key("Content-Digest"));
+    verify_http_message_signature(
+        &bundle.did_document,
+        "POST",
+        "https://api.example.com/empty",
+        &headers,
+        Some(&[]),
+    )
+    .expect("an explicitly empty body should verify");
+}
+
+#[test]
 fn test_legacy_auth_header_empty_version_defaults_to_1_1() {
     let bundle = create_did_wba_document(
         "example.com",

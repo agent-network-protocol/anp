@@ -180,9 +180,10 @@ pub fn prepare_http_signature_headers(
         ]
     });
     let mut headers_to_sign = headers.cloned().unwrap_or_default();
+    let body_present = body.is_some();
     let body_bytes = body.unwrap_or_default();
     let mut covered = components.clone();
-    if !body_bytes.is_empty() {
+    if body_present {
         headers_to_sign
             .entry("Content-Digest".to_string())
             .or_insert_with(|| build_content_digest(body_bytes));
