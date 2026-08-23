@@ -7,7 +7,7 @@ use hpke::{
     Kem as KemTrait, OpModeR, OpModeS, Serializable,
 };
 use rand09::{rngs::StdRng, CryptoRng, SeedableRng};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -28,10 +28,14 @@ pub const IDENTITY_ECDH_OPERATION: &str = "ecdh_sealed";
 pub const IDENTITY_ENROLLMENT_ECDH_OPERATION: &str = "enrollment_ecdh_sealed";
 /// User-confirmed legacy Root export operation identifier.
 pub const IDENTITY_ROOT_EXPORT_OPERATION: &str = "export_root_key_sealed";
+/// Legacy Root import operation identifier.
+pub const IDENTITY_ROOT_IMPORT_OPERATION: &str = "import_legacy_root_transfer_sealed";
 /// Capability required by both active and enrollment ECDH.
 pub const IDENTITY_ECDH_CAPABILITY: &str = "IDENTITY_ECDH_SEALED";
 /// Capability required by the AWiki legacy Root transfer exception.
 pub const IDENTITY_ROOT_EXPORT_CAPABILITY: &str = "AWIKI_LEGACY_ROOT_TRANSFER_V1";
+/// Capability required by sealed legacy Root import.
+pub const IDENTITY_ROOT_IMPORT_CAPABILITY: &str = IDENTITY_ROOT_EXPORT_CAPABILITY;
 /// Maximum secret payload accepted by the handoff helper.
 pub const MAX_SEALED_HANDOFF_PLAINTEXT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -80,6 +84,38 @@ pub struct SealedOperationBinding {
     pub request_id: String,
     pub recipient_public_key: [u8; X25519_KEY_BYTES],
     pub operation_input_digest: String,
+}
+
+/// Public checkpoint fields bound into a legacy Root import authorization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SealedDocumentCheckpoint {
+    pub document_version: u64,
+    pub registry_version: u64,
+    pub document_digest: String,
+}
+
+/// Public transfer evidence bound into a legacy Root import authorization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SealedLegacyRootImportEvidence {
+    pub transfer_id: String,
+    pub source_did: String,
+    pub target_did: String,
+    pub sender_device_id: String,
+    pub recipient_device_id: String,
+    pub recipient_agreement_kid: String,
+    pub root_kid: String,
+    pub checkpoint: SealedDocumentCheckpoint,
+    pub accepted_at: String,
+}
+
+/// Private-key encoding declared by a sealed import request.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SealedPrivateKeyEncoding {
+    Raw32,
+    Pkcs8Der,
 }
 
 /// Redacted, stable failures for the sealed handoff boundary.
@@ -235,6 +271,60 @@ pub fn identity_root_export_binding(
         IDENTITY_ROOT_EXPORT_OPERATION,
         identity,
         kid,
+        recipient_public_key,
+        request_id,
+        digest,
+    ))
+}
+
+/// Builds the shared request binding for legacy Root import.
+pub fn identity_root_import_binding(
+    identity: &SealedIdentityContext,
+    evidence: &SealedLegacyRootImportEvidence,
+    encoding: SealedPrivateKeyEncoding,
+    recipient_public_key: &[u8; X25519_KEY_BYTES],
+    request_id: &str,
+) -> Result<SealedOperationBinding, SealedHandoffError> {
+    validate_operation_context(identity, &evidence.root_kid, request_id)?;
+    if evidence.target_did != identity.did
+        || evidence.transfer_id.trim().is_empty()
+        || evidence.source_did.trim().is_empty()
+        || evidence.sender_device_id.trim().is_empty()
+        || evidence.recipient_device_id.trim().is_empty()
+        || evidence.recipient_agreement_kid.trim().is_empty()
+        || evidence.checkpoint.document_digest.trim().is_empty()
+        || evidence.accepted_at.trim().is_empty()
+    {
+        return Err(SealedHandoffError::InvalidContext);
+    }
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        protocol: &'static str,
+        operation: &'static str,
+        store_id: &'a str,
+        identity_id: &'a str,
+        did: &'a str,
+        request_id: &'a str,
+        recipient_public_key_digest: String,
+        encoding: SealedPrivateKeyEncoding,
+        evidence: &'a SealedLegacyRootImportEvidence,
+    }
+    let digest = sealed_operation_digest(&DigestInput {
+        protocol: IDENTITY_SEALED_SECRET_PROTOCOL,
+        operation: IDENTITY_ROOT_IMPORT_OPERATION,
+        store_id: &identity.store_id,
+        identity_id: &identity.identity_id,
+        did: &identity.did,
+        request_id,
+        recipient_public_key_digest: sealed_recipient_public_key_digest(recipient_public_key),
+        encoding,
+        evidence,
+    })?;
+    Ok(operation_binding(
+        IDENTITY_ROOT_IMPORT_CAPABILITY,
+        IDENTITY_ROOT_IMPORT_OPERATION,
+        identity,
+        &evidence.root_kid,
         recipient_public_key,
         request_id,
         digest,
@@ -674,6 +764,69 @@ mod tests {
         assert_eq!(
             identity_operation_aad(&wrong_capability, &binding, &identity).unwrap_err(),
             SealedHandoffError::InvalidContext
+        );
+    }
+
+    #[test]
+    fn legacy_root_import_contract_binds_transfer_evidence_and_recipient() {
+        let identity = SealedIdentityContext {
+            store_id: "store-1".to_owned(),
+            identity_id: "identity-1".to_owned(),
+            did: "did:wba:example.test:alice".to_owned(),
+        };
+        let evidence = SealedLegacyRootImportEvidence {
+            transfer_id: "transfer-1".to_owned(),
+            source_did: identity.did.clone(),
+            target_did: identity.did.clone(),
+            sender_device_id: "sender-1".to_owned(),
+            recipient_device_id: "recipient-1".to_owned(),
+            recipient_agreement_kid: format!("{}#agreement", identity.did),
+            root_kid: format!("{}#root", identity.did),
+            checkpoint: SealedDocumentCheckpoint {
+                document_version: 3,
+                registry_version: 4,
+                document_digest: "sha256:document".to_owned(),
+            },
+            accepted_at: "2026-08-23T00:00:00Z".to_owned(),
+        };
+        let recipient = SealedHandoffRecipient::generate();
+        let binding = identity_root_import_binding(
+            &identity,
+            &evidence,
+            SealedPrivateKeyEncoding::Pkcs8Der,
+            recipient.public_key(),
+            &evidence.transfer_id,
+        )
+        .unwrap();
+        assert_eq!(binding.operation, IDENTITY_ROOT_IMPORT_OPERATION);
+        assert_eq!(binding.capability, IDENTITY_ROOT_IMPORT_CAPABILITY);
+
+        let mut changed = evidence.clone();
+        changed.checkpoint.registry_version += 1;
+        assert_ne!(
+            identity_root_import_binding(
+                &identity,
+                &changed,
+                SealedPrivateKeyEncoding::Pkcs8Der,
+                recipient.public_key(),
+                &evidence.transfer_id,
+            )
+            .unwrap()
+            .operation_input_digest,
+            binding.operation_input_digest
+        );
+        let other_recipient = SealedHandoffRecipient::generate();
+        assert_ne!(
+            identity_root_import_binding(
+                &identity,
+                &evidence,
+                SealedPrivateKeyEncoding::Pkcs8Der,
+                other_recipient.public_key(),
+                &evidence.transfer_id,
+            )
+            .unwrap()
+            .operation_input_digest,
+            binding.operation_input_digest
         );
     }
 
