@@ -127,6 +127,10 @@ impl InMemoryTransitionCache {
     pub fn new(edges: HashMap<String, String>) -> Self {
         Self { edges }
     }
+
+    pub fn snapshot(&self) -> HashMap<String, String> {
+        self.edges.clone()
+    }
 }
 
 impl TransitionCache for InMemoryTransitionCache {
@@ -538,6 +542,7 @@ pub fn resolve_current_did(
     let mut current = requested_did.to_string();
     let mut visited = HashSet::new();
     let mut hops = Vec::new();
+    let mut verified_edges: Vec<(String, String)> = Vec::new();
     loop {
         if !visited.insert(current.clone()) {
             return Err(DidTransitionError::new(
@@ -551,6 +556,14 @@ pub fn resolve_current_did(
         require_document_id(&current, &document)?;
         if document.get("deactivated").and_then(Value::as_bool) != Some(true) {
             verify_active_e1_document(&current, &document)?;
+            for (predecessor_did, successor_did) in &verified_edges {
+                if !cache.compare_and_set(predecessor_did, successor_did) {
+                    return Err(DidTransitionError::new(
+                        TransitionErrorKind::Conflict,
+                        "a different successor is already cached for predecessor",
+                    ));
+                }
+            }
             let assurance = hops
                 .iter()
                 .map(|hop: &TransitionHop| hop.assurance)
@@ -597,11 +610,20 @@ pub fn resolve_current_did(
             trusted_documents.get(&current),
             provider_fetcher,
         )?;
-        if !cache.compare_and_set(&current, successor_did) {
+        if cache
+            .get_successor(&current)
+            .is_some_and(|cached| cached != successor_did)
+        {
             return Err(DidTransitionError::new(
                 TransitionErrorKind::Conflict,
                 "a different successor is already cached for predecessor",
             ));
+        }
+        if matches!(
+            hop.assurance,
+            TransitionAssurance::Verified | TransitionAssurance::RecoveryVerified
+        ) {
+            verified_edges.push((current.clone(), successor_did.to_string()));
         }
         hops.push(hop);
         current = successor_did.to_string();

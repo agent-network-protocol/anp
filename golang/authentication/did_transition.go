@@ -119,6 +119,14 @@ func (c *InMemoryTransitionCache) CompareAndSet(predecessorDID string, successor
 	return true
 }
 
+func (c *InMemoryTransitionCache) Snapshot() map[string]string {
+	copyEdges := make(map[string]string, len(c.edges))
+	for predecessor, successor := range c.edges {
+		copyEdges[predecessor] = successor
+	}
+	return copyEdges
+}
+
 var e1SegmentPattern = regexp.MustCompile(`^e1_[A-Za-z0-9_-]{43}$`)
 
 func ParseDidWbaE1(did string) (DidWbaE1Profile, error) {
@@ -373,9 +381,13 @@ func ResolveCurrentDID(
 	if maxHops < 1 {
 		return TransitionResult{}, newTransitionError(TransitionErrorMaxHopsExceeded, "maxHops must be positive")
 	}
+	if cache == nil {
+		cache = NewInMemoryTransitionCache(nil)
+	}
 	current := requestedDID
 	visited := make(map[string]bool)
 	hops := make([]TransitionHop, 0)
+	verifiedEdges := make([][2]string, 0)
 	for {
 		if visited[current] {
 			return TransitionResult{}, newTransitionError(TransitionErrorCycle, "transition chain contains a cycle")
@@ -392,6 +404,11 @@ func ResolveCurrentDID(
 		if !deactivated {
 			if err := VerifyActiveE1Document(current, document); err != nil {
 				return TransitionResult{}, err
+			}
+			for _, edge := range verifiedEdges {
+				if !cache.CompareAndSet(edge[0], edge[1]) {
+					return TransitionResult{}, newTransitionError(TransitionErrorConflict, "a different successor is already cached for predecessor")
+				}
 			}
 			var assurance *TransitionAssurance
 			for _, hop := range hops {
@@ -424,8 +441,11 @@ func ResolveCurrentDID(
 		if verifyErr != nil {
 			return TransitionResult{}, verifyErr
 		}
-		if !cache.CompareAndSet(current, successorDID) {
+		if cachedSuccessor, ok := cache.GetSuccessor(current); ok && cachedSuccessor != successorDID {
 			return TransitionResult{}, newTransitionError(TransitionErrorConflict, "a different successor is already cached for predecessor")
+		}
+		if hop.Assurance == TransitionAssuranceVerified || hop.Assurance == TransitionAssuranceRecoveryVerified {
+			verifiedEdges = append(verifiedEdges, [2]string{current, successorDID})
 		}
 		hops = append(hops, hop)
 		current = successorDID

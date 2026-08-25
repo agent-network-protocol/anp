@@ -127,6 +127,9 @@ class InMemoryTransitionCache:
         self._edges[predecessor_did] = successor_did
         return True
 
+    def snapshot(self) -> Dict[str, str]:
+        return dict(self._edges)
+
 
 DocumentFetcher = Callable[[str], Dict[str, Any]]
 
@@ -392,13 +395,15 @@ def resolve_current_did(
     parse_did_wba_e1(requested_did)
     if max_hops < 1:
         raise DidTransitionError(TransitionErrorKind.MAX_HOPS_EXCEEDED, "max_hops must be positive")
-    cache = cache or InMemoryTransitionCache()
+    if cache is None:
+        cache = InMemoryTransitionCache()
     trusted = dict(trusted_documents or {})
     if trusted_predecessor is not None:
         trusted[requested_did] = trusted_predecessor
     current = requested_did
     visited: set[str] = set()
     hops: list[TransitionHop] = []
+    verified_edges: list[tuple[str, str]] = []
 
     while True:
         if current in visited:
@@ -413,6 +418,12 @@ def resolve_current_did(
         _require_document_id(current, document)
         if document.get("deactivated") is not True:
             verify_active_e1_document(current, document)
+            for predecessor_did, successor_did in verified_edges:
+                if not cache.compare_and_set(predecessor_did, successor_did):
+                    raise DidTransitionError(
+                        TransitionErrorKind.CONFLICT,
+                        "a different successor is already cached for predecessor",
+                    )
             assurance = (
                 max((hop.assurance for hop in hops), key=_ASSURANCE_RANK.get)
                 if hops
@@ -440,6 +451,8 @@ def resolve_current_did(
             raise DidTransitionError(TransitionErrorKind.CYCLE, "transition chain contains a cycle")
         try:
             successor_document = fetcher(successor_did)
+        except DidTransitionError:
+            raise
         except Exception as exc:
             raise DidTransitionError(TransitionErrorKind.NETWORK_ERROR, str(exc)) from exc
         hop = verify_transition_hop(
@@ -448,10 +461,16 @@ def resolve_current_did(
             trusted_predecessor=trusted.get(current),
             provider_fetcher=provider_fetcher,
         )
-        if not cache.compare_and_set(current, successor_did):
+        cached_successor = cache.get_successor(current)
+        if cached_successor is not None and cached_successor != successor_did:
             raise DidTransitionError(
                 TransitionErrorKind.CONFLICT,
                 "a different successor is already cached for predecessor",
             )
+        if hop.assurance in {
+            TransitionAssurance.VERIFIED,
+            TransitionAssurance.RECOVERY_VERIFIED,
+        }:
+            verified_edges.append((current, successor_did))
         hops.append(hop)
         current = successor_did

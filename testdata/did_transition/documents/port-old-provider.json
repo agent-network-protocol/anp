@@ -1,0 +1,40 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "publicKeyMultibase": "z6MkjMyVo8okLyPDSTYmFtHBweFL39WahJU7PKPZohAgPao5"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1"
+  ],
+  "deactivated": true,
+  "successorDid": "did:wba:example.com%3A8443:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+  "providerTransitionAssertion": {
+    "type": "DidWbaProviderTransitionAssertion",
+    "providerDid": "did:wba:example.com%3A8443",
+    "predecessorDid": "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+    "successorDid": "did:wba:example.com%3A8443:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+    "stableSubjectPath": "example.com%3A8443:users:alice",
+    "issuedAt": "2026-08-25T00:00:00Z",
+    "proof": {
+      "type": "DataIntegrityProof",
+      "created": "2026-08-25T00:00:00Z",
+      "verificationMethod": "did:wba:example.com%3A8443#provider-assertion-key",
+      "proofPurpose": "assertionMethod",
+      "cryptosuite": "eddsa-jcs-2022",
+      "proofValue": "ojFUqOBcNlob8KvUZzYhLKUiB6N2V8Ulb_aPLnBiMttH-viHxkdpwIZ9GlZFMsZFII9QEGx0BIer3K2n5xBODw"
+    }
+  }
+}

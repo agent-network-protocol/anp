@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "suite": "anp-did-transition-v1",
   "generatedAt": "2026-08-25T00:00:00Z",
   "vectorFile": "transition_vectors.json",
-  "vectorSha256": "bc6f0dd8531dddab23feab39b024bd733e7e114f783fe59b95ac6bddb55451bc",
-  "caseCount": 20,
+  "vectorSha256": "1b7dc3b96e247b9eab3125cf528ca7751fa8c739ffe8deed94628981f532cba9",
+  "caseCount": 26,
   "privateKeyPolicy": "No private keys in fixtures; deterministic test-only seeds exist only in tools/generate_did_transition_vectors.py."
 }

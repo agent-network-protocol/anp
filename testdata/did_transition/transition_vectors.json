@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "cases": [
     {
       "id": "active-e1-valid",
@@ -80,6 +80,9 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k"
+      },
       "maxHops": 8,
       "expected": {
         "status": "superseded",
@@ -103,6 +106,9 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k"
+      },
       "maxHops": 8,
       "expected": {
         "status": "superseded",
@@ -126,6 +132,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "error": "recovery_not_preauthorized",
@@ -147,10 +154,125 @@
         "did:wba:example.com": "documents/provider.json"
       },
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "status": "superseded",
         "currentDid": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+        "hops": [
+          "provider_asserted"
+        ],
+        "assurance": "provider_asserted"
+      }
+    },
+    {
+      "id": "provider-assertion-bad-signature",
+      "operation": "resolve",
+      "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-provider-bad-signature.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
+      },
+      "providerDocuments": {
+        "did:wba:example.com": "documents/provider.json"
+      },
+      "cacheEdges": {},
+      "expectedCacheEdges": {},
+      "maxHops": 8,
+      "expected": {
+        "error": "invalid_provider_assertion",
+        "code": 1020
+      }
+    },
+    {
+      "id": "provider-assertion-extra-field",
+      "operation": "resolve",
+      "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-provider-extra-field.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
+      },
+      "providerDocuments": {
+        "did:wba:example.com": "documents/provider.json"
+      },
+      "cacheEdges": {},
+      "expectedCacheEdges": {},
+      "maxHops": 8,
+      "expected": {
+        "error": "invalid_provider_assertion",
+        "code": 1020
+      }
+    },
+    {
+      "id": "provider-assertion-cross-origin",
+      "operation": "resolve",
+      "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-provider-cross-origin.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
+      },
+      "providerDocuments": {
+        "did:wba:example.com": "documents/provider.json"
+      },
+      "cacheEdges": {},
+      "expectedCacheEdges": {},
+      "maxHops": 8,
+      "expected": {
+        "error": "invalid_provider_assertion",
+        "code": 1020
+      }
+    },
+    {
+      "id": "invalid-binding-proof-not-downgraded",
+      "operation": "resolve",
+      "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-provider-bad-binding-proof.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
+      },
+      "providerDocuments": {
+        "did:wba:example.com": "documents/provider.json"
+      },
+      "cacheEdges": {},
+      "expectedCacheEdges": {},
+      "maxHops": 8,
+      "expected": {
+        "error": "invalid_proof",
+        "code": 1020
+      }
+    },
+    {
+      "id": "provider-asserted-explicit-port",
+      "operation": "resolve",
+      "requestedDid": "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/port-old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com%3A8443:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/port-old-provider.json",
+        "did:wba:example.com%3A8443:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/port-new-active.json"
+      },
+      "providerDocuments": {
+        "did:wba:example.com%3A8443": "documents/port-provider.json"
+      },
+      "cacheEdges": {},
+      "expectedCacheEdges": {},
+      "maxHops": 8,
+      "expected": {
+        "status": "superseded",
+        "currentDid": "did:wba:example.com%3A8443:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
         "hops": [
           "provider_asserted"
         ],
@@ -170,6 +292,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "status": "superseded",
@@ -178,6 +301,36 @@
           "unverified"
         ],
         "assurance": "unverified"
+      }
+    },
+    {
+      "id": "unverified-cache-does-not-block-verified",
+      "operation": "resolve_after_unverified",
+      "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "trustedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
+      },
+      "resolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-verified.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
+      },
+      "providerDocuments": {},
+      "cacheEdges": {},
+      "expectedCacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k"
+      },
+      "maxHops": 8,
+      "expected": {
+        "status": "superseded",
+        "currentDid": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+        "hops": [
+          "verified"
+        ],
+        "assurance": "verified"
+      },
+      "preludeResolvedDocuments": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-unverified.json",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "documents/new-active.json"
       }
     },
     {
@@ -195,6 +348,10 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+        "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k": "did:wba:example.com:users:alice:e1_7fBCItlva6Lxhzj3kWurxcxg8HOEo2-ha1MVEkXcRBs"
+      },
       "maxHops": 8,
       "expected": {
         "status": "superseded",
@@ -219,6 +376,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "error": "stable_path_mismatch",
@@ -238,6 +396,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "error": "direct_successor_required",
@@ -257,6 +416,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 8,
       "expected": {
         "error": "cycle",
@@ -276,6 +436,9 @@
       },
       "providerDocuments": {},
       "cacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_7fBCItlva6Lxhzj3kWurxcxg8HOEo2-ha1MVEkXcRBs"
+      },
+      "expectedCacheEdges": {
         "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_7fBCItlva6Lxhzj3kWurxcxg8HOEo2-ha1MVEkXcRBs"
       },
       "maxHops": 8,
@@ -299,6 +462,7 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {},
       "maxHops": 1,
       "expected": {
         "error": "max_hops_exceeded",
@@ -307,7 +471,7 @@
     },
     {
       "id": "tampered-409-hint-ignored",
-      "operation": "resolve",
+      "operation": "resolve_ignoring_hint",
       "requestedDid": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
       "trustedDocuments": {
         "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "documents/old-trusted.json"
@@ -318,6 +482,9 @@
       },
       "providerDocuments": {},
       "cacheEdges": {},
+      "expectedCacheEdges": {
+        "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k"
+      },
       "maxHops": 8,
       "expected": {
         "status": "superseded",

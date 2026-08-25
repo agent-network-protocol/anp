@@ -32,8 +32,13 @@ struct VectorCase {
     requested_did: String,
     trusted_documents: HashMap<String, String>,
     resolved_documents: HashMap<String, String>,
+    #[serde(default)]
+    prelude_resolved_documents: HashMap<String, String>,
     provider_documents: HashMap<String, String>,
     cache_edges: HashMap<String, String>,
+    #[serde(default)]
+    expected_cache_edges: HashMap<String, String>,
+    untrusted_current_did_hint: Option<String>,
     max_hops: usize,
     expected: Value,
 }
@@ -75,6 +80,11 @@ fn did_transition_shared_vectors() {
             .iter()
             .map(|(did, path)| (did.clone(), load_document(&root, path)))
             .collect();
+        let prelude_resolved: HashMap<String, Value> = case
+            .prelude_resolved_documents
+            .iter()
+            .map(|(did, path)| (did.clone(), load_document(&root, path)))
+            .collect();
         let providers: HashMap<String, Value> = case
             .provider_documents
             .iter()
@@ -92,6 +102,7 @@ fn did_transition_shared_vectors() {
                 .cloned()
                 .ok_or_else(|| format!("missing provider document {did}"))
         };
+        let mut cache = InMemoryTransitionCache::new(case.cache_edges.clone());
         let outcome = match case.operation.as_str() {
             "parse" => parse_did_wba_e1(&case.requested_did).map(|_| Value::Null),
             "verify_active" => {
@@ -105,8 +116,32 @@ fn did_transition_shared_vectors() {
                     })
                 })
             }
-            "resolve" => {
-                let mut cache = InMemoryTransitionCache::new(case.cache_edges);
+            "resolve" | "resolve_ignoring_hint" | "resolve_after_unverified" => {
+                if case.operation == "resolve_ignoring_hint" {
+                    assert!(case.untrusted_current_did_hint.is_some());
+                }
+                if case.operation == "resolve_after_unverified" {
+                    let prelude_fetch = |did: &str| {
+                        prelude_resolved
+                            .get(did)
+                            .cloned()
+                            .ok_or_else(|| format!("missing prelude document {did}"))
+                    };
+                    let prelude_result = resolve_current_did(
+                        &case.requested_did,
+                        &prelude_fetch,
+                        &trusted,
+                        None,
+                        &mut cache,
+                        case.max_hops,
+                    )
+                    .expect("unverified prelude resolves");
+                    assert_eq!(
+                        prelude_result.assurance,
+                        Some(anp::authentication::TransitionAssurance::Unverified)
+                    );
+                    assert_eq!(cache.snapshot(), case.cache_edges);
+                }
                 resolve_current_did(
                     &case.requested_did,
                     &fetch,
@@ -134,6 +169,14 @@ fn did_transition_shared_vectors() {
                 "case {}: {error}",
                 case.id
             ),
+        }
+        if case.operation.starts_with("resolve") {
+            assert_eq!(
+                cache.snapshot(),
+                case.expected_cache_edges,
+                "case {} cache",
+                case.id
+            );
         }
     }
 }

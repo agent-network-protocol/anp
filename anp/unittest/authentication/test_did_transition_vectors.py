@@ -7,6 +7,7 @@ import pytest
 from anp.authentication import (
     DidTransitionError,
     InMemoryTransitionCache,
+    TransitionErrorKind,
     parse_did_wba_e1,
     resolve_current_did,
     verify_active_e1_document,
@@ -45,6 +46,7 @@ def test_did_transition_vector(case):
         return providers[did]
 
     expected = case["expected"]
+    cache = InMemoryTransitionCache(case["cacheEdges"])
     try:
         if case["operation"] == "parse":
             parse_did_wba_e1(case["requestedDid"])
@@ -57,13 +59,33 @@ def test_did_transition_vector(case):
                 "hops": [],
                 "assurance": None,
             }
-        else:
+        elif case["operation"] in {
+            "resolve",
+            "resolve_ignoring_hint",
+            "resolve_after_unverified",
+        }:
+            if case["operation"] == "resolve_ignoring_hint":
+                assert case["untrustedCurrentDidHint"]
+            if case["operation"] == "resolve_after_unverified":
+                prelude = {
+                    did: load_json(path)
+                    for did, path in case["preludeResolvedDocuments"].items()
+                }
+                prelude_result = resolve_current_did(
+                    case["requestedDid"],
+                    lambda did: prelude[did],
+                    trusted_documents=trusted,
+                    cache=cache,
+                    max_hops=case["maxHops"],
+                )
+                assert prelude_result.assurance.value == "unverified"
+                assert cache.snapshot() == case["cacheEdges"]
             transition = resolve_current_did(
                 case["requestedDid"],
                 fetcher,
                 trusted_documents=trusted,
                 provider_fetcher=provider_fetcher,
-                cache=InMemoryTransitionCache(case["cacheEdges"]),
+                cache=cache,
                 max_hops=case["maxHops"],
             )
             result = {
@@ -72,7 +94,25 @@ def test_did_transition_vector(case):
                 "hops": [hop.assurance.value for hop in transition.hops],
                 "assurance": transition.assurance.value if transition.assurance else None,
             }
+        else:
+            raise AssertionError(f"unknown operation {case['operation']}")
     except DidTransitionError as exc:
         assert expected == {"error": exc.kind.value, "code": exc.code}
     else:
         assert result == expected
+    if case["operation"].startswith("resolve"):
+        assert cache.snapshot() == case["expectedCacheEdges"]
+
+
+def test_successor_fetch_preserves_transition_error_kind():
+    predecessor = load_json("documents/old-verified.json")
+
+    def fetcher(did):
+        if did == predecessor["id"]:
+            return predecessor
+        raise DidTransitionError(TransitionErrorKind.INVALID_DOCUMENT, "typed fetch failure")
+
+    with pytest.raises(DidTransitionError) as exc_info:
+        resolve_current_did(predecessor["id"], fetcher)
+
+    assert exc_info.value.kind is TransitionErrorKind.INVALID_DOCUMENT
