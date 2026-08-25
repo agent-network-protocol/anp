@@ -1,5 +1,6 @@
 pub mod device_manifest;
 pub mod did_resolver;
+pub mod did_transition;
 pub mod did_wba;
 pub mod did_wba_authenticator;
 pub mod did_wba_verifier;
@@ -17,6 +18,13 @@ pub use device_manifest::{
 };
 pub use did_resolver::{
     resolve_did_document, resolve_did_document_sync, resolve_did_document_with_options,
+};
+pub use did_transition::{
+    parse_did_wba_e1, resolve_current_did, verify_active_e1_document, verify_transition_hop,
+    DidDocumentFetcher, DidTransitionError, DidWbaE1Profile, InMemoryTransitionCache,
+    TransitionAssurance, TransitionCache, TransitionErrorKind, TransitionHop, TransitionResult,
+    TransitionStatus, ANP_DID_SUPERSEDED, ANP_DID_TRANSITION_CONFLICT, ANP_DID_TRANSITION_INVALID,
+    DEFAULT_MAX_TRANSITION_HOPS,
 };
 #[allow(deprecated)]
 pub use did_wba::{

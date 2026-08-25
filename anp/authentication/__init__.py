@@ -19,6 +19,24 @@ from .did_wba import (
     verify_did_key_binding,
 )
 from .did_resolver import resolve_did_document, resolve_did_document_sync
+from .did_transition import (
+    ANP_DID_SUPERSEDED,
+    ANP_DID_TRANSITION_CONFLICT,
+    ANP_DID_TRANSITION_INVALID,
+    DEFAULT_MAX_TRANSITION_HOPS,
+    DidTransitionError,
+    DidWbaE1Profile,
+    InMemoryTransitionCache,
+    TransitionAssurance,
+    TransitionErrorKind,
+    TransitionHop,
+    TransitionResult,
+    TransitionStatus,
+    parse_did_wba_e1,
+    resolve_current_did,
+    verify_active_e1_document,
+    verify_transition_hop,
+)
 from .did_wba_authenticator import DIDWbaAuthHeader
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
 from .device_manifest import (
@@ -72,6 +90,22 @@ __all__ = [
     "resolve_did_wba_document_sync",
     "resolve_did_document",
     "resolve_did_document_sync",
+    "ANP_DID_SUPERSEDED",
+    "ANP_DID_TRANSITION_INVALID",
+    "ANP_DID_TRANSITION_CONFLICT",
+    "DEFAULT_MAX_TRANSITION_HOPS",
+    "DidTransitionError",
+    "DidWbaE1Profile",
+    "InMemoryTransitionCache",
+    "TransitionAssurance",
+    "TransitionErrorKind",
+    "TransitionHop",
+    "TransitionResult",
+    "TransitionStatus",
+    "parse_did_wba_e1",
+    "resolve_current_did",
+    "verify_active_e1_document",
+    "verify_transition_hop",
     "generate_auth_header",
     "generate_auth_json",
     "verify_auth_header_signature",
