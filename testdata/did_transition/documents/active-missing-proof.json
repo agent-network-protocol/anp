@@ -1,0 +1,22 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+      "publicKeyMultibase": "z6Mkv9vkmNqWpqr1pTHsaAe1fhzEL6KBqkUNctZK6PCTPx6J"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1"
+  ]
+}

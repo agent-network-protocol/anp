@@ -1,0 +1,30 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "publicKeyMultibase": "z6MkjMyVo8okLyPDSTYmFtHBweFL39WahJU7PKPZohAgPao5"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1"
+  ],
+  "proof": {
+    "type": "DataIntegrityProof",
+    "created": "2026-08-25T00:00:00Z",
+    "verificationMethod": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+    "proofPurpose": "assertionMethod",
+    "cryptosuite": "eddsa-jcs-2022",
+    "proofValue": "2hWRfnaqw80q0ffxNTmmWacvCewPwRStNVfBQ5C2mU3OMjo2pHRiFs3UyJK3Mlfy5yXR6Hd6Oc8RYsn9GFvoAA"
+  }
+}

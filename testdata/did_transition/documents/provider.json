@@ -1,0 +1,17 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1"
+  ],
+  "id": "did:wba:example.com",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com#provider-assertion-key",
+      "type": "Multikey",
+      "controller": "did:wba:example.com",
+      "publicKeyMultibase": "z6MknP7rQ1bdS3uCD6J1agzhyjreXAcWafWuvCVoLaoQMMgS"
+    }
+  ],
+  "assertionMethod": [
+    "did:wba:example.com#provider-assertion-key"
+  ]
+}

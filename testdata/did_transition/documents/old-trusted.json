@@ -1,0 +1,37 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "publicKeyMultibase": "z6MkjMyVo8okLyPDSTYmFtHBweFL39WahJU7PKPZohAgPao5"
+    },
+    {
+      "id": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#recovery-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY",
+      "publicKeyMultibase": "z6MkvLhAqrhTfyodrpnF8s1Wksgm9pe5qSK1TNprGAHTMbZX"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+    "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#recovery-1"
+  ],
+  "proof": {
+    "type": "DataIntegrityProof",
+    "created": "2026-08-25T00:00:00Z",
+    "verificationMethod": "did:wba:example.com:users:alice:e1_koqHv1t_amhHLh34LJguzJJby7_QXKjKuIq1e9D-8uY#key-1",
+    "proofPurpose": "assertionMethod",
+    "cryptosuite": "eddsa-jcs-2022",
+    "proofValue": "MzVZwrSVivNtYl3HNrMTdU6OOqFk6960WQKZ7osYpPRrF7CMfvLxQ9j4YYTPPLQlm4aA7VDFhKPES2T5W8ZpAg"
+  }
+}

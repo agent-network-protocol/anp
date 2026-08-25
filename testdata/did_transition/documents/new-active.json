@@ -1,0 +1,37 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/data-integrity/v2",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+  "verificationMethod": [
+    {
+      "id": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+      "publicKeyMultibase": "z6Mkv9vkmNqWpqr1pTHsaAe1fhzEL6KBqkUNctZK6PCTPx6J"
+    },
+    {
+      "id": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#recovery-1",
+      "type": "Multikey",
+      "controller": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k",
+      "publicKeyMultibase": "z6MkvLhAqrhTfyodrpnF8s1Wksgm9pe5qSK1TNprGAHTMbZX"
+    }
+  ],
+  "authentication": [
+    "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1"
+  ],
+  "assertionMethod": [
+    "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1",
+    "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#recovery-1"
+  ],
+  "proof": {
+    "type": "DataIntegrityProof",
+    "created": "2026-08-25T00:00:00Z",
+    "verificationMethod": "did:wba:example.com:users:alice:e1_sF8tRhiF8jcQm7Vqzd-VyrJMpryP4kOtzHIiM5hpR4k#key-1",
+    "proofPurpose": "assertionMethod",
+    "cryptosuite": "eddsa-jcs-2022",
+    "proofValue": "li8kRBquYI4HgVMWEUPCel3SOlEpPC_qoFZfKjLCSYxQB0vcPV_jf2Y3aezir3flG5YgsyksOwlM6uQpZ4H3CQ"
+  }
+}
