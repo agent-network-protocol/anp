@@ -73,3 +73,14 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["anp"]
+exclude = [
+    "/anp/**/*.md",
+    "/anp/**/__pycache__",
+    "/anp/**/*.pyc",
+    "/anp/**/test",
+    "/anp/**/test/**",
+    "/anp/**/tests",
+    "/anp/**/tests/**",
+    "/anp/unittest",
+    "/anp/unittest/**",
+]
