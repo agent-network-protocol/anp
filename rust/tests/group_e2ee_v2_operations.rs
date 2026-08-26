@@ -9,20 +9,20 @@ use anp::authentication::{
     create_did_wba_document, validate_device_manifest, DidDocumentOptions, DidProfile,
 };
 use anp::group_e2ee::operations::v2::{
-    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_v2,
-    complete_key_package_publish_signing_v2, complete_key_package_v2, create_group_prepare_v2,
-    decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2, inspect_local_group_v2,
-    list_local_group_member_endpoints_v2, mark_local_group_terminal_intent_v2,
-    prepare_key_package_v2, prepare_or_resume_key_package_publish_signing_v2,
-    prepare_or_resume_key_package_publish_v2, process_commit_v2, process_notice_v2,
-    process_welcome_v2, reconcile_pending_v2, remove_member_prepare_v2,
-    V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput, V2DecryptInput,
-    V2DidDocument, V2EncryptInput, V2FinalizeInput, V2GenerateKeyPackageInput,
-    V2InspectLocalGroupInput, V2KeyPackagePublishPreparation, V2KeyPackagePublishStatus,
-    V2LocalGroupMemberEndpoint, V2LocalGroupReadiness, V2MarkTerminalIntentInput,
-    V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput, V2ProcessCommitInput,
-    V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput, V2RemoveMemberInput,
-    V2TerminalSignal,
+    abort_commit_v2, accept_key_package_publish_v2, add_member_prepare_for_did_transition_v2,
+    add_member_prepare_v2, complete_key_package_publish_signing_v2, complete_key_package_v2,
+    create_group_prepare_v2, decrypt_v2, encrypt_v2, finalize_commit_v2, generate_key_package_v2,
+    inspect_local_group_v2, list_local_group_member_endpoints_v2,
+    mark_local_group_terminal_intent_v2, prepare_key_package_v2,
+    prepare_or_resume_key_package_publish_signing_v2, prepare_or_resume_key_package_publish_v2,
+    process_commit_v2, process_notice_v2, process_welcome_v2, reconcile_pending_v2,
+    remove_member_prepare_v2, V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput,
+    V2DecryptInput, V2DidDocument, V2DidTransitionController, V2EncryptInput, V2FinalizeInput,
+    V2GenerateKeyPackageInput, V2InspectLocalGroupInput, V2KeyPackagePublishPreparation,
+    V2KeyPackagePublishStatus, V2LocalGroupMemberEndpoint, V2LocalGroupReadiness,
+    V2MarkTerminalIntentInput, V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput,
+    V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput,
+    V2RemoveMemberInput, V2TerminalSignal,
 };
 use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{
@@ -2103,6 +2103,198 @@ fn concurrent_equivalent_key_package_acceptances_share_first_cached_result() {
     let first = handles.remove(0).join().expect("first accept thread");
     let second = handles.remove(0).join().expect("second accept thread");
     assert_eq!(first, second);
+}
+
+#[test]
+fn owner_did_transition_add_uses_predecessor_state_without_relabeling_it() {
+    let directory = TestDirectory::new();
+    let predecessor = make_did_fixture("transition-predecessor", &["old-device"]);
+    let current = make_did_fixture("transition-current", &["new-device"]);
+    let predecessor_device = &predecessor.devices[0];
+    let current_device = &current.devices[0];
+    let predecessor_store = store(
+        directory.path(),
+        &predecessor.did,
+        &predecessor_device.device_id,
+    );
+    let current_store = store(directory.path(), &current.did, &current_device.device_id);
+
+    let predecessor_package = generate_key_package_v2(
+        &predecessor_store,
+        V2GenerateKeyPackageInput {
+            owner_did: predecessor.did.clone(),
+            owner_device_id: predecessor_device.device_id.clone(),
+            verification_method: predecessor_device.signing_key_id.clone(),
+            key_package_id: "kp-transition-predecessor".to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-transition-predecessor-package".to_owned(),
+        },
+        &predecessor.document,
+        &signing_key(predecessor_device),
+    )
+    .expect("predecessor KeyPackage");
+    let created = create_group_prepare_v2(
+        &predecessor_store,
+        V2CreateGroupInput {
+            meta: service_meta(
+                &predecessor.did,
+                &predecessor_device.device_id,
+                "op-transition-create",
+            ),
+            group_state_ref: state_ref(1),
+            creator_key_package: predecessor_package,
+            creator_did_document: predecessor.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-transition-create".to_owned(),
+            request_id: "req-transition-create".to_owned(),
+        },
+    )
+    .expect("prepare predecessor group");
+    finalize_commit_v2(
+        &predecessor_store,
+        V2FinalizeInput {
+            pending_commit_id: created.pending_commit_id,
+            request_id: "req-transition-create-finalize".to_owned(),
+        },
+    )
+    .expect("finalize predecessor group");
+
+    let current_package = generate_key_package_v2(
+        &current_store,
+        V2GenerateKeyPackageInput {
+            owner_did: current.did.clone(),
+            owner_device_id: current_device.device_id.clone(),
+            verification_method: current_device.signing_key_id.clone(),
+            key_package_id: "kp-transition-current".to_owned(),
+            issued_at: ISSUED_AT.to_owned(),
+            expires_at: EXPIRES_AT.to_owned(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-transition-current-package".to_owned(),
+        },
+        &current.document,
+        &signing_key(current_device),
+    )
+    .expect("current KeyPackage");
+    let add = add_member_prepare_for_did_transition_v2(
+        &predecessor_store,
+        V2AddMemberInput {
+            meta: control_meta(&current.did, &current_device.device_id, "op-transition-add"),
+            group_state_ref: state_ref(2),
+            group_key_package: current_package,
+            member_did_document: current.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-transition-add".to_owned(),
+            request_id: "req-transition-add".to_owned(),
+        },
+        V2DidTransitionController {
+            predecessor_did: predecessor.did.clone(),
+            predecessor_device_id: predecessor_device.device_id.clone(),
+        },
+    )
+    .expect("predecessor Leaf prepares current owner Add");
+    assert_public_commit(&add.body.commit_b64u);
+    assert_eq!(add.body.member_did, current.did);
+    assert_eq!(add.body.member_device_id, current_device.device_id);
+    finalize_commit_v2(
+        &predecessor_store,
+        V2FinalizeInput {
+            pending_commit_id: add.pending_commit_id,
+            request_id: "req-transition-add-finalize".to_owned(),
+        },
+    )
+    .expect("finalize predecessor-signed transition Add");
+
+    let predecessor_inventory = list_local_group_member_endpoints_v2(
+        &predecessor_store,
+        V2InspectLocalGroupInput {
+            owner_did: predecessor.did.clone(),
+            owner_device_id: predecessor_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-transition-predecessor-inventory".to_owned(),
+        },
+    )
+    .expect("predecessor store remains predecessor-scoped");
+    let mut expected_endpoints = vec![
+        V2LocalGroupMemberEndpoint {
+            member_did: predecessor.did.clone(),
+            member_device_id: predecessor_device.device_id.clone(),
+        },
+        V2LocalGroupMemberEndpoint {
+            member_did: current.did.clone(),
+            member_device_id: current_device.device_id.clone(),
+        },
+    ];
+    expected_endpoints.sort_by(|left, right| {
+        (&left.member_did, &left.member_device_id)
+            .cmp(&(&right.member_did, &right.member_device_id))
+    });
+    assert_eq!(predecessor_inventory.member_endpoints, expected_endpoints);
+    assert_ne!(
+        predecessor_store.state_db_path(),
+        current_store.state_db_path()
+    );
+    assert_eq!(
+        inspect_local_group_v2(
+            &current_store,
+            V2InspectLocalGroupInput {
+                owner_did: current.did.clone(),
+                owner_device_id: current_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-transition-current-before-welcome".to_owned(),
+            },
+        )
+        .expect("current state remains independent before Welcome")
+        .readiness,
+        V2LocalGroupReadiness::Missing
+    );
+
+    process_welcome_v2(
+        &current_store,
+        V2ProcessWelcomeInput {
+            recipient_did: current.did.clone(),
+            recipient_device_id: current_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            group_state_ref: add.body.group_state_ref,
+            crypto_group_id_b64u: add.body.crypto_group_id_b64u,
+            epoch: add.body.epoch,
+            welcome_b64u: add.body.welcome_b64u,
+            ratchet_tree_b64u: add.body.ratchet_tree_b64u,
+            member_documents: vec![
+                V2DidDocument {
+                    did: predecessor.did,
+                    document: predecessor.document,
+                },
+                V2DidDocument {
+                    did: current.did.clone(),
+                    document: current.document,
+                },
+            ],
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            request_id: "req-transition-current-welcome".to_owned(),
+        },
+    )
+    .expect("current owner processes an independent Welcome");
+    assert_eq!(
+        inspect_local_group_v2(
+            &current_store,
+            V2InspectLocalGroupInput {
+                owner_did: current.did,
+                owner_device_id: current_device.device_id.clone(),
+                group_did: GROUP_DID.to_owned(),
+                request_id: "req-transition-current-after-welcome".to_owned(),
+            },
+        )
+        .expect("current owner state activates only after Welcome")
+        .readiness,
+        V2LocalGroupReadiness::Active
+    );
 }
 
 #[test]

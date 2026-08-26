@@ -54,6 +54,16 @@ pub struct V2DidDocument {
     pub document: Value,
 }
 
+/// Exact predecessor MLS controller for the first owner DID-transition Add.
+/// The wire actor and target KeyPackage remain the current DID/device; this
+/// local-only selector chooses the retained predecessor Leaf that signs the
+/// Commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V2DidTransitionController {
+    pub predecessor_did: String,
+    pub predecessor_device_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct V2GenerateKeyPackageInput {
     pub owner_did: String,
@@ -2510,11 +2520,57 @@ pub fn add_member_prepare_v2<S: GroupMlsStore>(
         &input.meta.sender_device_id,
         &input.request_id,
     )?;
+    let controller_did = input.meta.sender_did.clone();
+    let controller_device_id = input.meta.sender_device_id.clone();
+    add_member_prepare_with_controller_v2(store, input, &controller_did, &controller_device_id)
+}
+
+/// Prepares the first Add after an owner DID transition without copying,
+/// renaming, or relabeling predecessor MLS state.
+///
+/// The caller is responsible for verifying the DID transition and its exact
+/// P4 `member-did-updated` state before entering this local SDK boundary.
+pub fn add_member_prepare_for_did_transition_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2AddMemberInput,
+    controller: V2DidTransitionController,
+) -> GroupMlsOperationResult<V2PreparedAdd> {
+    validate_control_meta(&input.meta, &input.group_state_ref, &input.request_id)?;
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        &controller.predecessor_did,
+        &controller.predecessor_device_id,
+        &input.request_id,
+    )?;
+    if controller.predecessor_did == input.meta.sender_did
+        || input.group_key_package.owner_did != input.meta.sender_did
+        || input.group_key_package.owner_device_id != input.meta.sender_device_id
+    {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "transition Add requires a distinct predecessor controller and the exact current sender KeyPackage",
+            &input.request_id,
+        ));
+    }
+    add_member_prepare_with_controller_v2(
+        store,
+        input,
+        &controller.predecessor_did,
+        &controller.predecessor_device_id,
+    )
+}
+
+fn add_member_prepare_with_controller_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2AddMemberInput,
+    controller_did: &str,
+    controller_device_id: &str,
+) -> GroupMlsOperationResult<V2PreparedAdd> {
     let scope = open_scope(store, &input.request_id)?;
     let local_binding = binding(
         &scope.app_conn,
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
+        controller_did,
+        controller_device_id,
         &input.group_state_ref.group_did,
         &input.request_id,
     )
@@ -2568,8 +2624,8 @@ pub fn add_member_prepare_v2<S: GroupMlsStore>(
     let signer = load_signer(
         &scope.provider,
         &scope.app_conn,
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
+        controller_did,
+        controller_device_id,
         &input.request_id,
     )
     .map_err(GroupMlsOperationError::from)?;
@@ -2578,8 +2634,8 @@ pub fn add_member_prepare_v2<S: GroupMlsStore>(
         &input.pending_commit_id,
         &input.meta.operation_id,
         "group add-member",
-        &input.meta.sender_did,
-        &input.meta.sender_device_id,
+        controller_did,
+        controller_device_id,
         &input.group_state_ref.group_did,
         &crypto_group_id_b64u,
         &target.agent_did,
