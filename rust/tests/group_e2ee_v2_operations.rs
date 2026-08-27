@@ -2106,7 +2106,7 @@ fn concurrent_equivalent_key_package_acceptances_share_first_cached_result() {
 }
 
 #[test]
-fn owner_did_transition_add_uses_predecessor_state_without_relabeling_it() {
+fn v1b_owner_did_transition_add_uses_predecessor_state_without_relabeling_it() {
     let directory = TestDirectory::new();
     let predecessor = make_did_fixture("transition-predecessor", &["old-device"]);
     let current = make_did_fixture("transition-current", &["new-device"]);
@@ -2298,7 +2298,7 @@ fn owner_did_transition_add_uses_predecessor_state_without_relabeling_it() {
 }
 
 #[test]
-fn persistent_v2_operations_keep_same_did_devices_independent() {
+fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
     let directory = TestDirectory::new();
     let owner = make_did_fixture("owner-operations", &["owner-device"]);
     let alice = make_did_fixture("alice-operations", &["alice-a1", "alice-a2"]);

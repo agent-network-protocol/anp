@@ -377,7 +377,7 @@ fn business_did_count(group: &MlsGroup) -> usize {
 }
 
 #[test]
-fn real_openmls_same_did_multi_device_lifecycle_gate() {
+fn v1b_real_openmls_same_did_multi_device_lifecycle_gate() {
     let owner_did = make_did_fixture("owner", &["owner-device"]);
     let member_did = make_did_fixture("alice", &["alice-a1", "alice-a2"]);
     let owner = make_mls_device(&owner_did, 0);
