@@ -46,6 +46,7 @@ use super::typed::{GroupMlsOperationError, GroupMlsOperationResult};
 const CRYPTO_GROUP_ID_LEN: usize = 32;
 const KEY_PACKAGE_PUBLISH_COMMAND: &str = "group.e2ee.publish-key-package.v2";
 const KEY_PACKAGE_PUBLISH_JOURNAL_VERSION: &str = "v1";
+const GROUP_ADD_COMMAND: &str = "group add-member";
 const P6_V2_WIRE_FORMAT_POLICY: WireFormatPolicy = PURE_PLAINTEXT_WIRE_FORMAT_POLICY;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -246,6 +247,21 @@ pub struct V2ProcessWelcomeInput {
     pub member_documents: Vec<V2DidDocument>,
     pub now: String,
     pub draft_extension_negotiated: bool,
+    pub request_id: String,
+}
+
+/// Local-only lookup for recovering a finalized same-host DID-transition Welcome.
+///
+/// This is not an ANP wire object. It lets an implementation resume the narrow
+/// crash window after the predecessor controller finalized an accepted Add but
+/// before the successor device durably processed its Welcome.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V2RecoverTransitionWelcomeInput {
+    pub predecessor_did: String,
+    pub predecessor_device_id: String,
+    pub current_did: String,
+    pub current_device_id: String,
+    pub group_did: String,
     pub request_id: String,
 }
 
@@ -2633,7 +2649,7 @@ fn add_member_prepare_with_controller_v2<S: GroupMlsStore>(
         &scope.app_conn,
         &input.pending_commit_id,
         &input.meta.operation_id,
-        "group add-member",
+        GROUP_ADD_COMMAND,
         controller_did,
         controller_device_id,
         &input.group_state_ref.group_did,
@@ -3446,6 +3462,88 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
     )?;
     let scope = open_scope(store, &input.request_id)?;
     process_welcome_with_scope(&scope, input)
+}
+
+/// Recovers the exact finalized transition-Add body needed by a successor store.
+///
+/// Only a finalized predecessor journal is eligible, which means the Host
+/// accepted the Add and the predecessor OpenMLS commit was finalized. Multiple
+/// byte-distinct matching artifacts fail closed.
+pub fn recover_finalized_transition_welcome_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2RecoverTransitionWelcomeInput,
+) -> GroupMlsOperationResult<Option<V2GroupAddBody>> {
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        &input.predecessor_did,
+        &input.predecessor_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("current_did", &input.current_did, &input.request_id)?;
+    require_non_empty(
+        "current_device_id",
+        &input.current_device_id,
+        &input.request_id,
+    )?;
+    require_non_empty("group_did", &input.group_did, &input.request_id)?;
+    if input.predecessor_did == input.current_did || !input.group_did.starts_with("did:") {
+        return Err(operation_error(
+            "group.e2ee.did_binding_invalid",
+            "transition Welcome recovery requires distinct DIDs and a Group DID",
+            &input.request_id,
+        ));
+    }
+
+    let scope = open_scope(store, &input.request_id)?;
+    let mut statement = scope
+        .app_conn
+        .prepare(
+            "SELECT pending_commit_id
+               FROM pending_commits
+              WHERE command = ?1 AND group_did = ?2
+                AND subject_did = ?3 AND subject_status = 'active'
+                AND status = 'finalized'
+              ORDER BY updated_at DESC, pending_commit_id DESC",
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let pending_ids = statement
+        .query_map(
+            params![GROUP_ADD_COMMAND, &input.group_did, &input.current_did],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    drop(statement);
+
+    let mut recovered: Option<V2GroupAddBody> = None;
+    for pending_id in pending_ids {
+        let Some(value) =
+            pending_prepared_response(&scope.app_conn, &pending_id, &input.request_id)?
+        else {
+            continue;
+        };
+        let body: V2GroupAddBody = serde_json::from_value(value)
+            .map_err(|err| operation_error("group.e2ee.state_not_ready", err, &input.request_id))?;
+        body.validate().map_err(|err| {
+            operation_error("group.e2ee.did_binding_invalid", err, &input.request_id)
+        })?;
+        if body.member_did != input.current_did
+            || body.member_device_id != input.current_device_id
+            || body.group_state_ref.group_did != input.group_did
+        {
+            continue;
+        }
+        if recovered.as_ref().is_some_and(|existing| existing != &body) {
+            return Err(operation_error(
+                "group.e2ee.epoch_conflict",
+                "multiple finalized transition Welcome artifacts conflict",
+                &input.request_id,
+            ));
+        }
+        recovered = Some(body);
+    }
+    Ok(recovered)
 }
 
 fn process_welcome_with_scope(

@@ -16,13 +16,14 @@ use anp::group_e2ee::operations::v2::{
     mark_local_group_terminal_intent_v2, prepare_key_package_v2,
     prepare_or_resume_key_package_publish_signing_v2, prepare_or_resume_key_package_publish_v2,
     process_commit_v2, process_notice_v2, process_welcome_v2, reconcile_pending_v2,
-    remove_member_prepare_v2, V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput,
-    V2DecryptInput, V2DidDocument, V2DidTransitionController, V2EncryptInput, V2FinalizeInput,
+    recover_finalized_transition_welcome_v2, remove_member_prepare_v2,
+    V2AcceptKeyPackagePublishInput, V2AddMemberInput, V2CreateGroupInput, V2DecryptInput,
+    V2DidDocument, V2DidTransitionController, V2EncryptInput, V2FinalizeInput,
     V2GenerateKeyPackageInput, V2InspectLocalGroupInput, V2KeyPackagePublishPreparation,
     V2KeyPackagePublishStatus, V2LocalGroupMemberEndpoint, V2LocalGroupReadiness,
     V2MarkTerminalIntentInput, V2MembershipCommitMethod, V2PrepareKeyPackagePublishInput,
     V2ProcessCommitInput, V2ProcessNoticeInput, V2ProcessWelcomeInput, V2ReconcilePendingInput,
-    V2RemoveMemberInput, V2TerminalSignal,
+    V2RecoverTransitionWelcomeInput, V2RemoveMemberInput, V2TerminalSignal,
 };
 use anp::group_e2ee::storage::{CompatDataDirStore, ImCoreSqliteGroupMlsStore};
 use anp::group_e2ee::{
@@ -2254,33 +2255,55 @@ fn v1b_owner_did_transition_add_uses_predecessor_state_without_relabeling_it() {
         V2LocalGroupReadiness::Missing
     );
 
-    process_welcome_v2(
-        &current_store,
-        V2ProcessWelcomeInput {
-            recipient_did: current.did.clone(),
-            recipient_device_id: current_device.device_id.clone(),
+    let restarted_predecessor_store = store(
+        directory.path(),
+        &predecessor.did,
+        &predecessor_device.device_id,
+    );
+    let recovered = recover_finalized_transition_welcome_v2(
+        &restarted_predecessor_store,
+        V2RecoverTransitionWelcomeInput {
+            predecessor_did: predecessor.did.clone(),
+            predecessor_device_id: predecessor_device.device_id.clone(),
+            current_did: current.did.clone(),
+            current_device_id: current_device.device_id.clone(),
             group_did: GROUP_DID.to_owned(),
-            group_state_ref: add.body.group_state_ref,
-            crypto_group_id_b64u: add.body.crypto_group_id_b64u,
-            epoch: add.body.epoch,
-            welcome_b64u: add.body.welcome_b64u,
-            ratchet_tree_b64u: add.body.ratchet_tree_b64u,
-            member_documents: vec![
-                V2DidDocument {
-                    did: predecessor.did,
-                    document: predecessor.document,
-                },
-                V2DidDocument {
-                    did: current.did.clone(),
-                    document: current.document,
-                },
-            ],
-            now: NOW.to_owned(),
-            draft_extension_negotiated: true,
-            request_id: "req-transition-current-welcome".to_owned(),
+            request_id: "req-transition-recover-welcome".to_owned(),
         },
     )
-    .expect("current owner processes an independent Welcome");
+    .expect("recover finalized transition Welcome after restart")
+    .expect("finalized transition Welcome exists");
+    assert_eq!(recovered, add.body);
+
+    let welcome = V2ProcessWelcomeInput {
+        recipient_did: current.did.clone(),
+        recipient_device_id: current_device.device_id.clone(),
+        group_did: GROUP_DID.to_owned(),
+        group_state_ref: recovered.group_state_ref,
+        crypto_group_id_b64u: recovered.crypto_group_id_b64u,
+        epoch: recovered.epoch,
+        welcome_b64u: recovered.welcome_b64u,
+        ratchet_tree_b64u: recovered.ratchet_tree_b64u,
+        member_documents: vec![
+            V2DidDocument {
+                did: predecessor.did,
+                document: predecessor.document,
+            },
+            V2DidDocument {
+                did: current.did.clone(),
+                document: current.document,
+            },
+        ],
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "req-transition-current-welcome".to_owned(),
+    };
+    process_welcome_v2(&current_store, welcome.clone())
+        .expect("current owner processes recovered Welcome");
+    let mut repeated = welcome;
+    repeated.request_id = "req-transition-current-welcome-repeat".to_owned();
+    process_welcome_v2(&current_store, repeated)
+        .expect("recovered transition Welcome remains idempotent");
     assert_eq!(
         inspect_local_group_v2(
             &current_store,
