@@ -266,117 +266,14 @@ pub fn verify_active_e1_document(did: &str, document: &Value) -> Result<(), DidT
     Ok(())
 }
 
-fn provider_did(profile: &DidWbaE1Profile) -> String {
-    format!("did:wba:{}", profile.origin)
-}
-
-fn verify_provider_assertion(
-    predecessor_document: &Value,
-    predecessor: &DidWbaE1Profile,
-    successor: &DidWbaE1Profile,
-    provider_fetcher: &dyn DidDocumentFetcher,
-) -> Result<(), DidTransitionError> {
-    let assertion = predecessor_document
-        .get("providerTransitionAssertion")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            DidTransitionError::new(
-                TransitionErrorKind::InvalidProviderAssertion,
-                "providerTransitionAssertion has an invalid shape",
-            )
-        })?;
-    let required: HashSet<&str> = [
-        "type",
-        "providerDid",
-        "predecessorDid",
-        "successorDid",
-        "stableSubjectPath",
-        "issuedAt",
-        "proof",
-    ]
-    .into_iter()
-    .collect();
-    if assertion.keys().map(String::as_str).collect::<HashSet<_>>() != required {
-        return Err(DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "providerTransitionAssertion has an invalid shape",
-        ));
-    }
-    let expected_provider = provider_did(predecessor);
-    let issued_at = assertion.get("issuedAt").and_then(Value::as_str);
-    let proof = assertion.get("proof").and_then(Value::as_object);
-    let canonical_utc =
-        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$").expect("static UTC regex");
-    let fields_valid = assertion.get("type").and_then(Value::as_str)
-        == Some("DidWbaProviderTransitionAssertion")
-        && assertion.get("providerDid").and_then(Value::as_str) == Some(expected_provider.as_str())
-        && assertion.get("predecessorDid").and_then(Value::as_str)
-            == Some(predecessor.did.as_str())
-        && assertion.get("successorDid").and_then(Value::as_str) == Some(successor.did.as_str())
-        && assertion.get("stableSubjectPath").and_then(Value::as_str)
-            == Some(predecessor.stable_subject_path.as_str())
-        && issued_at.is_some_and(|value| canonical_utc.is_match(value))
-        && proof
-            .and_then(|value| value.get("created"))
-            .and_then(Value::as_str)
-            == issued_at;
-    if !fields_valid {
-        return Err(DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "providerTransitionAssertion binding fields are invalid",
-        ));
-    }
-    let provider_document = provider_fetcher
-        .fetch(&expected_provider)
-        .map_err(|error| DidTransitionError::new(TransitionErrorKind::NetworkError, error))?;
-    require_document_id(&expected_provider, &provider_document)?;
-    let method_id = proof
-        .and_then(|value| value.get("verificationMethod"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            DidTransitionError::new(
-                TransitionErrorKind::InvalidProviderAssertion,
-                "provider proof key is missing",
-            )
-        })?;
-    if !method_id.starts_with(&format!("{expected_provider}#"))
-        || !is_assertion_method_authorized(&provider_document, method_id)
-    {
-        return Err(DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "provider proof key is not authorized",
-        ));
-    }
-    let method = find_verification_method(&provider_document, method_id).ok_or_else(|| {
-        DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "provider proof key is missing",
-        )
-    })?;
-    let public_key = extract_public_key(&method).map_err(|_| {
-        DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "invalid provider proof key",
-        )
-    })?;
-    if !verify_w3c_proof(
-        &Value::Object(assertion.clone()),
-        &public_key,
-        proof_options(),
-    ) {
-        return Err(DidTransitionError::new(
-            TransitionErrorKind::InvalidProviderAssertion,
-            "providerTransitionAssertion proof verification failed",
-        ));
-    }
-    Ok(())
-}
-
+/// Verifies one linked transition hop and classifies its assurance.
+///
+/// A structurally valid unsigned hop remains unverified here. Complete-chain
+/// Provider assurance is assigned only by [`resolve_current_did`].
 pub fn verify_transition_hop(
     predecessor_document: &Value,
     successor_document: &Value,
     trusted_predecessor: Option<&Value>,
-    provider_fetcher: Option<&dyn DidDocumentFetcher>,
 ) -> Result<TransitionHop, DidTransitionError> {
     let predecessor_did = predecessor_document
         .get("id")
@@ -442,19 +339,6 @@ pub fn verify_transition_hop(
         }
     }
 
-    let provider_present = predecessor_document
-        .get("providerTransitionAssertion")
-        .is_some();
-    if provider_present {
-        let fetcher = provider_fetcher.ok_or_else(|| {
-            DidTransitionError::new(
-                TransitionErrorKind::InvalidProviderAssertion,
-                "provider DID resolver is required",
-            )
-        })?;
-        verify_provider_assertion(predecessor_document, &predecessor, &successor, fetcher)?;
-    }
-
     let assurance = if let Some(proof) = predecessor_document.get("proof") {
         let method_id = proof
             .get("verificationMethod")
@@ -502,8 +386,6 @@ pub fn verify_transition_hop(
             }
             TransitionAssurance::RecoveryVerified
         }
-    } else if provider_present {
-        TransitionAssurance::ProviderAsserted
     } else {
         TransitionAssurance::Unverified
     };
@@ -524,11 +406,15 @@ fn assurance_rank(value: TransitionAssurance) -> u8 {
     }
 }
 
+/// Resolves a complete transition chain to its proof-verified active DID.
+///
+/// `fetcher` is expected to perform authenticated Provider resolution. After
+/// the chain reaches a proof-verified active DID, structurally valid unsigned
+/// hops returned by it are provider-asserted.
 pub fn resolve_current_did(
     requested_did: &str,
     fetcher: &dyn DidDocumentFetcher,
     trusted_documents: &HashMap<String, Value>,
-    provider_fetcher: Option<&dyn DidDocumentFetcher>,
     cache: &mut dyn TransitionCache,
     max_hops: usize,
 ) -> Result<TransitionResult, DidTransitionError> {
@@ -604,12 +490,14 @@ pub fn resolve_current_did(
         let successor_document = fetcher
             .fetch(successor_did)
             .map_err(|error| DidTransitionError::new(TransitionErrorKind::NetworkError, error))?;
-        let hop = verify_transition_hop(
+        let mut hop = verify_transition_hop(
             &document,
             &successor_document,
             trusted_documents.get(&current),
-            provider_fetcher,
         )?;
+        if hop.assurance == TransitionAssurance::Unverified {
+            hop.assurance = TransitionAssurance::ProviderAsserted;
+        }
         if cache
             .get_successor(&current)
             .is_some_and(|cached| cached != successor_did)

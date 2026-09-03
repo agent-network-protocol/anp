@@ -11,6 +11,7 @@ from anp.authentication import (
     parse_did_wba_e1,
     resolve_current_did,
     verify_active_e1_document,
+    verify_transition_hop,
 )
 
 
@@ -37,13 +38,9 @@ def test_transition_vector_manifest_is_complete_and_immutable():
 def test_did_transition_vector(case):
     resolved = {did: load_json(path) for did, path in case["resolvedDocuments"].items()}
     trusted = {did: load_json(path) for did, path in case["trustedDocuments"].items()}
-    providers = {did: load_json(path) for did, path in case["providerDocuments"].items()}
 
     def fetcher(did):
         return resolved[did]
-
-    def provider_fetcher(did):
-        return providers[did]
 
     expected = case["expected"]
     cache = InMemoryTransitionCache(case["cacheEdges"])
@@ -59,14 +56,27 @@ def test_did_transition_vector(case):
                 "hops": [],
                 "assurance": None,
             }
+        elif case["operation"] == "verify_hop":
+            predecessor = resolved[case["requestedDid"]]
+            successor = resolved[predecessor["successorDid"]]
+            hop = verify_transition_hop(
+                predecessor,
+                successor,
+                trusted_predecessor=trusted.get(case["requestedDid"]),
+            )
+            result = {
+                "predecessorDid": hop.predecessor_did,
+                "successorDid": hop.successor_did,
+                "assurance": hop.assurance.value,
+            }
         elif case["operation"] in {
             "resolve",
             "resolve_ignoring_hint",
-            "resolve_after_unverified",
+            "resolve_after_provider_asserted",
         }:
             if case["operation"] == "resolve_ignoring_hint":
                 assert case["untrustedCurrentDidHint"]
-            if case["operation"] == "resolve_after_unverified":
+            if case["operation"] == "resolve_after_provider_asserted":
                 prelude = {
                     did: load_json(path)
                     for did, path in case["preludeResolvedDocuments"].items()
@@ -78,13 +88,12 @@ def test_did_transition_vector(case):
                     cache=cache,
                     max_hops=case["maxHops"],
                 )
-                assert prelude_result.assurance.value == "unverified"
+                assert prelude_result.assurance.value == "provider_asserted"
                 assert cache.snapshot() == case["cacheEdges"]
             transition = resolve_current_did(
                 case["requestedDid"],
                 fetcher,
                 trusted_documents=trusted,
-                provider_fetcher=provider_fetcher,
                 cache=cache,
                 max_hops=case["maxHops"],
             )

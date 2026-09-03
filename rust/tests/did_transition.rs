@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anp::authentication::{
-    parse_did_wba_e1, resolve_current_did, verify_active_e1_document, DidDocumentFetcher,
+    parse_did_wba_e1, resolve_current_did, verify_active_e1_document, verify_transition_hop,
     InMemoryTransitionCache,
 };
 use serde::Deserialize;
@@ -34,7 +34,6 @@ struct VectorCase {
     resolved_documents: HashMap<String, String>,
     #[serde(default)]
     prelude_resolved_documents: HashMap<String, String>,
-    provider_documents: HashMap<String, String>,
     cache_edges: HashMap<String, String>,
     #[serde(default)]
     expected_cache_edges: HashMap<String, String>,
@@ -85,22 +84,11 @@ fn did_transition_shared_vectors() {
             .iter()
             .map(|(did, path)| (did.clone(), load_document(&root, path)))
             .collect();
-        let providers: HashMap<String, Value> = case
-            .provider_documents
-            .iter()
-            .map(|(did, path)| (did.clone(), load_document(&root, path)))
-            .collect();
         let fetch = |did: &str| {
             resolved
                 .get(did)
                 .cloned()
                 .ok_or_else(|| format!("missing resolved document {did}"))
-        };
-        let provider_fetch = |did: &str| {
-            providers
-                .get(did)
-                .cloned()
-                .ok_or_else(|| format!("missing provider document {did}"))
         };
         let mut cache = InMemoryTransitionCache::new(case.cache_edges.clone());
         let outcome = match case.operation.as_str() {
@@ -116,11 +104,28 @@ fn did_transition_shared_vectors() {
                     })
                 })
             }
-            "resolve" | "resolve_ignoring_hint" | "resolve_after_unverified" => {
+            "verify_hop" => {
+                let predecessor = resolved.get(&case.requested_did).expect("hop predecessor");
+                let successor_did = predecessor
+                    .get("successorDid")
+                    .and_then(Value::as_str)
+                    .expect("hop successor DID");
+                let successor = resolved.get(successor_did).expect("hop successor");
+                verify_transition_hop(predecessor, successor, trusted.get(&case.requested_did)).map(
+                    |hop| {
+                        serde_json::json!({
+                            "predecessorDid": hop.predecessor_did,
+                            "successorDid": hop.successor_did,
+                            "assurance": hop.assurance,
+                        })
+                    },
+                )
+            }
+            "resolve" | "resolve_ignoring_hint" | "resolve_after_provider_asserted" => {
                 if case.operation == "resolve_ignoring_hint" {
                     assert!(case.untrusted_current_did_hint.is_some());
                 }
-                if case.operation == "resolve_after_unverified" {
+                if case.operation == "resolve_after_provider_asserted" {
                     let prelude_fetch = |did: &str| {
                         prelude_resolved
                             .get(did)
@@ -131,14 +136,13 @@ fn did_transition_shared_vectors() {
                         &case.requested_did,
                         &prelude_fetch,
                         &trusted,
-                        None,
                         &mut cache,
                         case.max_hops,
                     )
-                    .expect("unverified prelude resolves");
+                    .expect("provider-asserted prelude resolves");
                     assert_eq!(
                         prelude_result.assurance,
-                        Some(anp::authentication::TransitionAssurance::Unverified)
+                        Some(anp::authentication::TransitionAssurance::ProviderAsserted)
                     );
                     assert_eq!(cache.snapshot(), case.cache_edges);
                 }
@@ -146,7 +150,6 @@ fn did_transition_shared_vectors() {
                     &case.requested_did,
                     &fetch,
                     &trusted,
-                    Some(&provider_fetch as &dyn DidDocumentFetcher),
                     &mut cache,
                     case.max_hops,
                 )
