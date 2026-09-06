@@ -95,6 +95,15 @@ bundle so already published Manifests remain readable during convergence.
 Builders and shared canonical fixtures only emit the mixed-version bundles;
 partial or hybrid dependency bundles remain invalid.
 
+The Rust builder additionally accepts the ordinary DID-only P4 V2 draft
+(`anp.group.base.v2`) with `anp.core.binding.v1` and
+`anp.identity.discovery.v1`, matching ANP-P4-vNext at protocol commit
+`541e4e73594800064fd8bcf66b7b2ebd0d4728cc`. This supports AWiki Gateway's
+ordinary Group V2 identity declarations; it does not publish the draft or enable
+P6/E2EE. P5/P6 dependency checks are unchanged, and old P1/P2/P3 all-v2
+foundation profiles remain read-only. This change is Rust-specific; the shared
+multi-language fixtures and other language builders are unchanged.
+
 ## Compatibility boundary
 
 Existing v1 DID builders retain their current output and defaults. The vNext
