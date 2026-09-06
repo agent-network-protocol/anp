@@ -1,5 +1,12 @@
 # Repository Guidelines
 
+## Shared rules
+
+Engineering work follows [AI Coding Rules](../../awiki-harness/rules/ai-coding-rules.md).
+Behavior changes and verification follow the relevant [Verification Policy](../../awiki-harness/rules/verification-policy.md)
+sections; production behavior needs owning unit coverage and applicable System/product E2E review.
+If Harness is absent, use local docs/tests/CI and disclose missing acceptance evidence.
+
 ## Project Structure & Module Organization
 Core protocol logic lives under `anp/meta_protocol/`, with identity in `anp/authentication/`, encryption in `anp/e2e_encryption/`, shared helpers within `anp/utils/`, and interoperability tooling in `anp/anp_crawler/`. Tests shadow the package layout inside `anp/unittest/<module>/test_<topic>.py`, while docs stay in `docs/`, runnable walkthroughs in `examples/`, JVM clients in `java/`, and release bundles in `dist/`. Keep new assets alongside their feature modules to simplify discovery.
 
@@ -13,9 +20,14 @@ Run `./scripts/release_sdks.py --version X.Y.Z` to publish the coordinated Pytho
 Follow Google Python Style: four-space indentation, type hints, and Google-style docstrings on public APIs. Use `snake_case` for modules/functions, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants. Comments and logs must be in English. Group utilities in the closest existing package and avoid hidden globals; prefer dependency injection or explicit configuration objects.
 
 ## Testing Guidelines
-All new logic must arrive with pytest coverage under the mirrored `anp/unittest` path, naming files `test_<area>.py` and functions `test_<behavior>`. Mark async tests with `@pytest.mark.asyncio`. Before review, run `uv run pytest --cov=anp` and ensure new branches are exercised. Add scenario checks in `examples/` whenever protocol behavior changes or interoperability could regress.
-
-Before completing a production behavior change, review the corresponding `../../awiki-system-test` suite and case catalog; update it in the same task when success, relevant failure, interoperability, persistence/cleanup, or regression coverage is incomplete, and record the reason when no System Test applies. Product E2E is owned only by `../../awiki-me/tests/e2e/`; this repository does not add or require repository-local E2E tests.
+Test the language and module that owns the changed behavior. Python tests live
+under `anp/unittest/`, use `test_<area>.py` / `test_<behavior>` and mark async tests
+with `@pytest.mark.asyncio`. Rust, Go and Dart changes use their owning language
+suites; include shared vectors when wire or cryptographic parity changes. Use
+focused checks during implementation. Run full language coverage or the coordinated
+release matrix only when the requested scope, release policy or a concrete unresolved
+regression risk requires it. Update scenario examples when their protocol contract
+changes.
 
 ## Commit & Pull Request Guidelines
 Author imperative commit subjects (e.g., `Add credential signer`) and reference issues like `#42` when relevant. Pull requests should summarize behavior changes, risks, validation commands, and any compatibility impacts. Attach logs or screenshots for user-visible updates, confirm CI success, and call out follow-up work explicitly to keep reviewers aligned.
