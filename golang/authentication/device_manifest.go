@@ -417,7 +417,7 @@ func BuildVNextDIDDocument(
 		return nil, err
 	}
 	document["verificationMethod"] = []any{rootMethod, signingMethod, e2eeMethod}
-	document["authentication"] = []any{device.SigningKeyID}
+	document["authentication"] = []any{rootKeyID, device.SigningKeyID}
 	document["assertionMethod"] = []any{rootKeyID, device.SigningKeyID}
 	document["keyAgreement"] = []any{device.E2EEKeyID}
 	document["deviceManifest"] = DeviceManifest{
