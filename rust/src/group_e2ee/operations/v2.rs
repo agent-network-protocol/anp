@@ -5090,13 +5090,15 @@ fn decrypt_v2_inner<S: GroupMlsStore>(
         &input.request_id,
     )?;
     let scope = open_scope(store, &input.request_id)?;
+    if received {
+        ensure_received_decryption_schema(&scope.provider.connection, &input.request_id)?;
+    }
     let transaction = scope
         .provider
         .connection
         .unchecked_transaction()
         .map_err(|error| sqlite_error("state_write_failed", error, &input.request_id))?;
     let input_digest = if received {
-        ensure_received_decryption_schema(&transaction, &input.request_id)?;
         let canonical = crate::canonical_json::canonicalize_json(&json!({
             "recipient_did": input.recipient_did, "recipient_device_id": input.recipient_device_id,
             "meta": input.originating_meta, "cipher": input.group_cipher_object,
@@ -5257,6 +5259,7 @@ fn decrypt_v2_inner<S: GroupMlsStore>(
         let encoded = serde_json::to_string(&output).map_err(|error| {
             operation_error("group.e2ee.state_not_ready", error, &input.request_id)
         })?;
+        prune_received_decryption_count(&transaction, 16_383, &input.request_id)?;
         transaction.execute(
             "INSERT INTO group_mls_received_results(recipient_did,device_id,group_did,message_id,input_digest,result_json,created_at)
              VALUES(?1,?2,?3,?4,?5,?6,CAST(strftime('%s','now') AS INTEGER))",
@@ -5287,14 +5290,74 @@ fn ensure_received_decryption_schema(
         .map_err(|error| sqlite_error("state_write_failed", error, request_id))?;
     connection.execute("DELETE FROM group_mls_received_results WHERE created_at<=CAST(strftime('%s','now') AS INTEGER)-172800", [])
         .map_err(|error| sqlite_error("state_write_failed",error,request_id))?;
-    connection.execute("DELETE FROM group_mls_received_results WHERE rowid IN (
-        SELECT rowid FROM group_mls_received_results ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET 16383)", [])
-        .map_err(|error| sqlite_error("state_write_failed",error,request_id))?;
+    prune_received_decryption_count(connection, 16_384, request_id)?;
     Ok(())
 }
 
-/// Remove the private replay result only after the host has committed its
-/// business projection. Losing the host before this call remains recoverable.
+fn prune_received_decryption_count(
+    connection: &rusqlite::Connection,
+    keep: u32,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    connection.execute("DELETE FROM group_mls_received_results WHERE rowid IN (
+        SELECT rowid FROM group_mls_received_results ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET ?1)", [keep])
+        .map_err(|error| sqlite_error("state_write_failed", error, request_id))?;
+    Ok(())
+}
+
+/// Identifiers only, for host cleanup after a successful projection or explicit
+/// input discard. Plaintext never crosses this maintenance API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V2ReceivedDecryptionKey {
+    pub group_did: String,
+    pub message_id: String,
+}
+
+pub fn list_received_decryption_keys_v2<S: GroupMlsStore>(
+    store: &S,
+    recipient_did: &str,
+    device_id: &str,
+    limit: u32,
+) -> GroupMlsOperationResult<Vec<V2ReceivedDecryptionKey>> {
+    let request_id = "received-decryption-cleanup";
+    if limit == 0 || limit > 1024 {
+        return Err(operation_error(
+            "group.e2ee.private_message_invalid",
+            "cleanup limit must be between 1 and 1024",
+            request_id,
+        ));
+    }
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        recipient_did,
+        device_id,
+        request_id,
+    )?;
+    let scope = open_scope(store, request_id)?;
+    ensure_received_decryption_schema(&scope.provider.connection, request_id)?;
+    let mut statement = scope
+        .provider
+        .connection
+        .prepare(
+            "SELECT group_did,message_id FROM group_mls_received_results
+        WHERE recipient_did=?1 AND device_id=?2 ORDER BY created_at,rowid LIMIT ?3",
+        )
+        .map_err(|error| sqlite_error("state_read_failed", error, request_id))?;
+    let rows = statement
+        .query_map(params![recipient_did, device_id, limit], |row| {
+            Ok(V2ReceivedDecryptionKey {
+                group_did: row.get(0)?,
+                message_id: row.get(1)?,
+            })
+        })
+        .map_err(|error| sqlite_error("state_read_failed", error, request_id))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| sqlite_error("state_read_failed", error, request_id))?)
+}
+
+/// Remove the private replay result after the host commits its business
+/// projection or explicitly abandons the corresponding retained input.
+/// Losing the host before this call remains recoverable.
 pub fn forget_received_decryption_v2<S: GroupMlsStore>(
     store: &S,
     recipient_did: &str,
