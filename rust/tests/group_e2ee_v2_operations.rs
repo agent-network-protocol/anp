@@ -2791,6 +2791,59 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
     PrivateMessageIn::tls_deserialize_exact(raw_private_message.clone())
         .expect("P6 private_message_b64u is an exact raw MLS PrivateMessage");
     assert!(MlsMessageIn::tls_deserialize_exact(raw_private_message).is_err());
+    // A receiver can crash after advancing its MLS ratchet but before committing
+    // the host's message projection. Reopening must replay that exact result.
+    let received_root = directory.path().join("received-restart");
+    let received_store = store(&received_root, &alice.did, &a1_device.device_id);
+    clone_device_state(&a1_store, &received_store);
+    let received_input = V2DecryptInput {
+        recipient_did: alice.did.clone(),
+        recipient_device_id: a1_device.device_id.clone(),
+        originating_meta: history_meta.clone(),
+        group_cipher_object: history.clone(),
+        sender_did_document: owner.document.clone(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "received-before-host-commit".into(),
+    };
+    let received_output = anp::group_e2ee::operations::v2::decrypt_received_v2(
+        &received_store,
+        received_input.clone(),
+    )
+    .expect("received message decrypts");
+    drop(received_store);
+    let reopened = store(&received_root, &alice.did, &a1_device.device_id);
+    let mut retry_input = received_input.clone();
+    retry_input.request_id = "received-after-host-restart".into();
+    assert_eq!(
+        anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, retry_input.clone())
+            .expect("exact received input survives host restart"),
+        received_output
+    );
+    retry_input
+        .group_cipher_object
+        .private_message_b64u
+        .push('A');
+    assert!(anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, retry_input).is_err());
+    let rollback_root = directory.path().join("received-rollback");
+    let rollback_store = store(&rollback_root, &alice.did, &a1_device.device_id);
+    clone_device_state(&a1_store, &rollback_store);
+    let connection = Connection::open(rollback_store.state_db_path()).unwrap();
+    connection.execute_batch("CREATE TABLE group_mls_received_results(recipient_did TEXT NOT NULL,device_id TEXT NOT NULL,group_did TEXT NOT NULL,message_id TEXT NOT NULL,input_digest TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(recipient_did,device_id,group_did,message_id)); CREATE TRIGGER fail_received_result BEFORE INSERT ON group_mls_received_results BEGIN SELECT RAISE(ABORT,'injected result persistence failure'); END;").unwrap();
+    assert!(anp::group_e2ee::operations::v2::decrypt_received_v2(
+        &rollback_store,
+        received_input.clone()
+    )
+    .is_err());
+    connection
+        .execute_batch("DROP TRIGGER fail_received_result;")
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        anp::group_e2ee::operations::v2::decrypt_received_v2(&rollback_store, received_input)
+            .expect("failed result persistence rolls back the ratchet"),
+        received_output
+    );
     assert_eq!(
         decrypt_v2(
             &a1_store,

@@ -5054,9 +5054,26 @@ pub fn encrypt_v2<S: GroupMlsStore>(
     Ok(body)
 }
 
+/// Decrypts a durably received input with an exact-input recovery result.
+/// Strict callers continue to use `decrypt_v2`.
+pub fn decrypt_received_v2<S: GroupMlsStore>(
+    store: &S,
+    input: V2DecryptInput,
+) -> GroupMlsOperationResult<V2DecryptOutput> {
+    decrypt_v2_inner(store, input, true)
+}
+
 pub fn decrypt_v2<S: GroupMlsStore>(
     store: &S,
     input: V2DecryptInput,
+) -> GroupMlsOperationResult<V2DecryptOutput> {
+    decrypt_v2_inner(store, input, false)
+}
+
+fn decrypt_v2_inner<S: GroupMlsStore>(
+    store: &S,
+    input: V2DecryptInput,
+    received: bool,
 ) -> GroupMlsOperationResult<V2DecryptOutput> {
     input
         .originating_meta
@@ -5073,6 +5090,56 @@ pub fn decrypt_v2<S: GroupMlsStore>(
         &input.request_id,
     )?;
     let scope = open_scope(store, &input.request_id)?;
+    let transaction = scope
+        .provider
+        .connection
+        .unchecked_transaction()
+        .map_err(|error| sqlite_error("state_write_failed", error, &input.request_id))?;
+    let input_digest = if received {
+        ensure_received_decryption_schema(&transaction, &input.request_id)?;
+        let canonical = crate::canonical_json::canonicalize_json(&json!({
+            "recipient_did": input.recipient_did, "recipient_device_id": input.recipient_device_id,
+            "meta": input.originating_meta, "cipher": input.group_cipher_object,
+        }))
+        .map_err(|error| {
+            operation_error(
+                "group.e2ee.private_message_invalid",
+                error,
+                &input.request_id,
+            )
+        })?;
+        let digest = encode_b64u(&Sha256::digest(canonical));
+        let cached: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT input_digest,result_json FROM group_mls_received_results
+             WHERE recipient_did=?1 AND device_id=?2 AND group_did=?3 AND message_id=?4",
+                params![
+                    input.recipient_did,
+                    input.recipient_device_id,
+                    input.originating_meta.target.did,
+                    input.originating_meta.message_id
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| sqlite_error("state_read_failed", error, &input.request_id))?;
+        if let Some((prior_digest, output)) = cached {
+            if prior_digest != digest {
+                return Err(operation_error(
+                    "group.e2ee.private_message_invalid",
+                    "received message identity conflicts with cached cryptographic input",
+                    &input.request_id,
+                ));
+            }
+            return serde_json::from_str(&output).map_err(|error| {
+                operation_error("group.e2ee.state_not_ready", error, &input.request_id)
+            });
+        }
+        Some(digest)
+    } else {
+        None
+    };
+
     let local_binding = binding(
         &scope.app_conn,
         &input.recipient_did,
@@ -5179,13 +5246,81 @@ pub fn decrypt_v2<S: GroupMlsStore>(
             &input.request_id,
         ));
     }
-    Ok(V2DecryptOutput {
+    let output = V2DecryptOutput {
         application_plaintext,
         epoch: group.epoch().as_u64().to_string(),
         sender_did: sender.agent_did,
         sender_device_id: sender.device_id,
         sender_leaf_signature_key_b64u: sender.leaf_signature_key_b64u,
-    })
+    };
+    if let Some(digest) = input_digest {
+        let encoded = serde_json::to_string(&output).map_err(|error| {
+            operation_error("group.e2ee.state_not_ready", error, &input.request_id)
+        })?;
+        transaction.execute(
+            "INSERT INTO group_mls_received_results(recipient_did,device_id,group_did,message_id,input_digest,result_json,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,CAST(strftime('%s','now') AS INTEGER))",
+            params![input.recipient_did,input.recipient_device_id,input.originating_meta.target.did,input.originating_meta.message_id,digest,encoded],
+        ).map_err(|error| sqlite_error("state_write_failed",error,&input.request_id))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| sqlite_error("state_write_failed", error, &input.request_id))?;
+    Ok(output)
+}
+
+fn ensure_received_decryption_schema(
+    connection: &rusqlite::Connection,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    // This private recovery state is intentionally not stored in the public
+    // operations/diagnostic journal. It shares the MLS secret-store protection.
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS group_mls_received_results (
+        recipient_did TEXT NOT NULL, device_id TEXT NOT NULL, group_did TEXT NOT NULL,
+        message_id TEXT NOT NULL, input_digest TEXT NOT NULL, result_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(recipient_did,device_id,group_did,message_id)
+    );",
+        )
+        .map_err(|error| sqlite_error("state_write_failed", error, request_id))?;
+    connection.execute("DELETE FROM group_mls_received_results WHERE created_at<=CAST(strftime('%s','now') AS INTEGER)-172800", [])
+        .map_err(|error| sqlite_error("state_write_failed",error,request_id))?;
+    connection.execute("DELETE FROM group_mls_received_results WHERE rowid IN (
+        SELECT rowid FROM group_mls_received_results ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET 16383)", [])
+        .map_err(|error| sqlite_error("state_write_failed",error,request_id))?;
+    Ok(())
+}
+
+/// Remove the private replay result only after the host has committed its
+/// business projection. Losing the host before this call remains recoverable.
+pub fn forget_received_decryption_v2<S: GroupMlsStore>(
+    store: &S,
+    recipient_did: &str,
+    device_id: &str,
+    message_id: &str,
+    group_did: &str,
+) -> GroupMlsOperationResult<()> {
+    let request_id = "forget-received-decryption";
+    validate_store_scope(
+        store.owner_scope().as_ref(),
+        recipient_did,
+        device_id,
+        request_id,
+    )?;
+    let scope = open_scope(store, request_id)?;
+    ensure_received_decryption_schema(&scope.provider.connection, request_id)?;
+    scope
+        .provider
+        .connection
+        .execute(
+            "DELETE FROM group_mls_received_results
+        WHERE recipient_did=?1 AND device_id=?2 AND group_did=?3 AND message_id=?4",
+            params![recipient_did, device_id, group_did, message_id],
+        )
+        .map_err(|error| sqlite_error("state_write_failed", error, request_id))?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
