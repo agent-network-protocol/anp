@@ -1,6 +1,6 @@
 {
   "name": "@awiki/anp-typescript-sdk",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "TypeScript SDK for Agent Network Protocol (ANP)",
   "type": "module",
   "main": "./dist/index.cjs",

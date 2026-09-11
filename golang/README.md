@@ -7,7 +7,7 @@ Pure Go implementation of the Agent Network Protocol (ANP) core SDK.
 Implemented in this directory:
 
 - `authentication`
-  - DID WBA document generation
+  - DID WBA document generation; vNext e1 documents authorize both the root binding key and device signing key in `authentication`, matching the shared cross-language fixture
   - legacy DIDWba auth header generation and verification
   - HTTP Message Signatures generation and verification
   - DID resolver for `did:wba` and `did:web`

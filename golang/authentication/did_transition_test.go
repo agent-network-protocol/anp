@@ -27,7 +27,6 @@ type transitionVectorCase struct {
 	TrustedDocuments         map[string]string `json:"trustedDocuments"`
 	ResolvedDocuments        map[string]string `json:"resolvedDocuments"`
 	PreludeResolvedDocuments map[string]string `json:"preludeResolvedDocuments"`
-	ProviderDocuments        map[string]string `json:"providerDocuments"`
 	CacheEdges               map[string]string `json:"cacheEdges"`
 	ExpectedCacheEdges       map[string]string `json:"expectedCacheEdges"`
 	UntrustedCurrentDIDHint  string            `json:"untrustedCurrentDidHint"`
@@ -78,7 +77,6 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 			resolved := loadTransitionDocuments(t, root, vector.ResolvedDocuments)
 			preludeResolved := loadTransitionDocuments(t, root, vector.PreludeResolvedDocuments)
 			trusted := loadTransitionDocuments(t, root, vector.TrustedDocuments)
-			providers := loadTransitionDocuments(t, root, vector.ProviderDocuments)
 			fetcher := func(did string) (map[string]any, error) {
 				document, ok := resolved[did]
 				if !ok {
@@ -86,14 +84,6 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 				}
 				return document, nil
 			}
-			providerFetcher := func(did string) (map[string]any, error) {
-				document, ok := providers[did]
-				if !ok {
-					return nil, errors.New("provider document not found")
-				}
-				return document, nil
-			}
-
 			var actual map[string]any
 			var err error
 			cache := NewInMemoryTransitionCache(vector.CacheEdges)
@@ -108,11 +98,23 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 						"hops": []any{}, "assurance": nil,
 					}
 				}
-			case "resolve", "resolve_ignoring_hint", "resolve_after_unverified":
+			case "verify_hop":
+				predecessor := resolved[vector.RequestedDID]
+				successorDID := stringValue(predecessor["successorDid"])
+				var hop TransitionHop
+				hop, err = VerifyTransitionHop(predecessor, resolved[successorDID], trusted[vector.RequestedDID])
+				if err == nil {
+					actual = map[string]any{
+						"predecessorDid": hop.PredecessorDID,
+						"successorDid":   hop.SuccessorDID,
+						"assurance":      string(hop.Assurance),
+					}
+				}
+			case "resolve", "resolve_ignoring_hint", "resolve_after_provider_asserted":
 				if vector.Operation == "resolve_ignoring_hint" && vector.UntrustedCurrentDIDHint == "" {
 					t.Fatal("resolve_ignoring_hint requires an untrustedCurrentDidHint fixture")
 				}
-				if vector.Operation == "resolve_after_unverified" {
+				if vector.Operation == "resolve_after_provider_asserted" {
 					preludeFetcher := func(did string) (map[string]any, error) {
 						document, ok := preludeResolved[did]
 						if !ok {
@@ -121,15 +123,15 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 						return document, nil
 					}
 					preludeResult, preludeErr := ResolveCurrentDID(
-						vector.RequestedDID, preludeFetcher, trusted, nil, cache, vector.MaxHops,
+						vector.RequestedDID, preludeFetcher, trusted, cache, vector.MaxHops,
 					)
-					if preludeErr != nil || preludeResult.Assurance == nil || *preludeResult.Assurance != TransitionAssuranceUnverified {
-						t.Fatalf("unverified prelude failed: result=%#v err=%v", preludeResult, preludeErr)
+					if preludeErr != nil || preludeResult.Assurance == nil || *preludeResult.Assurance != TransitionAssuranceProviderAsserted {
+						t.Fatalf("provider-asserted prelude failed: result=%#v err=%v", preludeResult, preludeErr)
 					}
 					cacheJSON, _ := json.Marshal(cache.Snapshot())
 					initialCacheJSON, _ := json.Marshal(vector.CacheEdges)
 					if string(cacheJSON) != string(initialCacheJSON) {
-						t.Fatalf("unverified prelude changed cache: %s, want %s", cacheJSON, initialCacheJSON)
+						t.Fatalf("provider-asserted prelude changed cache: %s, want %s", cacheJSON, initialCacheJSON)
 					}
 				}
 				var result TransitionResult
@@ -137,7 +139,6 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 					vector.RequestedDID,
 					fetcher,
 					trusted,
-					providerFetcher,
 					cache,
 					vector.MaxHops,
 				)
@@ -173,7 +174,7 @@ func TestDidTransitionSharedVectors(t *testing.T) {
 			}
 			cacheJSON, _ := json.Marshal(cache.Snapshot())
 			expectedCacheJSON, _ := json.Marshal(vector.ExpectedCacheEdges)
-			if (vector.Operation == "resolve" || vector.Operation == "resolve_ignoring_hint" || vector.Operation == "resolve_after_unverified") && string(cacheJSON) != string(expectedCacheJSON) {
+			if (vector.Operation == "resolve" || vector.Operation == "resolve_ignoring_hint" || vector.Operation == "resolve_after_provider_asserted") && string(cacheJSON) != string(expectedCacheJSON) {
 				t.Fatalf("cache %s, want %s", cacheJSON, expectedCacheJSON)
 			}
 		})
@@ -188,7 +189,6 @@ func TestResolveCurrentDIDAllowsNilCache(t *testing.T) {
 	result, err := ResolveCurrentDID(
 		did,
 		func(string) (map[string]any, error) { return document, nil },
-		nil,
 		nil,
 		nil,
 		DefaultMaxTransitionHops,

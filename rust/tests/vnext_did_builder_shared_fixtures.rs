@@ -183,6 +183,48 @@ fn vnext_mutation_rejects_duplicate_foreign_and_missing_relationship() {
 }
 
 #[test]
+fn ordinary_p4_v2_builder_uses_v1_foundations_without_enabling_p6() {
+    let mut value = fixture();
+    let profiles = json!([
+        "anp.core.binding.v1",
+        "anp.identity.discovery.v1",
+        "anp.direct.base.v1",
+        "anp.group.base.v2",
+        "anp.attachment.v1"
+    ]);
+    value["device_a"]["entry"]["profiles"] = profiles.clone();
+    let document = build(&value);
+    assert_eq!(
+        document["deviceManifest"]["devices"][0]["profiles"],
+        profiles
+    );
+    validate_device_manifest(&document).expect("ordinary P4 V2 Manifest");
+    for rejected in [
+        json!(["anp.group.base.v2"]),
+        json!(["anp.core.binding.v1", "anp.group.base.v2"]),
+        json!(["anp.identity.discovery.v1", "anp.group.base.v2"]),
+        json!([
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+        ]),
+    ] {
+        let mut device = value["device_a"].clone();
+        device["entry"]["profiles"] = rejected;
+        assert!(build_vnext_did_document(
+            &value["base_document"],
+            value["root_key_id"].as_str().unwrap(),
+            &value["root_verification_method"],
+            &entry(&device),
+            &device["signing_verification_method"],
+            &device["e2ee_verification_method"]
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn legacy_draft_foundation_profiles_are_read_only() {
     let value = fixture();
     let mut legacy_device = value["device_a"].clone();

@@ -25,18 +25,6 @@ ANP_DID_TRANSITION_CONFLICT = 1021
 DEFAULT_MAX_TRANSITION_HOPS = 8
 
 _E1_SEGMENT = re.compile(r"^e1_[A-Za-z0-9_-]{43}$")
-_CANONICAL_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-_PROVIDER_FIELDS = {
-    "type",
-    "providerDid",
-    "predecessorDid",
-    "successorDid",
-    "stableSubjectPath",
-    "issuedAt",
-    "proof",
-}
-
-
 class TransitionAssurance(str, Enum):
     VERIFIED = "verified"
     RECOVERY_VERIFIED = "recovery_verified"
@@ -208,82 +196,17 @@ def verify_active_e1_document(did: str, document: Dict[str, Any]) -> None:
         raise DidTransitionError(TransitionErrorKind.INVALID_PROOF, "active E1 proof verification failed")
 
 
-def _provider_did(profile: DidWbaE1Profile) -> str:
-    return f"did:wba:{profile.origin}"
-
-
-def _verify_provider_assertion(
-    predecessor_document: Dict[str, Any],
-    predecessor: DidWbaE1Profile,
-    successor: DidWbaE1Profile,
-    provider_fetcher: Optional[DocumentFetcher],
-) -> None:
-    assertion = predecessor_document.get("providerTransitionAssertion")
-    if not isinstance(assertion, dict) or set(assertion) != _PROVIDER_FIELDS:
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "providerTransitionAssertion has an invalid shape",
-        )
-    provider_did = _provider_did(predecessor)
-    issued_at = assertion.get("issuedAt")
-    proof = assertion.get("proof")
-    if (
-        assertion.get("type") != "DidWbaProviderTransitionAssertion"
-        or assertion.get("providerDid") != provider_did
-        or assertion.get("predecessorDid") != predecessor.did
-        or assertion.get("successorDid") != successor.did
-        or assertion.get("stableSubjectPath") != predecessor.stable_subject_path
-        or not isinstance(issued_at, str)
-        or not _CANONICAL_UTC.fullmatch(issued_at)
-        or not isinstance(proof, dict)
-        or proof.get("created") != issued_at
-    ):
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "providerTransitionAssertion binding fields are invalid",
-        )
-    if provider_fetcher is None:
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "provider DID resolver is required",
-        )
-    try:
-        provider_document = provider_fetcher(provider_did)
-    except Exception as exc:
-        raise DidTransitionError(TransitionErrorKind.NETWORK_ERROR, str(exc)) from exc
-    _require_document_id(provider_did, provider_document)
-    method_id = proof.get("verificationMethod")
-    if not isinstance(method_id, str) or not method_id.startswith(f"{provider_did}#"):
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "provider proof key is outside providerDid",
-        )
-    method = _find_verification_method(provider_document, method_id)
-    if not method or not _is_assertion_method_authorized_in_document(provider_document, method_id):
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "provider proof key is not authorized",
-        )
-    try:
-        public_key = _extract_public_key(method)
-    except ValueError as exc:
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION, "invalid provider proof key"
-        ) from exc
-    if not verify_w3c_proof(assertion, public_key, expected_purpose="assertionMethod"):
-        raise DidTransitionError(
-            TransitionErrorKind.INVALID_PROVIDER_ASSERTION,
-            "providerTransitionAssertion proof verification failed",
-        )
-
-
 def verify_transition_hop(
     predecessor_document: Dict[str, Any],
     successor_document: Dict[str, Any],
     *,
     trusted_predecessor: Optional[Dict[str, Any]] = None,
-    provider_fetcher: Optional[DocumentFetcher] = None,
 ) -> TransitionHop:
+    """Verify one linked transition hop and classify its assurance.
+
+    A structurally valid unsigned hop remains unverified here. Complete-chain
+    Provider assurance is assigned only by ``resolve_current_did``.
+    """
     predecessor_did = predecessor_document.get("id")
     successor_did = predecessor_document.get("successorDid")
     if not isinstance(predecessor_did, str) or not isinstance(successor_did, str):
@@ -324,12 +247,6 @@ def verify_transition_hop(
                 "successor identifies a different direct predecessor",
             )
 
-    provider_present = "providerTransitionAssertion" in predecessor_document
-    if provider_present:
-        _verify_provider_assertion(
-            predecessor_document, predecessor, successor, provider_fetcher
-        )
-
     proof = predecessor_document.get("proof")
     assurance = TransitionAssurance.UNVERIFIED
     if proof is not None:
@@ -368,9 +285,6 @@ def verify_transition_hop(
             ):
                 raise DidTransitionError(TransitionErrorKind.INVALID_PROOF, "recovery proof failed")
             assurance = TransitionAssurance.RECOVERY_VERIFIED
-    elif provider_present:
-        assurance = TransitionAssurance.PROVIDER_ASSERTED
-
     return TransitionHop(predecessor_did, successor_did, assurance)
 
 
@@ -388,10 +302,15 @@ def resolve_current_did(
     *,
     trusted_predecessor: Optional[Dict[str, Any]] = None,
     trusted_documents: Optional[Mapping[str, Dict[str, Any]]] = None,
-    provider_fetcher: Optional[DocumentFetcher] = None,
     cache: Optional[TransitionCache] = None,
     max_hops: int = DEFAULT_MAX_TRANSITION_HOPS,
 ) -> TransitionResult:
+    """Resolve a complete transition chain to its proof-verified active DID.
+
+    ``fetcher`` is expected to perform authenticated Provider resolution.
+    After the chain reaches a proof-verified active DID, structurally valid
+    unsigned hops returned by it are provider-asserted.
+    """
     parse_did_wba_e1(requested_did)
     if max_hops < 1:
         raise DidTransitionError(TransitionErrorKind.MAX_HOPS_EXCEEDED, "max_hops must be positive")
@@ -459,8 +378,13 @@ def resolve_current_did(
             document,
             successor_document,
             trusted_predecessor=trusted.get(current),
-            provider_fetcher=provider_fetcher,
         )
+        if hop.assurance is TransitionAssurance.UNVERIFIED:
+            hop = TransitionHop(
+                predecessor_did=hop.predecessor_did,
+                successor_did=hop.successor_did,
+                assurance=TransitionAssurance.PROVIDER_ASSERTED,
+            )
         cached_successor = cache.get_successor(current)
         if cached_successor is not None and cached_successor != successor_did:
             raise DidTransitionError(

@@ -17,6 +17,7 @@ pub const PROFILE_GROUP_E2EE_V2: &str = "anp.group.e2ee.v2";
 pub const PROFILE_CORE_BINDING_V2: &str = "anp.core.binding.v2";
 pub const PROFILE_IDENTITY_DISCOVERY_V2: &str = "anp.identity.discovery.v2";
 pub const PROFILE_DIRECT_BASE_V2: &str = "anp.direct.base.v2";
+// P4 V2 also names the current DID-only Group draft, with P1/P2 V1 dependencies.
 pub const PROFILE_GROUP_BASE_V2: &str = "anp.group.base.v2";
 
 const P5_DEPENDENCIES: &[&str] = &[
@@ -47,7 +48,6 @@ const LEGACY_DRAFT_FOUNDATION_PROFILES: &[&str] = &[
     PROFILE_CORE_BINDING_V2,
     PROFILE_IDENTITY_DISCOVERY_V2,
     PROFILE_DIRECT_BASE_V2,
-    PROFILE_GROUP_BASE_V2,
 ];
 
 /// The closed, interoperable device entry defined by the vNext ANP Profile.
@@ -418,6 +418,15 @@ fn prepare_document_for_mutation(
 fn require_canonical_write_profiles(
     device: &DeviceManifestEntry,
 ) -> Result<(), DeviceManifestError> {
+    if device.profiles.iter().any(|p| p == PROFILE_GROUP_BASE_V2)
+        && [PROFILE_CORE_BINDING_V1, PROFILE_IDENTITY_DISCOVERY_V1]
+            .iter()
+            .any(|required| !device.profiles.iter().any(|p| p == required))
+    {
+        return Err(invalid(
+            "P4 V2 requires core.binding.v1 and identity.discovery.v1",
+        ));
+    }
     if device.profiles.iter().any(|profile| {
         LEGACY_DRAFT_FOUNDATION_PROFILES
             .iter()

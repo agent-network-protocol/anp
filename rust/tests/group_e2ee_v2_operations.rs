@@ -2791,6 +2791,151 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
     PrivateMessageIn::tls_deserialize_exact(raw_private_message.clone())
         .expect("P6 private_message_b64u is an exact raw MLS PrivateMessage");
     assert!(MlsMessageIn::tls_deserialize_exact(raw_private_message).is_err());
+    // A receiver can crash after advancing its MLS ratchet but before committing
+    // the host's message projection. Reopening must replay that exact result.
+    let received_root = directory.path().join("received-restart");
+    let received_store = store(&received_root, &alice.did, &a1_device.device_id);
+    clone_device_state(&a1_store, &received_store);
+    let received_input = V2DecryptInput {
+        recipient_did: alice.did.clone(),
+        recipient_device_id: a1_device.device_id.clone(),
+        originating_meta: history_meta.clone(),
+        group_cipher_object: history.clone(),
+        sender_did_document: owner.document.clone(),
+        now: NOW.to_owned(),
+        draft_extension_negotiated: true,
+        request_id: "received-before-host-commit".into(),
+    };
+    let received_output = anp::group_e2ee::operations::v2::decrypt_received_v2(
+        &received_store,
+        received_input.clone(),
+    )
+    .expect("received message decrypts");
+    drop(received_store);
+    let reopened = store(&received_root, &alice.did, &a1_device.device_id);
+    let mut retry_input = received_input.clone();
+    retry_input.request_id = "received-after-host-restart".into();
+    assert_eq!(
+        anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, retry_input.clone())
+            .expect("exact received input survives host restart"),
+        received_output
+    );
+    retry_input
+        .group_cipher_object
+        .private_message_b64u
+        .push('A');
+    assert!(anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, retry_input).is_err());
+    // Housekeeping must survive an early cached return, and a duplicate at the
+    // exact capacity must not evict the very recovery result it is reading.
+    let cache_db = Connection::open(reopened.state_db_path()).unwrap();
+    cache_db.execute("INSERT INTO group_mls_received_results SELECT recipient_did,device_id,group_did,'expired-recovery',input_digest,result_json,CAST(strftime('%s','now') AS INTEGER)-172800 FROM group_mls_received_results LIMIT 1", []).unwrap();
+    anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, received_input.clone())
+        .unwrap();
+    assert_eq!(cache_db.query_row("SELECT COUNT(*) FROM group_mls_received_results WHERE message_id='expired-recovery'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    cache_db
+        .execute(
+            "UPDATE group_mls_received_results SET created_at=created_at-10",
+            [],
+        )
+        .unwrap();
+    cache_db.execute("WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<16383)
+        INSERT INTO group_mls_received_results SELECT ?1,?2,?3,'capacity-'||value,'dummy','{}',CAST(strftime('%s','now') AS INTEGER) FROM n",
+        params![alice.did, a1_device.device_id, GROUP_DID]).unwrap();
+    assert_eq!(
+        anp::group_e2ee::operations::v2::decrypt_received_v2(&reopened, received_input.clone())
+            .unwrap(),
+        received_output
+    );
+    assert_eq!(
+        cache_db
+            .query_row(
+                "SELECT COUNT(*) FROM group_mls_received_results",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        16384
+    );
+    let keys = anp::group_e2ee::operations::v2::list_received_decryption_keys_v2(
+        &reopened,
+        &alice.did,
+        &a1_device.device_id,
+        1,
+    )
+    .unwrap();
+    assert_eq!(keys[0].message_id, history_meta.message_id);
+    assert!(
+        anp::group_e2ee::operations::v2::forget_received_decryption_v2(
+            &reopened,
+            &alice.did,
+            &a2_device.device_id,
+            &history_meta.message_id,
+            GROUP_DID
+        )
+        .is_err()
+    );
+    anp::group_e2ee::operations::v2::forget_received_decryption_v2(
+        &reopened,
+        &alice.did,
+        &a1_device.device_id,
+        &history_meta.message_id,
+        "did:example:another-group",
+    )
+    .unwrap();
+    assert_eq!(
+        cache_db
+            .query_row(
+                "SELECT COUNT(*) FROM group_mls_received_results WHERE message_id=?1",
+                [&history_meta.message_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    let plaintext = received_output
+        .application_plaintext
+        .text
+        .as_deref()
+        .unwrap();
+    assert_eq!(cache_db.query_row("SELECT COUNT(*) FROM group_mls_operations WHERE instr(COALESCE(response_json,''),?1)>0", [plaintext], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    anp::group_e2ee::operations::v2::forget_received_decryption_v2(
+        &reopened,
+        &alice.did,
+        &a1_device.device_id,
+        &history_meta.message_id,
+        GROUP_DID,
+    )
+    .unwrap();
+    assert_eq!(
+        cache_db
+            .query_row(
+                "SELECT COUNT(*) FROM group_mls_received_results WHERE message_id=?1",
+                [&history_meta.message_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    drop(cache_db);
+    let rollback_root = directory.path().join("received-rollback");
+    let rollback_store = store(&rollback_root, &alice.did, &a1_device.device_id);
+    clone_device_state(&a1_store, &rollback_store);
+    let connection = Connection::open(rollback_store.state_db_path()).unwrap();
+    connection.execute_batch("CREATE TABLE group_mls_received_results(recipient_did TEXT NOT NULL,device_id TEXT NOT NULL,group_did TEXT NOT NULL,message_id TEXT NOT NULL,input_digest TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(recipient_did,device_id,group_did,message_id)); CREATE TRIGGER fail_received_result BEFORE INSERT ON group_mls_received_results BEGIN SELECT RAISE(ABORT,'injected result persistence failure'); END;").unwrap();
+    assert!(anp::group_e2ee::operations::v2::decrypt_received_v2(
+        &rollback_store,
+        received_input.clone()
+    )
+    .is_err());
+    connection
+        .execute_batch("DROP TRIGGER fail_received_result;")
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        anp::group_e2ee::operations::v2::decrypt_received_v2(&rollback_store, received_input)
+            .expect("failed result persistence rolls back the ratchet"),
+        received_output
+    );
     assert_eq!(
         decrypt_v2(
             &a1_store,

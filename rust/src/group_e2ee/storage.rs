@@ -12,6 +12,7 @@ use std::{
     fs,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
+    rc::Rc,
     thread,
     time::{Duration, Instant},
 };
@@ -43,6 +44,13 @@ pub struct StateLock {
 
 impl StateLock {
     pub fn try_acquire(data_dir: &Path) -> Result<Self, StateLockError> {
+        Self::try_acquire_with_timeout(data_dir, STATE_LOCK_WAIT_TIMEOUT)
+    }
+
+    fn try_acquire_with_timeout(
+        data_dir: &Path,
+        wait_timeout: Duration,
+    ) -> Result<Self, StateLockError> {
         let lock_path = data_dir.join("state.lock");
         let file = OpenOptions::new()
             .create(true)
@@ -56,7 +64,7 @@ impl StateLock {
                 Ok(()) => break,
                 Err(error)
                     if error.kind() == std::io::ErrorKind::WouldBlock
-                        && started.elapsed() < STATE_LOCK_WAIT_TIMEOUT =>
+                        && started.elapsed() < wait_timeout =>
                 {
                     thread::sleep(STATE_LOCK_RETRY_DELAY);
                 }
@@ -90,13 +98,14 @@ impl openmls_sqlite_storage::Codec for JsonCodec {
 
 pub(crate) struct SqliteMlsProvider {
     crypto: RustCrypto,
-    storage: SqliteStorageProvider<JsonCodec, MlsConnection>,
+    storage: SqliteStorageProvider<JsonCodec, Rc<MlsConnection>>,
+    pub(crate) connection: Rc<MlsConnection>,
 }
 
 impl OpenMlsProvider for SqliteMlsProvider {
     type CryptoProvider = RustCrypto;
     type RandProvider = RustCrypto;
-    type StorageProvider = SqliteStorageProvider<JsonCodec, MlsConnection>;
+    type StorageProvider = SqliteStorageProvider<JsonCodec, Rc<MlsConnection>>;
 
     fn storage(&self) -> &Self::StorageProvider {
         &self.storage
@@ -129,14 +138,17 @@ impl SqliteMlsProviderError {
 }
 
 fn sqlite_mls_provider(db_path: &Path) -> Result<SqliteMlsProvider, SqliteMlsProviderError> {
-    let connection = MlsConnection::open(db_path).map_err(SqliteMlsProviderError::Open)?;
-    let mut storage = SqliteStorageProvider::<JsonCodec, MlsConnection>::new(connection);
-    storage
+    let mut connection = MlsConnection::open(db_path).map_err(SqliteMlsProviderError::Open)?;
+    SqliteStorageProvider::<JsonCodec, &mut MlsConnection>::new(&mut connection)
         .run_migrations()
-        .map_err(|e| SqliteMlsProviderError::Migration(e.to_string()))?;
+        .map_err(|error| SqliteMlsProviderError::Migration(error.to_string()))?;
+    let connection = Rc::new(connection);
+    let storage =
+        SqliteStorageProvider::<JsonCodec, Rc<MlsConnection>>::new(Rc::clone(&connection));
     Ok(SqliteMlsProvider {
         crypto: RustCrypto::default(),
         storage,
+        connection,
     })
 }
 
@@ -269,6 +281,7 @@ pub struct ImCoreSqliteGroupMlsStore {
     state_db_path: PathBuf,
     lock_dir: PathBuf,
     scope: GroupMlsOwnerScope,
+    lock_wait_timeout: Duration,
 }
 
 impl ImCoreSqliteGroupMlsStore {
@@ -305,7 +318,15 @@ impl ImCoreSqliteGroupMlsStore {
             state_db_path,
             lock_dir,
             scope,
+            lock_wait_timeout: STATE_LOCK_WAIT_TIMEOUT,
         }
+    }
+
+    /// Lets a host yield and retry a busy cryptographic scope without holding
+    /// an unrelated receive-database writer while waiting on this file lock.
+    pub fn with_nonblocking_lock(mut self) -> Self {
+        self.lock_wait_timeout = Duration::ZERO;
+        self
     }
 
     pub fn state_db_path(&self) -> &Path {
@@ -329,7 +350,7 @@ impl GroupMlsStore for ImCoreSqliteGroupMlsStore {
             path: self.lock_dir.clone(),
             source,
         })?;
-        let lock = StateLock::try_acquire(&self.lock_dir)?;
+        let lock = StateLock::try_acquire_with_timeout(&self.lock_dir, self.lock_wait_timeout)?;
         let provider = sqlite_mls_provider(&self.state_db_path)?;
         let app_conn = Connection::open(&self.state_db_path).map_err(|source| {
             GroupMlsStoreError::OpenAppSqlite {

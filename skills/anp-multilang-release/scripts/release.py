@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -551,7 +552,12 @@ def publish_python(paths: ReleasePaths, target_version: SemVer) -> None:
     relative_paths = [
         str(path.relative_to(paths.repo_root)) for path in publish_files
     ]
-    run_command(["uv", "publish", *relative_paths], cwd=paths.repo_root)
+    environment = os.environ.copy()
+    if environment.get("UV_PUBLISH_TOKEN"):
+        # uv rejects a configured username together with token authentication.
+        environment.pop("UV_PUBLISH_USERNAME", None)
+        environment.pop("UV_PUBLISH_PASSWORD", None)
+    run_command(["uv", "publish", *relative_paths], cwd=paths.repo_root, env=environment)
 
 
 def publish_rust(repo_root: Path) -> None:
@@ -616,6 +622,7 @@ def run_command(
     *,
     cwd: Path,
     capture_output: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command and stream or capture its output."""
     print(f"Running: {' '.join(command)}")
@@ -625,6 +632,7 @@ def run_command(
         check=True,
         text=True,
         capture_output=capture_output,
+        env=env,
     )
 
 

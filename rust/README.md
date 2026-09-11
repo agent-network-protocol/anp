@@ -52,8 +52,19 @@ cargo add anp
 - Message encrypt/decrypt rejects incoming group-state or cipher claims whose
   `crypto_group_id_b64u`/`openmls_group_id_b64u` or epoch does not match the local
   SQLite group binding before invoking OpenMLS.
-- Decrypted plaintext is returned only as the typed `DecryptOutput` for the active library
-  call; callers must not persist plaintext in diagnostics or operation logs.
+- `decrypt_v2` keeps strict cryptographic replay rejection. Hosts processing a durable
+  receive queue may explicitly use `decrypt_received_v2`: the MLS ratchet and an
+  exact-input replay result commit on one provider connection. The private
+  `group_mls_received_results` state is scoped to recipient/device/group/message,
+  expires after 48 hours, and is bounded to 16,384 entries per store. Call
+  `forget_received_decryption_v2` after the host business commit or an explicit
+  input discard. `list_received_decryption_keys_v2` returns only bounded key
+  metadata for host cleanup and purges expired results. A duplicate at capacity
+  does not reserve insertion space or evict its own recovery result. A changed
+  input under the same identity is rejected. Plaintext never enters diagnostics or the
+  operations journal; this recovery state uses the existing private MLS store.
+- `ImCoreSqliteGroupMlsStore::with_nonblocking_lock` lets a receive worker yield
+  a busy MLS scope instead of waiting while holding another database writer.
 - `remove_member_prepare` creates a durable OpenMLS pending commit and returns opaque
   commit, ratchet-tree/group-info-compatible public artifacts, from/to epochs, and
   `pending_commit_id`; local epoch remains unchanged until `finalize_commit`, while

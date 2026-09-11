@@ -160,7 +160,7 @@ def test_publish_python_passes_explicit_target_files(tmp_path, monkeypatch):
 
     recorded_calls = []
 
-    def fake_run_command(command, *, cwd, capture_output=False):
+    def fake_run_command(command, *, cwd, capture_output=False, env=None):
         recorded_calls.append((command, cwd, capture_output))
         return None
 
@@ -248,3 +248,24 @@ def test_release_launcher_plan_runs_without_publishing():
     assert result.returncode == 0, result.stderr
     assert "Target version: 0.9.4" in result.stdout
     assert "Publish steps:" in result.stdout
+
+
+def test_python_publish_token_excludes_username_without_mutating_environment(tmp_path, monkeypatch):
+    release = _load_release_module()
+    paths = _build_release_paths(release, tmp_path)
+    (paths.dist_dir / "anp-1.0.1.tar.gz").write_bytes(b"sdist")
+    (paths.dist_dir / "anp-1.0.1-py3-none-any.whl").write_bytes(b"wheel")
+    monkeypatch.setenv("UV_PUBLISH_TOKEN", "test-token")
+    monkeypatch.setenv("UV_PUBLISH_USERNAME", "test-user")
+    monkeypatch.setenv("UV_PUBLISH_PASSWORD", "test-password")
+    captured = {}
+
+    def fake_run(command, *, cwd, env):
+        captured.update(env)
+
+    monkeypatch.setattr(release, "run_command", fake_run)
+    release.publish_python(paths, release.SemVer.parse("1.0.1"))
+    assert captured["UV_PUBLISH_TOKEN"] == "test-token"
+    assert "UV_PUBLISH_USERNAME" not in captured
+    assert "UV_PUBLISH_PASSWORD" not in captured
+    assert release.os.environ["UV_PUBLISH_USERNAME"] == "test-user"

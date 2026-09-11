@@ -12,7 +12,6 @@ import hashlib
 import json
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from anp.authentication.did_wba import (
@@ -37,7 +36,7 @@ def key(label: str) -> ed25519.Ed25519PrivateKey:
     return ed25519.Ed25519PrivateKey.from_private_bytes(seed)
 
 
-KEYS = {name: key(name) for name in ("old", "new", "newer", "other", "recovery", "late", "provider")}
+KEYS = {name: key(name) for name in ("old", "new", "newer", "other", "recovery", "late")}
 
 
 def did_for(subject: str, key_name: str, *, origin: str = "example.com") -> str:
@@ -49,11 +48,9 @@ OLD_DID = did_for("alice", "old")
 NEW_DID = did_for("alice", "new")
 NEWER_DID = did_for("alice", "newer")
 OTHER_DID = did_for("bob", "other")
-PROVIDER_DID = "did:wba:example.com"
 PORT_ORIGIN = "example.com%3A8443"
 PORT_OLD_DID = did_for("alice", "old", origin=PORT_ORIGIN)
 PORT_NEW_DID = did_for("alice", "new", origin=PORT_ORIGIN)
-PORT_PROVIDER_DID = f"did:wba:{PORT_ORIGIN}"
 
 
 def vm(did: str, fragment: str, key_name: str) -> dict:
@@ -125,37 +122,6 @@ def deactivated(
     return sign(document, signer, f"{document['id']}#{fragment}")
 
 
-def provider_document(provider_did: str = PROVIDER_DID) -> dict:
-    method = vm(provider_did, "provider-assertion-key", "provider")
-    return {
-        "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": provider_did,
-        "verificationMethod": [method],
-        "assertionMethod": [method["id"]],
-    }
-
-
-def with_provider_assertion(
-    document: dict,
-    successor: str,
-    *,
-    provider_did: str = PROVIDER_DID,
-    stable_subject_path: str = "example.com:users:alice",
-) -> dict:
-    assertion = {
-        "type": "DidWbaProviderTransitionAssertion",
-        "providerDid": provider_did,
-        "predecessorDid": document["id"],
-        "successorDid": successor,
-        "stableSubjectPath": stable_subject_path,
-        "issuedAt": CREATED,
-    }
-    assertion = sign(assertion, "provider", f"{provider_did}#provider-assertion-key")
-    result = copy.deepcopy(document)
-    result["providerTransitionAssertion"] = assertion
-    return result
-
-
 def corrupt_proof_value(proof: dict) -> None:
     proof_value = proof["proofValue"]
     index = len(proof_value) // 2
@@ -196,16 +162,9 @@ def main() -> None:
         "late-recovery",
         add_method=("late-recovery", "late"),
     )
-    old_unverified = deactivated(old_trusted, NEW_DID, None)
-    old_provider = with_provider_assertion(old_unverified, NEW_DID)
-    old_provider_bad_signature = copy.deepcopy(old_provider)
-    corrupt_proof_value(old_provider_bad_signature["providerTransitionAssertion"]["proof"])
-    old_provider_extra_field = copy.deepcopy(old_provider)
-    old_provider_extra_field["providerTransitionAssertion"]["unexpected"] = True
-    old_provider_cross_origin = copy.deepcopy(old_provider)
-    old_provider_cross_origin["providerTransitionAssertion"]["providerDid"] = "did:wba:other.example"
-    old_provider_bad_binding_proof = sign(old_provider, "old", f"{OLD_DID}#key-1")
-    corrupt_proof_value(old_provider_bad_binding_proof["proof"])
+    old_unsigned = deactivated(old_trusted, NEW_DID, None)
+    old_bad_binding_proof = sign(old_unsigned, "old", f"{OLD_DID}#key-1")
+    corrupt_proof_value(old_bad_binding_proof["proof"])
     new_recovery = deactivated(new_active, NEWER_DID, "recovery", "recovery-1")
     old_wrong_path = deactivated(old_trusted, OTHER_DID, "old")
     old_skip = deactivated(old_trusted, NEWER_DID, "old")
@@ -219,12 +178,7 @@ def main() -> None:
     mismatch = sign(mismatch, "new", f"{mismatch_did}#key-1")
     port_old_trusted = active(PORT_OLD_DID, "old")
     port_new_active = active(PORT_NEW_DID, "new")
-    port_old_provider = with_provider_assertion(
-        deactivated(port_old_trusted, PORT_NEW_DID, None),
-        PORT_NEW_DID,
-        provider_did=PORT_PROVIDER_DID,
-        stable_subject_path=f"{PORT_ORIGIN}:users:alice",
-    )
+    port_old_unsigned = deactivated(port_old_trusted, PORT_NEW_DID, None)
 
     fixture_values = {
         "old-trusted": old_trusted,
@@ -235,17 +189,11 @@ def main() -> None:
         "old-verified": old_verified,
         "old-recovery": old_recovery,
         "old-late-recovery": old_late_recovery,
-        "old-unverified": old_unverified,
-        "old-provider": old_provider,
-        "old-provider-bad-signature": old_provider_bad_signature,
-        "old-provider-extra-field": old_provider_extra_field,
-        "old-provider-cross-origin": old_provider_cross_origin,
-        "old-provider-bad-binding-proof": old_provider_bad_binding_proof,
-        "provider": provider_document(),
+        "old-unsigned": old_unsigned,
+        "old-bad-binding-proof": old_bad_binding_proof,
         "port-old-trusted": port_old_trusted,
         "port-new-active": port_new_active,
-        "port-old-provider": port_old_provider,
-        "port-provider": provider_document(PORT_PROVIDER_DID),
+        "port-old-unsigned": port_old_unsigned,
         "new-recovery": new_recovery,
         "old-wrong-path": old_wrong_path,
         "old-skip": old_skip,
@@ -263,8 +211,6 @@ def main() -> None:
         expected: dict,
         *,
         trusted: dict[str, str] | None = None,
-        provider: list[str] | None = None,
-        provider_did: str = PROVIDER_DID,
         cache_edges: dict[str, str] | None = None,
         expected_cache_edges: dict[str, str] | None = None,
         max_hops: int = 8,
@@ -279,9 +225,6 @@ def main() -> None:
             "resolvedDocuments": {
                 fixture_values[name]["id"]: documents[name] for name in resolved
             },
-            "providerDocuments": {
-                provider_did: documents[name] for name in (provider or [])
-            },
             "cacheEdges": cache_edges or {},
             "expectedCacheEdges": expected_cache_edges or {},
             "maxHops": max_hops,
@@ -291,15 +234,15 @@ def main() -> None:
             case["untrustedCurrentDidHint"] = current_hint
         return case
 
-    unverified_then_verified = resolve_case(
-        "unverified-cache-does-not-block-verified",
+    provider_asserted_then_verified = resolve_case(
+        "provider-asserted-cache-does-not-block-verified",
         ["old-verified", "new-active"],
         {"status": "superseded", "currentDid": NEW_DID, "hops": ["verified"], "assurance": "verified"},
         expected_cache_edges={OLD_DID: NEW_DID},
     )
-    unverified_then_verified["operation"] = "resolve_after_unverified"
-    unverified_then_verified["preludeResolvedDocuments"] = {
-        OLD_DID: documents["old-unverified"],
+    provider_asserted_then_verified["operation"] = "resolve_after_provider_asserted"
+    provider_asserted_then_verified["preludeResolvedDocuments"] = {
+        OLD_DID: documents["old-unsigned"],
         NEW_DID: documents["new-active"],
     }
 
@@ -310,7 +253,6 @@ def main() -> None:
             "requestedDid": NEW_DID,
             "trustedDocuments": {},
             "resolvedDocuments": {NEW_DID: documents["new-active"]},
-            "providerDocuments": {},
             "cacheEdges": {},
             "maxHops": 8,
             "expected": {"status": "active", "currentDid": NEW_DID, "hops": [], "assurance": None},
@@ -322,7 +264,6 @@ def main() -> None:
                 "requestedDid": fixture_values[name]["id"],
                 "trustedDocuments": {},
                 "resolvedDocuments": {fixture_values[name]["id"]: documents[name]},
-                "providerDocuments": {},
                 "cacheEdges": {},
                 "maxHops": 8,
                 "expected": {"error": "invalid_proof", "code": 1020},
@@ -352,46 +293,54 @@ def main() -> None:
             trusted={OLD_DID: documents["old-trusted-no-recovery"]},
         ),
         resolve_case(
-            "provider-asserted",
-            ["old-provider", "new-active"],
+            "unsigned-provider-asserted",
+            ["old-unsigned", "new-active"],
             {"status": "superseded", "currentDid": NEW_DID, "hops": ["provider_asserted"], "assurance": "provider_asserted"},
-            provider=["provider"],
         ),
-        *[
-            resolve_case(
-                case_id,
-                [fixture_name, "new-active"],
-                {"error": expected_error, "code": 1020},
-                provider=["provider"],
-            )
-            for case_id, fixture_name, expected_error in (
-                ("provider-assertion-bad-signature", "old-provider-bad-signature", "invalid_provider_assertion"),
-                ("provider-assertion-extra-field", "old-provider-extra-field", "invalid_provider_assertion"),
-                ("provider-assertion-cross-origin", "old-provider-cross-origin", "invalid_provider_assertion"),
-                ("invalid-binding-proof-not-downgraded", "old-provider-bad-binding-proof", "invalid_proof"),
-            )
-        ],
+        {
+            "id": "unsigned-hop-remains-unverified-before-chain-resolution",
+            "operation": "verify_hop",
+            "requestedDid": OLD_DID,
+            "trustedDocuments": {OLD_DID: documents["old-trusted"]},
+            "resolvedDocuments": {
+                OLD_DID: documents["old-unsigned"],
+                NEW_DID: documents["new-active"],
+            },
+            "cacheEdges": {},
+            "expectedCacheEdges": {},
+            "maxHops": 8,
+            "expected": {
+                "predecessorDid": OLD_DID,
+                "successorDid": NEW_DID,
+                "assurance": "unverified",
+            },
+        },
         resolve_case(
-            "provider-asserted-explicit-port",
-            ["port-old-provider", "port-new-active"],
+            "invalid-binding-proof-not-downgraded",
+            ["old-bad-binding-proof", "new-active"],
+            {"error": "invalid_proof", "code": 1020},
+        ),
+        resolve_case(
+            "unsigned-provider-asserted-explicit-port",
+            ["port-old-unsigned", "port-new-active"],
             {"status": "superseded", "currentDid": PORT_NEW_DID, "hops": ["provider_asserted"], "assurance": "provider_asserted"},
             trusted={PORT_OLD_DID: documents["port-old-trusted"]},
-            provider=["port-provider"],
-            provider_did=PORT_PROVIDER_DID,
             requested_did=PORT_OLD_DID,
         ),
-        resolve_case(
-            "unverified-hint",
-            ["old-unverified", "new-active"],
-            {"status": "superseded", "currentDid": NEW_DID, "hops": ["unverified"], "assurance": "unverified"},
-        ),
-        unverified_then_verified,
+        provider_asserted_then_verified,
         resolve_case(
             "multi-hop-weakest-assurance",
             ["old-verified", "new-recovery", "newer-active"],
             {"status": "superseded", "currentDid": NEWER_DID, "hops": ["verified", "recovery_verified"], "assurance": "recovery_verified"},
             trusted={OLD_DID: documents["old-trusted"], NEW_DID: documents["new-active"]},
             expected_cache_edges={OLD_DID: NEW_DID, NEW_DID: NEWER_DID},
+        ),
+        resolve_case(
+            "multi-hop-provider-asserted-is-weakest",
+            ["old-unsigned", "new-recovery", "newer-active"],
+            {"status": "superseded", "currentDid": NEWER_DID, "hops": ["provider_asserted", "recovery_verified"], "assurance": "provider_asserted"},
+            trusted={OLD_DID: documents["old-trusted"], NEW_DID: documents["new-active"]},
+            expected_cache_edges={NEW_DID: NEWER_DID},
         ),
         resolve_case(
             "stable-path-mismatch",
@@ -436,7 +385,6 @@ def main() -> None:
                 "requestedDid": did,
                 "trustedDocuments": {},
                 "resolvedDocuments": {},
-                "providerDocuments": {},
                 "cacheEdges": {},
                 "maxHops": 8,
                 "expected": {"error": "unsupported_profile", "code": 1020},

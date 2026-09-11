@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/agent-network-protocol/anp/golang/proof"
 )
@@ -208,64 +207,13 @@ func VerifyActiveE1Document(did string, document map[string]any) error {
 	return nil
 }
 
-func verifyProviderAssertion(
-	predecessorDocument map[string]any,
-	predecessor DidWbaE1Profile,
-	successor DidWbaE1Profile,
-	providerFetcher DidDocumentFetcher,
-) error {
-	assertion, ok := predecessorDocument["providerTransitionAssertion"].(map[string]any)
-	if !ok || len(assertion) != 7 {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "providerTransitionAssertion has an invalid shape")
-	}
-	for _, field := range []string{"type", "providerDid", "predecessorDid", "successorDid", "stableSubjectPath", "issuedAt", "proof"} {
-		if _, exists := assertion[field]; !exists {
-			return newTransitionError(TransitionErrorInvalidProviderAssertion, "providerTransitionAssertion has an invalid shape")
-		}
-	}
-	providerDID := "did:wba:" + predecessor.Origin
-	issuedAt := stringValue(assertion["issuedAt"])
-	parsedTime, timeErr := time.Parse("2006-01-02T15:04:05Z", issuedAt)
-	assertionProof, proofOK := assertion["proof"].(map[string]any)
-	if stringValue(assertion["type"]) != "DidWbaProviderTransitionAssertion" ||
-		stringValue(assertion["providerDid"]) != providerDID ||
-		stringValue(assertion["predecessorDid"]) != predecessor.DID ||
-		stringValue(assertion["successorDid"]) != successor.DID ||
-		stringValue(assertion["stableSubjectPath"]) != predecessor.StableSubjectPath ||
-		timeErr != nil || parsedTime.UTC().Format("2006-01-02T15:04:05Z") != issuedAt ||
-		!proofOK || stringValue(assertionProof["created"]) != issuedAt {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "providerTransitionAssertion binding fields are invalid")
-	}
-	if providerFetcher == nil {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "provider DID resolver is required")
-	}
-	providerDocument, err := providerFetcher(providerDID)
-	if err != nil {
-		return newTransitionError(TransitionErrorNetwork, err.Error())
-	}
-	if err := requireDocumentID(providerDID, providerDocument); err != nil {
-		return err
-	}
-	methodID := stringValue(assertionProof["verificationMethod"])
-	if !strings.HasPrefix(methodID, providerDID+"#") || !IsAssertionMethodAuthorized(providerDocument, methodID) {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "provider proof key is not authorized")
-	}
-	method := FindVerificationMethod(providerDocument, methodID)
-	if method == nil {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "provider proof key is missing")
-	}
-	publicKey, err := ExtractPublicKey(method)
-	if err != nil || !proof.VerifyW3CProof(assertion, publicKey, proof.VerificationOptions{ExpectedPurpose: "assertionMethod"}) {
-		return newTransitionError(TransitionErrorInvalidProviderAssertion, "providerTransitionAssertion proof verification failed")
-	}
-	return nil
-}
-
+// VerifyTransitionHop verifies one linked transition hop and classifies its
+// assurance. A structurally valid unsigned hop remains unverified here;
+// complete-chain Provider assurance is assigned only by ResolveCurrentDID.
 func VerifyTransitionHop(
 	predecessorDocument map[string]any,
 	successorDocument map[string]any,
 	trustedPredecessor map[string]any,
-	providerFetcher DidDocumentFetcher,
 ) (TransitionHop, error) {
 	predecessorDID := stringValue(predecessorDocument["id"])
 	successorDID := stringValue(predecessorDocument["successorDid"])
@@ -317,13 +265,6 @@ func VerifyTransitionHop(
 		}
 	}
 
-	_, providerPresent := predecessorDocument["providerTransitionAssertion"]
-	if providerPresent {
-		if err := verifyProviderAssertion(predecessorDocument, predecessor, successor, providerFetcher); err != nil {
-			return TransitionHop{}, err
-		}
-	}
-
 	assurance := TransitionAssuranceUnverified
 	if rawProof, proofPresent := predecessorDocument["proof"]; proofPresent {
 		transitionProof, ok := rawProof.(map[string]any)
@@ -348,8 +289,6 @@ func VerifyTransitionHop(
 			}
 			assurance = TransitionAssuranceRecoveryVerified
 		}
-	} else if providerPresent {
-		assurance = TransitionAssuranceProviderAsserted
 	}
 	return TransitionHop{PredecessorDID: predecessorDID, SuccessorDID: successorDID, Assurance: assurance}, nil
 }
@@ -367,11 +306,14 @@ func assuranceRank(value TransitionAssurance) int {
 	}
 }
 
+// ResolveCurrentDID resolves a complete transition chain to its proof-verified
+// active DID. The fetcher is expected to perform authenticated Provider
+// resolution. After the chain reaches a proof-verified active DID,
+// structurally valid unsigned hops are provider-asserted.
 func ResolveCurrentDID(
 	requestedDID string,
 	fetcher DidDocumentFetcher,
 	trustedDocuments map[string]map[string]any,
-	providerFetcher DidDocumentFetcher,
 	cache TransitionCache,
 	maxHops int,
 ) (TransitionResult, error) {
@@ -437,9 +379,12 @@ func ResolveCurrentDID(
 		if fetchErr != nil {
 			return TransitionResult{}, newTransitionError(TransitionErrorNetwork, fetchErr.Error())
 		}
-		hop, verifyErr := VerifyTransitionHop(document, successorDocument, trustedDocuments[current], providerFetcher)
+		hop, verifyErr := VerifyTransitionHop(document, successorDocument, trustedDocuments[current])
 		if verifyErr != nil {
 			return TransitionResult{}, verifyErr
+		}
+		if hop.Assurance == TransitionAssuranceUnverified {
+			hop.Assurance = TransitionAssuranceProviderAsserted
 		}
 		if cachedSuccessor, ok := cache.GetSuccessor(current); ok && cachedSuccessor != successorDID {
 			return TransitionResult{}, newTransitionError(TransitionErrorConflict, "a different successor is already cached for predecessor")

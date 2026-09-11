@@ -54,3 +54,7 @@ The Go tag format follows the Go subdirectory module rule.
 - Git push access to the configured remote.
 - Valid Python package publish credentials for `uv publish`.
 - Valid crates.io credentials for `cargo publish`.
+
+When `UV_PUBLISH_TOKEN` is set, the helper removes `UV_PUBLISH_USERNAME` and
+`UV_PUBLISH_PASSWORD` only from the publish subprocess environment. uv rejects
+combined username/token configuration; credentials are never printed or persisted.
