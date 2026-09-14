@@ -3,9 +3,11 @@ package proof
 import (
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"time"
 
 	anp "github.com/agent-network-protocol/anp/golang"
+	"github.com/agent-network-protocol/anp/golang/internal/base58util"
 	"github.com/agent-network-protocol/anp/golang/internal/base64util"
 	"github.com/agent-network-protocol/anp/golang/internal/cjson"
 )
@@ -155,13 +157,26 @@ func VerifyW3CProofDetailed(document map[string]any, publicKey anp.PublicKeyMate
 	delete(unsigned, "proof")
 	proofOptions := cloneMap(proofValue)
 	delete(proofOptions, "proofValue")
+	// Preserve the legacy generation contract while reading current multibase
+	// eddsa-jcs-2022 with the document context in its proof configuration.
+	var signatureBytes []byte
+	if proofType == ProofTypeDataIntegrity && cryptosuite == CryptosuiteEddsaJCS2022 && strings.HasPrefix(proofSignature, "z") {
+		if decoded, decodeErr := base58util.Decode(proofSignature[1:]); decodeErr == nil && len(decoded) == 64 && "z"+base58util.Encode(decoded) == proofSignature {
+			signatureBytes = decoded
+			if context, present := unsigned["@context"]; present {
+				proofOptions["@context"] = context
+			}
+		}
+	}
+	if signatureBytes == nil {
+		signatureBytes, err = base64util.DecodeURL(proofSignature)
+		if err != nil {
+			return &Error{Message: "invalid proof value encoding"}
+		}
+	}
 	signingInput, err := computeSigningInput(unsigned, proofOptions)
 	if err != nil {
 		return err
-	}
-	signatureBytes, err := base64util.DecodeURL(proofSignature)
-	if err != nil {
-		return &Error{Message: "invalid proof value encoding"}
 	}
 	if err := publicKey.VerifyMessage(signingInput, signatureBytes); err != nil {
 		return &Error{Message: "verification failed"}

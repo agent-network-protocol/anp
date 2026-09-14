@@ -15,6 +15,7 @@ cargo add anp
 ## Features
 
 - DID WBA document creation and verification
+- [DID Web resolution, HTTP authentication and public device lifecycle](../docs/did-web-sdk.md)
 - HTTP authentication helpers
 - Proof generation and verification
 - Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`

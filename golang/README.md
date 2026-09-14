@@ -11,6 +11,7 @@ Implemented in this directory:
   - legacy DIDWba auth header generation and verification
   - HTTP Message Signatures generation and verification
   - DID resolver for `did:wba` and `did:web`
+  - [DID Web authentication and public device lifecycle](../docs/did-web-sdk.md)
   - request verifier with bearer token issuance
   - federated request verification helpers
 - `proof`

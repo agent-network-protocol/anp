@@ -270,9 +270,30 @@ pub fn verify_w3c_proof_detailed(
     if let Some(object) = signing_document.as_object_mut() {
         object.remove("proof");
     }
+    // Current multibase eddsa-jcs-2022 includes the document context in proof
+    // configuration. Keep legacy base64url signing/generation bytes unchanged.
+    let standard_signature = if proof_type == PROOF_TYPE_DATA_INTEGRITY
+        && cryptosuite == Some(CRYPTOSUITE_EDDSA_JCS_2022)
+    {
+        proof_value
+            .strip_prefix('z')
+            .and_then(|encoded| bs58::decode(encoded).into_vec().ok())
+            .filter(|decoded| {
+                decoded.len() == 64
+                    && format!("z{}", bs58::encode(decoded).into_string()) == proof_value
+            })
+    } else {
+        None
+    };
+    let signature = if let Some(signature) = standard_signature {
+        if let Some(context) = signing_document.get("@context") {
+            proof_options.insert("@context".to_owned(), context.clone());
+        }
+        signature
+    } else {
+        crate::keys::base64url_decode(proof_value).map_err(|_| ProofError::InvalidProofValue)?
+    };
     let signing_input = compute_signing_input(&signing_document, &Value::Object(proof_options))?;
-    let signature =
-        crate::keys::base64url_decode(proof_value).map_err(|_| ProofError::InvalidProofValue)?;
     public_key
         .verify_message(&signing_input, &signature)
         .map_err(|_| ProofError::VerificationFailed)

@@ -52,7 +52,7 @@ func (v *DidWbaVerifier) VerifyRequest(ctx context.Context, method string, reque
 			return VerificationSuccess{}, v.challengeError("Invalid signature metadata", 401, requestDomain, "invalid_request")
 		}
 		did := strings.Split(metadata.KeyID, "#")[0]
-		document, err := ResolveDidWBADocumentWithOptions(ctx, did, false, v.config.DidResolutionOptions)
+		document, err := ResolveDidDocumentWithOptions(ctx, did, false, v.config.DidResolutionOptions)
 		if err != nil {
 			return VerificationSuccess{}, v.challengeError("Failed to resolve DID document", 401, requestDomain, "invalid_did")
 		}
@@ -102,7 +102,7 @@ func (v *DidWbaVerifier) handleHTTPSignatureAuth(method string, requestURL strin
 		return VerificationSuccess{}, v.challengeError("Invalid signature metadata", 401, domain, "invalid_request")
 	}
 	did := strings.Split(metadata.KeyID, "#")[0]
-	if !ValidateDIDDocumentBinding(didDocument, false) {
+	if didDocument["id"] != did || !ValidateDIDDocumentMethod(didDocument, false) {
 		return VerificationSuccess{}, &DidWbaVerifierError{Message: "DID binding verification failed", StatusCode: 401, Headers: map[string]string{}}
 	}
 	if !IsAuthenticationAuthorized(didDocument, metadata.KeyID) {

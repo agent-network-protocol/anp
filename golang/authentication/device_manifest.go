@@ -43,6 +43,10 @@ var (
 		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
 		ProfileGroupBaseV1: {}, ProfileGroupE2EEV2: {},
 	}
+	p6CurrentDependencies = map[string]struct{}{
+		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
+		ProfileGroupBaseV2: {}, ProfileGroupE2EEV2: {},
+	}
 	p5LegacyDraftDependencies = map[string]struct{}{
 		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
 		ProfileDirectBaseV2: {}, ProfileDirectE2EEV2: {},
@@ -53,7 +57,7 @@ var (
 	}
 	legacyDraftFoundationProfiles = map[string]struct{}{
 		ProfileCoreBindingV2: {}, ProfileIdentityDiscoveryV2: {},
-		ProfileDirectBaseV2: {}, ProfileGroupBaseV2: {},
+		ProfileDirectBaseV2: {},
 	}
 	jsonNumberPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 )
@@ -235,7 +239,9 @@ func ValidateDeviceManifest(didDocument map[string]any) (*DeviceManifest, error)
 		}
 		if _, supportsP6 := profiles[ProfileGroupE2EEV2]; supportsP6 {
 			if err := requireDependencies(profiles, p6Dependencies, p6LegacyDraftDependencies, "P6"); err != nil {
-				return nil, err
+				if currentErr := requireDependencies(profiles, p6CurrentDependencies, p6CurrentDependencies, "P6"); currentErr != nil {
+					return nil, currentErr
+				}
 			}
 			if !relationshipContains(didDocument, "assertionMethod", device.SigningKeyID) {
 				return nil, fmt.Errorf("P6 binding key is not authorized by assertionMethod")
@@ -263,6 +269,21 @@ func FindEligibleDevice(didDocument map[string]any, deviceID string, requiredPro
 	for index := range manifest.Devices {
 		device := &manifest.Devices[index]
 		if device.DeviceID == deviceID && containsString(device.Profiles, requiredProfile) {
+			did, err := documentDID(didDocument)
+			if err != nil {
+				return nil, err
+			}
+			signing, err := uniqueVerificationMethod(didDocument, device.SigningKeyID)
+			if err != nil {
+				return nil, err
+			}
+			e2ee, err := uniqueVerificationMethod(didDocument, device.E2EEKeyID)
+			if err != nil {
+				return nil, err
+			}
+			if _, _, err := validateDeviceMethods(did, nil, *device, signing, e2ee); err != nil {
+				return nil, err
+			}
 			return device, nil
 		}
 	}
@@ -373,6 +394,27 @@ func BuildVNextDIDDocument(
 	deviceSigningVerificationMethod map[string]any,
 	deviceE2EEVerificationMethod map[string]any,
 ) (map[string]any, error) {
+	return buildDeviceDocument(baseDocument, &rootKeyID, rootVerificationMethod, device,
+		deviceSigningVerificationMethod, deviceE2EEVerificationMethod)
+}
+
+// BuildWebDIDDocument builds a public device document without a WBA root key or proof.
+func BuildWebDIDDocument(
+	baseDocument map[string]any, device DeviceManifestEntry,
+	deviceSigningVerificationMethod map[string]any, deviceE2EEVerificationMethod map[string]any,
+) (map[string]any, error) {
+	return buildDeviceDocument(baseDocument, nil, nil, device,
+		deviceSigningVerificationMethod, deviceE2EEVerificationMethod)
+}
+
+func buildDeviceDocument(
+	baseDocument map[string]any,
+	rootKeyID *string,
+	rootVerificationMethod map[string]any,
+	device DeviceManifestEntry,
+	deviceSigningVerificationMethod map[string]any,
+	deviceE2EEVerificationMethod map[string]any,
+) (map[string]any, error) {
 	if err := requireCanonicalWriteProfiles(device); err != nil {
 		return nil, err
 	}
@@ -392,8 +434,10 @@ func BuildVNextDIDDocument(
 	if err != nil {
 		return nil, err
 	}
-	if _, err := validateRootMethod(did, rootKeyID, rootVerificationMethod); err != nil {
-		return nil, err
+	if rootKeyID != nil {
+		if _, err := validateRootMethod(did, *rootKeyID, rootVerificationMethod); err != nil {
+			return nil, err
+		}
 	}
 	if _, _, err := validateDeviceMethods(
 		did,
@@ -404,10 +448,6 @@ func BuildVNextDIDDocument(
 	); err != nil {
 		return nil, err
 	}
-	rootMethod, err := cloneJSONMapValue(rootVerificationMethod)
-	if err != nil {
-		return nil, err
-	}
 	signingMethod, err := cloneJSONMapValue(deviceSigningVerificationMethod)
 	if err != nil {
 		return nil, err
@@ -416,9 +456,18 @@ func BuildVNextDIDDocument(
 	if err != nil {
 		return nil, err
 	}
-	document["verificationMethod"] = []any{rootMethod, signingMethod, e2eeMethod}
-	document["authentication"] = []any{rootKeyID, device.SigningKeyID}
-	document["assertionMethod"] = []any{rootKeyID, device.SigningKeyID}
+	document["verificationMethod"] = []any{signingMethod, e2eeMethod}
+	document["authentication"] = []any{device.SigningKeyID}
+	document["assertionMethod"] = []any{device.SigningKeyID}
+	if rootKeyID != nil {
+		rootMethod, err := cloneJSONMapValue(rootVerificationMethod)
+		if err != nil {
+			return nil, err
+		}
+		document["verificationMethod"] = []any{rootMethod, signingMethod, e2eeMethod}
+		document["authentication"] = []any{*rootKeyID, device.SigningKeyID}
+		document["assertionMethod"] = []any{*rootKeyID, device.SigningKeyID}
+	}
 	document["keyAgreement"] = []any{device.E2EEKeyID}
 	document["deviceManifest"] = DeviceManifest{
 		Type: DeviceManifestType, Devices: []DeviceManifestEntry{device},
@@ -434,6 +483,28 @@ func BuildVNextDIDDocument(
 func AddDeviceToDIDDocument(
 	didDocument map[string]any,
 	rootKeyID string,
+	device DeviceManifestEntry,
+	deviceSigningVerificationMethod map[string]any,
+	deviceE2EEVerificationMethod map[string]any,
+	retiredDeviceIDs []string,
+) (map[string]any, error) {
+	return addDeviceDocument(didDocument, &rootKeyID, device, deviceSigningVerificationMethod, deviceE2EEVerificationMethod, retiredDeviceIDs)
+}
+
+// Apply the shared device lifecycle to a DID Web document.
+func AddDeviceToWebDIDDocument(
+	didDocument map[string]any,
+	device DeviceManifestEntry,
+	deviceSigningVerificationMethod map[string]any,
+	deviceE2EEVerificationMethod map[string]any,
+	retiredDeviceIDs []string,
+) (map[string]any, error) {
+	return addDeviceDocument(didDocument, nil, device, deviceSigningVerificationMethod, deviceE2EEVerificationMethod, retiredDeviceIDs)
+}
+
+func addDeviceDocument(
+	didDocument map[string]any,
+	rootKeyID *string,
 	device DeviceManifestEntry,
 	deviceSigningVerificationMethod map[string]any,
 	deviceE2EEVerificationMethod map[string]any,
@@ -490,6 +561,16 @@ func UpdateDeviceInDIDDocument(
 	deviceSigningVerificationMethod map[string]any,
 	deviceE2EEVerificationMethod map[string]any,
 ) (map[string]any, error) {
+	return updateDeviceDocument(didDocument, &rootKeyID, device, deviceSigningVerificationMethod, deviceE2EEVerificationMethod)
+}
+
+func updateDeviceDocument(
+	didDocument map[string]any,
+	rootKeyID *string,
+	device DeviceManifestEntry,
+	deviceSigningVerificationMethod map[string]any,
+	deviceE2EEVerificationMethod map[string]any,
+) (map[string]any, error) {
 	if err := requireCanonicalWriteProfiles(device); err != nil {
 		return nil, err
 	}
@@ -540,6 +621,22 @@ func RemoveDeviceFromDIDDocument(
 	rootKeyID string,
 	deviceID string,
 ) (map[string]any, error) {
+	return removeDeviceDocument(didDocument, &rootKeyID, deviceID)
+}
+
+// Apply the shared device lifecycle to a DID Web document.
+func RemoveDeviceFromWebDIDDocument(
+	didDocument map[string]any,
+	deviceID string,
+) (map[string]any, error) {
+	return removeDeviceDocument(didDocument, nil, deviceID)
+}
+
+func removeDeviceDocument(
+	didDocument map[string]any,
+	rootKeyID *string,
+	deviceID string,
+) (map[string]any, error) {
 	document, err := prepareDIDDocumentForMutation(didDocument, rootKeyID)
 	if err != nil {
 		return nil, err
@@ -571,7 +668,7 @@ func RemoveDeviceFromDIDDocument(
 	return document, nil
 }
 
-func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID string) (map[string]any, error) {
+func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID *string) (map[string]any, error) {
 	if err := validateVNextDIDDocument(didDocument, rootKeyID); err != nil {
 		return nil, err
 	}
@@ -603,10 +700,14 @@ func requireCanonicalWriteProfiles(device DeviceManifestEntry) error {
 			return fmt.Errorf("legacy draft foundation profiles are read-only and cannot be published")
 		}
 	}
+	if containsString(device.Profiles, ProfileGroupBaseV2) &&
+		(!containsString(device.Profiles, ProfileCoreBindingV1) || !containsString(device.Profiles, ProfileIdentityDiscoveryV1)) {
+		return fmt.Errorf("P4 V2 requires core.binding.v1 and identity.discovery.v1")
+	}
 	return nil
 }
 
-func validateVNextDIDDocument(didDocument map[string]any, rootKeyID string) error {
+func validateVNextDIDDocument(didDocument map[string]any, rootKeyID *string) error {
 	if err := rejectPrivateKeyMaterial(didDocument, "DID document"); err != nil {
 		return err
 	}
@@ -618,22 +719,30 @@ func validateVNextDIDDocument(didDocument map[string]any, rootKeyID string) erro
 	if err != nil {
 		return fmt.Errorf("DID document verificationMethod must be an array")
 	}
-	rootMethods := make([]map[string]any, 0, 1)
-	for _, rawMethod := range methods {
-		method, ok := rawMethod.(map[string]any)
-		if ok && method["id"] == rootKeyID {
-			rootMethods = append(rootMethods, method)
+	seenMaterial := [][]byte{}
+	if rootKeyID != nil {
+		rootMethods := make([]map[string]any, 0, 1)
+		for _, rawMethod := range methods {
+			method, ok := rawMethod.(map[string]any)
+			if ok && method["id"] == *rootKeyID {
+				rootMethods = append(rootMethods, method)
+			}
 		}
-	}
-	if len(rootMethods) != 1 {
-		return fmt.Errorf("root key must resolve exactly once in verificationMethod")
-	}
-	rootIdentity, err := validateRootMethod(did, rootKeyID, rootMethods[0])
-	if err != nil {
-		return err
-	}
-	if !relationshipContains(didDocument, "assertionMethod", rootKeyID) {
-		return fmt.Errorf("DID root key is not authorized by assertionMethod")
+		if len(rootMethods) != 1 {
+			return fmt.Errorf("root key must resolve exactly once in verificationMethod")
+		}
+		rootIdentity, err := validateRootMethod(did, *rootKeyID, rootMethods[0])
+		if err != nil {
+			return err
+		}
+		if !relationshipContains(didDocument, "assertionMethod", *rootKeyID) {
+			return fmt.Errorf("DID root key is not authorized by assertionMethod")
+		}
+		seenMaterial = append(seenMaterial, rootIdentity.rawPublicKey)
+	} else {
+		if _, err := BuildDIDWebResolutionURL(did); err != nil {
+			return fmt.Errorf("rootless device operations require DID Web: %w", err)
+		}
 	}
 	manifest, err := ValidateDeviceManifest(didDocument)
 	if err != nil {
@@ -642,9 +751,8 @@ func validateVNextDIDDocument(didDocument map[string]any, rootKeyID string) erro
 	if manifest == nil {
 		return fmt.Errorf("deviceManifest is required")
 	}
-	seenMaterial := [][]byte{rootIdentity.rawPublicKey}
 	for _, device := range manifest.Devices {
-		if device.SigningKeyID == rootKeyID || device.E2EEKeyID == rootKeyID {
+		if rootKeyID != nil && (device.SigningKeyID == *rootKeyID || device.E2EEKeyID == *rootKeyID) {
 			return fmt.Errorf("DID root key cannot be a device key")
 		}
 		signingMethod, err := uniqueVerificationMethod(didDocument, device.SigningKeyID)
@@ -718,12 +826,12 @@ func validateRootMethod(
 
 func validateDeviceMethods(
 	did string,
-	rootKeyID string,
+	rootKeyID *string,
 	device DeviceManifestEntry,
 	signingMethod map[string]any,
 	e2eeMethod map[string]any,
 ) (publicKeyIdentity, publicKeyIdentity, error) {
-	if device.SigningKeyID == rootKeyID || device.E2EEKeyID == rootKeyID {
+	if rootKeyID != nil && (device.SigningKeyID == *rootKeyID || device.E2EEKeyID == *rootKeyID) {
 		return publicKeyIdentity{}, publicKeyIdentity{}, fmt.Errorf("DID root key cannot be a device key")
 	}
 	signingIdentity, err := validatePublicMethod(
@@ -901,6 +1009,10 @@ func decodePublicMultikey(
 	if "z"+base58util.Encode(decoded) != multibase {
 		return publicKeyIdentity{}, fmt.Errorf("%s.publicKeyMultibase must be canonical", subject)
 	}
+	// Preserve the typed raw X25519 encoding in already published WBA documents.
+	if methodType == "X25519KeyAgreementKey2019" && len(decoded) == 32 {
+		return publicKeyIdentity{algorithm: publicKeyX25519, rawPublicKey: decoded}, nil
+	}
 	if len(decoded) != 34 {
 		return publicKeyIdentity{}, fmt.Errorf(
 			"%s.publicKeyMultibase must contain a 32-byte key",
@@ -985,7 +1097,7 @@ func uniqueVerificationMethod(didDocument map[string]any, keyID string) (map[str
 
 func appendDeviceMaterial(
 	document map[string]any,
-	rootKeyID string,
+	rootKeyID *string,
 	device DeviceManifestEntry,
 	signingMethod map[string]any,
 	e2eeMethod map[string]any,

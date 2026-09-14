@@ -58,7 +58,8 @@ async def verify_handle_binding(
 
     Verification steps (spec section 6.3):
       1. **Forward**: resolve the handle to obtain a DID; check status is active.
-      2. **Domain consistency**: Handle domain must match DID domain.
+      2. **Method rules**: WBA keeps its same-domain rule. Web may use a
+         separate identity host and must declare the actual Handle Provider.
       3. **Reverse**: fetch/use the DID Document and check that it contains a
          ``ANPHandleService`` entry whose ``serviceEndpoint`` uses HTTPS and
          declares the same Handle Provider domain.
@@ -110,7 +111,8 @@ async def verify_handle_binding(
         )
 
     # -- Step 2: Domain consistency ----------------------------------------
-    if not did.startswith("did:wba:"):
+    is_web = did.startswith("did:web:")
+    if not is_web and not did.startswith("did:wba:"):
         return BindingVerificationResult(
             is_valid=False,
             handle=normalized_handle,
@@ -122,7 +124,7 @@ async def verify_handle_binding(
 
     did_parts = did.split(":", 3)
     did_domain = did_parts[2] if len(did_parts) > 2 else ""
-    if did_domain.lower() != domain.lower():
+    if not is_web and did_domain.lower() != domain.lower():
         return BindingVerificationResult(
             is_valid=False,
             handle=normalized_handle,
@@ -140,7 +142,11 @@ async def verify_handle_binding(
         try:
             from anp.authentication.did_wba import resolve_did_wba_document
 
-            did_document = await resolve_did_wba_document(did)
+            if is_web:
+                from anp.authentication.did_resolver import resolve_did_document
+                did_document = await resolve_did_document(did, timeout_seconds=timeout_seconds)
+            else:
+                did_document = await resolve_did_wba_document(did)
         except Exception as exc:
             return BindingVerificationResult(
                 is_valid=False,
@@ -160,6 +166,15 @@ async def verify_handle_binding(
             reverse_verified=False,
             error_message="DID Document resolved to None",
         )
+
+    if is_web:
+        from anp.authentication.did_resolver import validate_did_document_method
+        if did_document.get("id") != did or not validate_did_document_method(did_document):
+            return BindingVerificationResult(
+                is_valid=False, handle=normalized_handle, did=did,
+                forward_verified=True, reverse_verified=False,
+                error_message="DID Web document does not match the forward resolution",
+            )
 
     handle_services = extract_handle_service_from_did_document(did_document)
     reverse_verified = any(

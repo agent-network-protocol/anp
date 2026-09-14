@@ -1,13 +1,25 @@
-use percent_encoding::percent_decode_str;
-#[cfg(feature = "network")]
-use reqwest::Client;
+pub use super::did_web::build_did_web_resolution_url;
 use serde_json::Value;
+
+/// Validate method rules after trusted resolution; this does not grant key purposes.
+pub fn validate_did_document_method(document: &Value, verify_proof: bool) -> bool {
+    let Some(did) = document.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    if did.starts_with("did:wba:") {
+        super::did_wba::validate_did_document_binding(document, verify_proof)
+    } else if did.starts_with("did:web:") {
+        build_did_web_resolution_url(did).is_ok()
+    } else {
+        false
+    }
+}
 
 #[cfg(feature = "network")]
 use crate::proof::{verify_w3c_proof, ProofVerificationOptions};
 
 #[cfg(feature = "network")]
-use super::did_wba::{find_verification_method, validate_did_document_binding};
+use super::did_wba::find_verification_method;
 use super::did_wba::{
     resolve_did_wba_document_sync, resolve_did_wba_document_with_options, AuthenticationError,
     DidResolutionOptions,
@@ -34,67 +46,15 @@ pub async fn resolve_did_document_with_options(
         return Err(AuthenticationError::InvalidDid);
     }
 
-    let parts: Vec<&str> = did.split(':').collect();
-    if parts.len() < 3 {
-        return Err(AuthenticationError::InvalidDid);
-    }
-    let domain = percent_decode_str(parts[2]).decode_utf8_lossy().to_string();
-    let path_segments = if parts.len() > 3 {
-        &parts[3..]
-    } else {
-        &[][..]
-    };
-    let base_url = options
-        .base_url_override
-        .clone()
-        .unwrap_or_else(|| format!("https://{domain}"));
-    let url = if path_segments.is_empty() {
-        format!("{}/.well-known/did.json", base_url.trim_end_matches('/'))
-    } else {
-        format!(
-            "{}/{}/did.json",
-            base_url.trim_end_matches('/'),
-            path_segments
-                .iter()
-                .map(|segment| percent_decode_str(segment).decode_utf8_lossy().to_string())
-                .collect::<Vec<String>>()
-                .join("/")
-        )
-    };
-
     #[cfg(not(feature = "network"))]
     {
-        let _ = url;
+        build_did_web_resolution_url(did)?;
         return Err(AuthenticationError::NetworkFailure);
     }
 
     #[cfg(feature = "network")]
     {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(!options.verify_ssl)
-            .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
-            .build()
-            .map_err(|_| AuthenticationError::NetworkFailure)?;
-        let mut request = client.get(url).header("Accept", "application/json");
-        for (key, value) in &options.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
-        let document: Value = request
-            .send()
-            .await
-            .map_err(|_| AuthenticationError::NetworkFailure)?
-            .error_for_status()
-            .map_err(|_| AuthenticationError::NetworkFailure)?
-            .json()
-            .await
-            .map_err(|_| AuthenticationError::JsonFailure)?;
-
-        if document.get("id").and_then(Value::as_str) != Some(did) {
-            return Err(AuthenticationError::InvalidDidDocument);
-        }
-        if did.starts_with("did:wba:") && !validate_did_document_binding(&document, verify_proof) {
-            return Err(AuthenticationError::InvalidDidBinding);
-        }
+        let document = super::did_web::fetch_document(did, options).await?;
         if verify_proof {
             if let Some(proof) = document.get("proof") {
                 let verification_method = proof

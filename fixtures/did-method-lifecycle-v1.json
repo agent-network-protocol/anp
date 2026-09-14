@@ -1,0 +1,502 @@
+{
+  "schema_version": 1,
+  "description": "Public DID-method lifecycle fixtures. No private keys, live identities or backend execution.",
+  "protocol_commit": "ee32805e322da79d6be8fd1bb98b841b945743ac",
+  "fixed_time": "2026-09-07T08:00:00Z",
+  "documents": {
+    "web_single_device": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/jws-2020/v1"
+      ],
+      "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+      "verificationMethod": [
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6MkrW7n8rs7podp8DvJBskj3ds6TDorbqoLF6UmGq3CJnbx"
+        },
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6LSc5P1XKfzmYQFqq9TbhDStWPV2pzbM57MxnV2uTtpWzLT"
+        }
+      ],
+      "authentication": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign"
+      ],
+      "assertionMethod": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign"
+      ],
+      "deviceManifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "device-a",
+            "signing_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+            "e2ee_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.direct.base.v1",
+              "anp.group.base.v2",
+              "anp.direct.e2ee.v2",
+              "anp.group.e2ee.v2",
+              "anp.attachment.v1",
+              "anp.federation.relay.v1"
+            ]
+          }
+        ]
+      },
+      "keyAgreement": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka"
+      ],
+      "service": [
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#messages",
+          "type": "ANPMessageService",
+          "serviceEndpoint": "https://messages.example/anp",
+          "serviceDid": "did:wba:service-wba.example",
+          "profiles": [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.group.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.e2ee.v2",
+            "anp.attachment.v1",
+            "anp.federation.relay.v1"
+          ],
+          "securityProfiles": [
+            "transport-protected",
+            "direct-e2ee",
+            "group-e2ee"
+          ]
+        }
+      ]
+    },
+    "web_two_devices": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/jws-2020/v1"
+      ],
+      "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+      "verificationMethod": [
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6MkrW7n8rs7podp8DvJBskj3ds6TDorbqoLF6UmGq3CJnbx"
+        },
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6LSc5P1XKfzmYQFqq9TbhDStWPV2pzbM57MxnV2uTtpWzLT"
+        },
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6MkvyNoKYn93VycRdR33tHrUmfMMqrKkqNN41k6zT5rBu7e"
+        },
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-ka",
+          "type": "Multikey",
+          "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+          "publicKeyMultibase": "z6LSm7odfmUoRU2LX2qA4PaXcvP7qfrvokPJhRWcQLcUnq2o"
+        }
+      ],
+      "authentication": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign"
+      ],
+      "assertionMethod": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign"
+      ],
+      "deviceManifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "device-a",
+            "signing_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-sign",
+            "e2ee_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.direct.base.v1",
+              "anp.group.base.v2",
+              "anp.direct.e2ee.v2",
+              "anp.group.e2ee.v2",
+              "anp.attachment.v1",
+              "anp.federation.relay.v1"
+            ]
+          },
+          {
+            "device_id": "device-b",
+            "signing_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign",
+            "e2ee_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-ka",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.direct.base.v1",
+              "anp.group.base.v2",
+              "anp.direct.e2ee.v2",
+              "anp.group.e2ee.v2",
+              "anp.attachment.v1",
+              "anp.federation.relay.v1"
+            ]
+          }
+        ]
+      },
+      "keyAgreement": [
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-a-ka",
+        "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-ka"
+      ],
+      "service": [
+        {
+          "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#messages",
+          "type": "ANPMessageService",
+          "serviceEndpoint": "https://messages.example/anp",
+          "serviceDid": "did:wba:service-wba.example",
+          "profiles": [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.group.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.e2ee.v2",
+            "anp.attachment.v1",
+            "anp.federation.relay.v1"
+          ],
+          "securityProfiles": [
+            "transport-protected",
+            "direct-e2ee",
+            "group-e2ee"
+          ]
+        }
+      ]
+    },
+    "web_api": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/jws-2020/v1"
+      ],
+      "id": "did:web:identity-web.example:api:api-web",
+      "verificationMethod": [
+        {
+          "id": "did:web:identity-web.example:api:api-web#root",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:identity-web.example:api:api-web",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "x": "KvJOBACOac3PKeTw38KMoGUW59DJxg3u1uoTA_WJfbE",
+            "kty": "OKP"
+          }
+        },
+        {
+          "id": "did:web:identity-web.example:api:api-web#auth-jwk",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:identity-web.example:api:api-web",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "x": "mW7sIui_dMsl5a_GXoYBkEPuVF3mLdRHIM6IXyoFdEk",
+            "kty": "OKP"
+          }
+        },
+        {
+          "id": "did:web:identity-web.example:api:api-web#assertion-only",
+          "type": "Multikey",
+          "controller": "did:web:identity-web.example:api:api-web",
+          "publicKeyMultibase": "z6MkmqWjeWyynSfa4Hrqj3YLfzLyJZhW2biP6XbDNneS8gLt"
+        }
+      ],
+      "authentication": [
+        "did:web:identity-web.example:api:api-web#root",
+        "did:web:identity-web.example:api:api-web#auth-jwk"
+      ],
+      "assertionMethod": [
+        "did:web:identity-web.example:api:api-web#root",
+        "did:web:identity-web.example:api:api-web#assertion-only"
+      ]
+    },
+    "web_group_assertion_only": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/jws-2020/v1"
+      ],
+      "id": "did:web:identity-web.example:group:group-web",
+      "verificationMethod": [
+        {
+          "id": "did:web:identity-web.example:group:group-web#root",
+          "type": "Multikey",
+          "controller": "did:web:identity-web.example:group:group-web",
+          "publicKeyMultibase": "z6MknTn2v7NPAut2ZbFwCpdCeTuyo6Cmpdxym1fUv8z2gCDr"
+        },
+        {
+          "id": "did:web:identity-web.example:group:group-web#auth-jwk",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:identity-web.example:group:group-web",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "x": "mjiizLP14ZV5k67gFI1WTiTZv8D0EM9gq20XP6xqk38",
+            "kty": "OKP"
+          }
+        },
+        {
+          "id": "did:web:identity-web.example:group:group-web#assertion-only",
+          "type": "Multikey",
+          "controller": "did:web:identity-web.example:group:group-web",
+          "publicKeyMultibase": "z6MkmH8ZKEyQUKayBHcx2FmAhzdgoLD4YHiJzembFXQvX2vw"
+        }
+      ],
+      "assertionMethod": [
+        "did:web:identity-web.example:group:group-web#root",
+        "did:web:identity-web.example:group:group-web#assertion-only"
+      ],
+      "service": [
+        {
+          "id": "did:web:identity-web.example:group:group-web#messages",
+          "type": "ANPMessageService",
+          "serviceEndpoint": "https://messages-web.example/anp",
+          "serviceDid": "did:web:service-web.example",
+          "profiles": [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.group.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.e2ee.v2",
+            "anp.attachment.v1",
+            "anp.federation.relay.v1"
+          ],
+          "securityProfiles": [
+            "transport-protected",
+            "direct-e2ee",
+            "group-e2ee"
+          ]
+        }
+      ],
+      "controller": "did:web:service-web.example"
+    },
+    "wba_two_devices": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/data-integrity/v2",
+        "https://w3id.org/security/multikey/v1",
+        "https://w3id.org/security/suites/jws-2020/v1"
+      ],
+      "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+      "verificationMethod": [
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#root",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6MkfTZA3R6Q6kF39fQmWjLrq8b3mQoE9EZ6cwWEU9y1xBtv"
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#auth-jwk",
+          "type": "JsonWebKey2020",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "x": "COpSyq_BqRY7XK4rtNqHr-vyIqpeJj-5V_vvHMKquhw",
+            "kty": "OKP"
+          }
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#assertion-only",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6MkfMihYbzdhUx587yFjYQwRiAK5yY4zTavQjp6L356dBus"
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-sign",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6MkhJjfo6LapxidRerSvwNJoTF5P3xSkgrAESZE4KF6Yzbe"
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-ka",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6LSe4gug8uLV31T8QHv3XoveTz3ZWXwkBi47EK2VX552ykb"
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-sign",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6MkuNjBWbmaKBbmUHbzXs5Eu8UC2MjdzXiSpLa2SK9EgMGY"
+        },
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-ka",
+          "type": "Multikey",
+          "controller": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU",
+          "publicKeyMultibase": "z6LSkrKk4Ki3gY4RF5Zqw6JCQ4ZsqH4fZGhCdP54pij4cC6B"
+        }
+      ],
+      "authentication": [
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#root",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#auth-jwk",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-sign",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-sign"
+      ],
+      "assertionMethod": [
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#root",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#assertion-only",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-sign",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-sign"
+      ],
+      "deviceManifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "device-a",
+            "signing_key_id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-sign",
+            "e2ee_key_id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-ka",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.direct.base.v1",
+              "anp.group.base.v2",
+              "anp.direct.e2ee.v2",
+              "anp.group.e2ee.v2",
+              "anp.attachment.v1",
+              "anp.federation.relay.v1"
+            ]
+          },
+          {
+            "device_id": "device-b",
+            "signing_key_id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-sign",
+            "e2ee_key_id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-ka",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.direct.base.v1",
+              "anp.group.base.v2",
+              "anp.direct.e2ee.v2",
+              "anp.group.e2ee.v2",
+              "anp.attachment.v1",
+              "anp.federation.relay.v1"
+            ]
+          }
+        ]
+      },
+      "keyAgreement": [
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-a-ka",
+        "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#device-b-ka"
+      ],
+      "service": [
+        {
+          "id": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#messages",
+          "type": "ANPMessageService",
+          "serviceEndpoint": "https://messages-wba.example/anp",
+          "serviceDid": "did:wba:service-wba.example",
+          "profiles": [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.group.base.v2",
+            "anp.direct.e2ee.v2",
+            "anp.group.e2ee.v2",
+            "anp.attachment.v1",
+            "anp.federation.relay.v1"
+          ],
+          "securityProfiles": [
+            "transport-protected",
+            "direct-e2ee",
+            "group-e2ee"
+          ]
+        }
+      ],
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "eddsa-jcs-2022",
+        "created": "2026-09-07T08:00:00Z",
+        "verificationMethod": "did:wba:identity-wba.example:agent:alice-wba:e1_b8XJsb3PGSZJ_VB9WMw3OkBvsxpN3I2BVKEpWVdgKcU#root",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "z61r4RBYg1ComXsgEZsryK4fH4vr7ZCGtg8i9GMGas61KUE6tUMfzrDZfaKZXfcMDE95bx2FYHBU36qHzdaZ3q5xW"
+      }
+    }
+  },
+  "resolution_cases": [
+    {
+      "did": "did:web:example.com",
+      "url": "https://example.com/.well-known/did.json"
+    },
+    {
+      "did": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+      "url": "https://identity.example/awiki/web/123e4567e89b42d3a456426614174000/did.json"
+    },
+    {
+      "did": "did:web:example.com%3A8443:users:alice",
+      "url": "https://example.com:8443/users/alice/did.json"
+    },
+    {
+      "did": "did:web:example.com:user%20name",
+      "url": "https://example.com/user%20name/did.json"
+    }
+  ],
+  "invalid_resolution_dids": [
+    "did:web:",
+    "did:web:127.0.0.1",
+    "did:web:example.com:",
+    "did:web:example.com:..",
+    "did:web:example.com:%2e%2e",
+    "did:web:example.com:a%2fb",
+    "did:web:example.com:a%5cb",
+    "did:web:example.com:a?b",
+    "did:web:example.com:a#b",
+    "did:web:example.com:%ZZ",
+    "did:web:example.com:%00",
+    "did:web:example.com:%FF",
+    "did:web:example.com%2Fother:alice",
+    "did:unknown:example:alice"
+  ],
+  "device_b": {
+    "device_id": "device-b",
+    "signing_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign",
+    "e2ee_key_id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-ka",
+    "profiles": [
+      "anp.core.binding.v1",
+      "anp.identity.discovery.v1",
+      "anp.direct.base.v1",
+      "anp.group.base.v2",
+      "anp.direct.e2ee.v2",
+      "anp.group.e2ee.v2",
+      "anp.attachment.v1",
+      "anp.federation.relay.v1"
+    ]
+  },
+  "device_b_verification_methods": [
+    {
+      "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-sign",
+      "type": "Multikey",
+      "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+      "publicKeyMultibase": "z6MkvyNoKYn93VycRdR33tHrUmfMMqrKkqNN41k6zT5rBu7e"
+    },
+    {
+      "id": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000#device-b-ka",
+      "type": "Multikey",
+      "controller": "did:web:identity.example:awiki:web:123e4567e89b42d3a456426614174000",
+      "publicKeyMultibase": "z6LSm7odfmUoRU2LX2qA4PaXcvP7qfrvokPJhRWcQLcUnq2o"
+    }
+  ],
+  "expected": {
+    "web_requires_wba_root_proof": false,
+    "group_requires_authentication": false,
+    "api_requires_manifest": false,
+    "device_private_states_shared": false
+  }
+}

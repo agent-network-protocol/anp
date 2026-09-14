@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from .did_web import build_did_web_resolution_url, fetch_did_web_document
+
 from anp.proof import verify_w3c_proof
 
 from .did_wba import (
@@ -20,6 +22,29 @@ from .did_wba import (
 logger = logging.getLogger(__name__)
 
 
+def validate_did_document_method(
+    did_document: Dict[str, Any],
+    verify_proof: bool = False,
+) -> bool:
+    """Validate method rules on a document from a trusted resolution path.
+
+    This structural check does not itself establish HTTPS provenance or grant
+    authentication, assertion, device, or account permissions.
+    """
+    did = did_document.get("id")
+    if not isinstance(did, str):
+        return False
+    if did.startswith("did:wba:"):
+        return validate_did_document_binding(did_document, verify_proof=verify_proof)
+    if did.startswith("did:web:"):
+        try:
+            build_did_web_resolution_url(did)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
 def build_did_resolution_url(did: str, base_url_override: Optional[str] = None) -> str:
     """Build the HTTPS resolution URL for a DID document."""
     parts = did.split(":")
@@ -29,6 +54,12 @@ def build_did_resolution_url(did: str, base_url_override: Optional[str] = None) 
     method = parts[1]
     if method not in {"wba", "web"}:
         raise ValueError(f"Unsupported DID method: {method}")
+
+    if method == "web":
+        url = build_did_web_resolution_url(did)
+        if base_url_override:
+            return base_url_override.rstrip("/") + urllib.parse.urlsplit(url).path
+        return url
 
     domain = urllib.parse.unquote(parts[2])
     path_segments = parts[3:]
@@ -58,20 +89,28 @@ async def resolve_did_document(
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     request_headers = {"Accept": "application/json", **(headers or {})}
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, headers=request_headers, ssl=verify_ssl) as response:
-            response.raise_for_status()
-            did_document = await response.json()
+    if did.startswith("did:web:"):
+        did_document = await fetch_did_web_document(
+            did,
+            timeout_seconds=timeout_seconds,
+            verify_ssl=verify_ssl,
+            base_url_override=base_url_override,
+            headers=request_headers,
+        )
+    else:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url, headers=request_headers, ssl=verify_ssl
+            ) as response:
+                response.raise_for_status()
+                did_document = await response.json()
 
     if did_document.get("id") != did:
         raise ValueError(
             f"DID document ID mismatch. Expected: {did}, got: {did_document.get('id')}"
         )
 
-    method = did.split(":", 2)[1]
-    if method == "wba" and not validate_did_document_binding(
-        did_document, verify_proof=verify_proof
-    ):
+    if not validate_did_document_method(did_document, verify_proof=verify_proof):
         raise ValueError("DID document binding verification failed")
 
     if verify_proof and "proof" in did_document:
