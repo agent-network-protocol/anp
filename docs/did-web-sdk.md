@@ -64,6 +64,9 @@ on an already trusted resolution result. It does not prove HTTPS provenance or
 replace `authentication`, `assertionMethod`, device eligibility or account checks.
 WBA E1 binding/proof rules stay inside the WBA branch. A Web path that happens to
 start with `e1_` or `k1_` is a Web path, not a WBA binding profile.
+Rust's `verify_proof=true` validates an existing Web document proof in both
+the resolver and the offline method validator; an absent proof is allowed.
+This uses the existing W3C proof verifier and does not grant a key relationship.
 
 The existing `DidWbaVerifier` name is retained for compatibility. Its HTTP Message
 Signature path dispatches WBA/Web resolution and accepts Web subjects in its

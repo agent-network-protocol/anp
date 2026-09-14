@@ -88,6 +88,45 @@ fn current_wba_multibase_proof_protects_context() {
 }
 
 #[test]
+fn web_method_validation_accepts_absent_proof_but_checks_present_proof() {
+    use anp::proof::{generate_w3c_proof, ProofGenerationOptions};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let did = "did:web:identity.example:api";
+    let key_id = format!("{did}#sign");
+    let key = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+    let document = json!({
+        "id": did,
+        "verificationMethod": [{
+            "id": key_id, "controller": did, "type": "JsonWebKey2020",
+            "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes())},
+        }],
+        "assertionMethod": [key_id],
+    });
+    assert!(validate_did_document_method(&document, true));
+    let signed = generate_w3c_proof(
+        &document,
+        &anp::PrivateKeyMaterial::Ed25519(key),
+        &key_id,
+        ProofGenerationOptions::default(),
+    )
+    .unwrap();
+    assert!(validate_did_document_method(&signed, true));
+    for mutation in ["content", "key", "malformed", "null"] {
+        let mut invalid = signed.clone();
+        match mutation {
+            "content" => invalid["alsoKnownAs"] = json!(["https://changed.example"]),
+            "key" => invalid["proof"]["verificationMethod"] = json!(format!("{did}#missing")),
+            "malformed" => {
+                invalid["proof"] = json!({"type": "DataIntegrityProof", "proofValue": "invalid"})
+            }
+            _ => invalid["proof"] = Value::Null,
+        }
+        assert!(!validate_did_document_method(&invalid, true), "{mutation}");
+        assert!(validate_did_document_method(&invalid, false), "{mutation}");
+    }
+}
+
+#[test]
 fn web_mutation_keeps_validation() {
     let f = fixture();
     for failure in [
