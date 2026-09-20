@@ -90,9 +90,22 @@ pub fn extract_public_key(
     match method_type {
         "EcdsaSecp256k1VerificationKey2019" => extract_secp256k1_key(object),
         "EcdsaSecp256r1VerificationKey2019" => extract_secp256r1_key(object),
-        "Ed25519VerificationKey2018" | "Ed25519VerificationKey2020" | "Multikey" => {
-            extract_ed25519_key(object)
+        "Multikey" => {
+            // Multikey carries its algorithm in the multicodec prefix. In
+            // particular, agreement keys must never enter the signing parser.
+            let is_x25519 = object
+                .get("publicKeyMultibase")
+                .and_then(Value::as_str)
+                .and_then(|value| value.strip_prefix('z'))
+                .and_then(|value| bs58::decode(value).into_vec().ok())
+                .is_some_and(|bytes| bytes.len() == 34 && bytes.starts_with(&[0xec, 0x01]));
+            if is_x25519 {
+                extract_x25519_key(object)
+            } else {
+                extract_ed25519_key(object)
+            }
         }
+        "Ed25519VerificationKey2018" | "Ed25519VerificationKey2020" => extract_ed25519_key(object),
         "X25519KeyAgreementKey2019" => extract_x25519_key(object),
         "JsonWebKey2020" => extract_jwk_key(object),
         other => Err(VerificationMethodError::UnsupportedType(other.to_string())),
@@ -323,6 +336,35 @@ fn decode_coordinate(value: Option<&str>) -> Result<[u8; 32], VerificationMethod
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn multikey_dispatch_preserves_signing_and_agreement_algorithms() {
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        for (prefix, bytes) in [
+            ([0xed, 0x01], signing.verifying_key().to_bytes()),
+            ([0xec, 0x01], [9; 32]),
+        ] {
+            let mut encoded = prefix.to_vec();
+            encoded.extend(bytes);
+            let method = json!({"id": "did:web:example.test#key", "type": "Multikey", "controller": "did:web:example.test",
+                "publicKeyMultibase": format!("z{}", bs58::encode(encoded).into_string())});
+            match extract_public_key(&method).unwrap() {
+                PublicKeyMaterial::Ed25519(key) => {
+                    assert_eq!(key.to_bytes(), signing.verifying_key().to_bytes())
+                }
+                PublicKeyMaterial::X25519(key) => {
+                    assert_eq!(key, [9; 32]);
+                    assert!(create_verification_method(&method)
+                        .unwrap()
+                        .verify_signature(b"message", "invalid")
+                        .is_err());
+                }
+                _ => panic!("unexpected Multikey algorithm"),
+            }
+        }
+        let invalid = json!({"type":"Multikey", "publicKeyMultibase": format!("z{}", bs58::encode([0xec, 1, 9]).into_string())});
+        assert!(extract_public_key(&invalid).is_err());
+    }
 
     #[test]
     fn extracts_ed25519_from_json_web_key_2020_okp_jwk() {

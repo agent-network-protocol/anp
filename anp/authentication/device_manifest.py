@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import base58
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from .did_web import build_did_web_resolution_url
 
 DEVICE_MANIFEST_TYPE = "ANPDeviceManifest"
 
@@ -52,6 +53,14 @@ _P6_DEPENDENCIES = frozenset(
         PROFILE_GROUP_E2EE_V2,
     }
 )
+_P6_CURRENT_DEPENDENCIES = frozenset(
+    {
+        PROFILE_CORE_BINDING_V1,
+        PROFILE_IDENTITY_DISCOVERY_V1,
+        PROFILE_GROUP_BASE_V2,
+        PROFILE_GROUP_E2EE_V2,
+    }
+)
 _P5_LEGACY_DRAFT_DEPENDENCIES = frozenset(
     {
         PROFILE_CORE_BINDING_V2,
@@ -73,7 +82,6 @@ _LEGACY_DRAFT_FOUNDATION_PROFILES = frozenset(
         PROFILE_CORE_BINDING_V2,
         PROFILE_IDENTITY_DISCOVERY_V2,
         PROFILE_DIRECT_BASE_V2,
-        PROFILE_GROUP_BASE_V2,
     }
 )
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -245,12 +253,13 @@ def validate_device_manifest(
                 "P5 signing key",
             )
         if PROFILE_GROUP_E2EE_V2 in profile_set:
-            _require_dependencies(
-                profile_set,
-                _P6_DEPENDENCIES,
-                _P6_LEGACY_DRAFT_DEPENDENCIES,
-                "P6",
-            )
+            if not _P6_CURRENT_DEPENDENCIES.issubset(profile_set):
+                _require_dependencies(
+                    profile_set,
+                    _P6_DEPENDENCIES,
+                    _P6_LEGACY_DRAFT_DEPENDENCIES,
+                    "P6",
+                )
             _require_relationship(
                 did_document,
                 "assertionMethod",
@@ -289,14 +298,21 @@ def find_eligible_device(
         return None
     for entry in manifest.devices:
         if entry.device_id == device_id and required_profile in entry.profiles:
+            _validate_device_methods(
+                _document_did(did_document),
+                None,
+                entry,
+                _unique_method(did_document, entry.signing_key_id),
+                _unique_method(did_document, entry.e2ee_key_id),
+            )
             return entry
     return None
 
 
 def build_vnext_did_document(
     base_document: Dict[str, Any],
-    root_key_id: str,
-    root_verification_method: Dict[str, Any],
+    root_key_id: Optional[str],
+    root_verification_method: Optional[Dict[str, Any]],
     device: DeviceManifestEntry,
     device_signing_verification_method: Dict[str, Any],
     device_e2ee_verification_method: Dict[str, Any],
@@ -305,7 +321,8 @@ def build_vnext_did_document(
 
     ``base_document`` may contain ordinary DID members and extensions, but the
     relationships managed by this helper must not already be present. The
-    caller must root-sign the returned document before publishing it.
+    caller must root-sign a root-controlled document before publishing it.
+    ``None`` for both root arguments is allowed only for DID Web.
     """
     _require_canonical_write_profiles(device)
     document = _clone_document(base_document)
@@ -323,7 +340,10 @@ def build_vnext_did_document(
             )
 
     did = _document_did(document)
-    _validate_root_method(did, root_key_id, root_verification_method)
+    if root_key_id is not None:
+        _validate_root_method(did, root_key_id, root_verification_method)
+    elif root_verification_method is not None:
+        raise DeviceManifestError("Web device document must not synthesize a root key")
     _validate_device_methods(
         did,
         root_key_id,
@@ -333,13 +353,19 @@ def build_vnext_did_document(
     )
     document.update(
         {
-            "verificationMethod": [
-                copy.deepcopy(root_verification_method),
+            "verificationMethod": (
+                [copy.deepcopy(root_verification_method)]
+                if root_key_id is not None
+                else []
+            )
+            + [
                 copy.deepcopy(device_signing_verification_method),
                 copy.deepcopy(device_e2ee_verification_method),
             ],
-            "authentication": [root_key_id, device.signing_key_id],
-            "assertionMethod": [root_key_id, device.signing_key_id],
+            "authentication": ([root_key_id] if root_key_id is not None else [])
+            + [device.signing_key_id],
+            "assertionMethod": ([root_key_id] if root_key_id is not None else [])
+            + [device.signing_key_id],
             "keyAgreement": [device.e2ee_key_id],
             "deviceManifest": {
                 "type": DEVICE_MANIFEST_TYPE,
@@ -351,9 +377,56 @@ def build_vnext_did_document(
     return document
 
 
+def build_web_did_document(
+    base_document: Dict[str, Any],
+    device: DeviceManifestEntry,
+    device_signing_verification_method: Dict[str, Any],
+    device_e2ee_verification_method: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a Web device document without a WBA root key or root proof.
+
+    Publication and management authorization belong to the HTTPS host. This
+    helper only validates and combines public keys and verification purposes.
+    """
+    return build_vnext_did_document(
+        base_document,
+        None,
+        None,
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+    )
+
+
+def add_device_to_web_did_document(
+    did_document: Dict[str, Any],
+    device: DeviceManifestEntry,
+    device_signing_verification_method: Dict[str, Any],
+    device_e2ee_verification_method: Dict[str, Any],
+    retired_device_ids: Iterable[str],
+) -> Dict[str, Any]:
+    """Add a fresh Web device using the shared public device validation."""
+    return add_device_to_did_document(
+        did_document,
+        None,
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+        retired_device_ids,
+    )
+
+
+def remove_device_from_web_did_document(
+    did_document: Dict[str, Any],
+    device_id: str,
+) -> Dict[str, Any]:
+    """Remove exactly one Web device and clear any stale document proof."""
+    return remove_device_from_did_document(did_document, None, device_id)
+
+
 def add_device_to_did_document(
     did_document: Dict[str, Any],
-    root_key_id: str,
+    root_key_id: Optional[str],
     device: DeviceManifestEntry,
     device_signing_verification_method: Dict[str, Any],
     device_e2ee_verification_method: Dict[str, Any],
@@ -383,7 +456,7 @@ def add_device_to_did_document(
 
 def update_device_in_did_document(
     did_document: Dict[str, Any],
-    root_key_id: str,
+    root_key_id: Optional[str],
     device: DeviceManifestEntry,
     device_signing_verification_method: Dict[str, Any],
     device_e2ee_verification_method: Dict[str, Any],
@@ -415,7 +488,7 @@ def update_device_in_did_document(
 
 def remove_device_from_did_document(
     did_document: Dict[str, Any],
-    root_key_id: str,
+    root_key_id: Optional[str],
     device_id: str,
 ) -> Dict[str, Any]:
     """Remove one device and its active key references from an unsigned copy."""
@@ -447,7 +520,7 @@ def _document_did(did_document: Dict[str, Any]) -> str:
 
 
 def _prepare_document_for_mutation(
-    did_document: Dict[str, Any], root_key_id: str
+    did_document: Dict[str, Any], root_key_id: Optional[str]
 ) -> Dict[str, Any]:
     document = _clone_document(did_document)
     _validate_vnext_document(document, root_key_id)
@@ -467,35 +540,53 @@ def _require_canonical_write_profiles(device: DeviceManifestEntry) -> None:
         raise DeviceManifestError(
             "legacy draft foundation profiles are read-only and cannot be published"
         )
+    if PROFILE_GROUP_BASE_V2 in device.profiles and not {
+        PROFILE_CORE_BINDING_V1,
+        PROFILE_IDENTITY_DISCOVERY_V1,
+    }.issubset(device.profiles):
+        raise DeviceManifestError(
+            "P4 V2 requires core.binding.v1 and identity.discovery.v1"
+        )
 
 
-def _validate_vnext_document(did_document: Dict[str, Any], root_key_id: str) -> None:
+def _validate_vnext_document(
+    did_document: Dict[str, Any], root_key_id: Optional[str]
+) -> None:
     _validate_json_value(did_document, "DID document")
     _reject_private_key_material(did_document, "DID document")
     did = _document_did(did_document)
     methods = did_document.get("verificationMethod")
     if not isinstance(methods, list):
         raise DeviceManifestError("DID document verificationMethod must be an array")
-    root_methods = [
-        method
-        for method in methods
-        if isinstance(method, dict) and method.get("id") == root_key_id
-    ]
-    if len(root_methods) != 1:
-        raise DeviceManifestError(
-            "root key must resolve exactly once in verificationMethod"
+    seen_material = set()
+    if root_key_id is None:
+        try:
+            build_did_web_resolution_url(did)
+        except ValueError as error:
+            raise DeviceManifestError(
+                "Rootless device operations require DID Web"
+            ) from error
+    else:
+        root_methods = [
+            method
+            for method in methods
+            if isinstance(method, dict) and method.get("id") == root_key_id
+        ]
+        if len(root_methods) != 1:
+            raise DeviceManifestError(
+                "root key must resolve exactly once in verificationMethod"
+            )
+        root_identity = _validate_root_method(did, root_key_id, root_methods[0])
+        seen_material.add(root_identity.raw_public_key)
+        _require_relationship(
+            did_document,
+            "assertionMethod",
+            root_key_id,
+            "DID root key",
         )
-    root_identity = _validate_root_method(did, root_key_id, root_methods[0])
-    _require_relationship(
-        did_document,
-        "assertionMethod",
-        root_key_id,
-        "DID root key",
-    )
     manifest = validate_device_manifest(did_document)
     if manifest is None:
         raise DeviceManifestError("deviceManifest is required")
-    seen_material = {root_identity.raw_public_key}
     for entry in manifest.devices:
         if root_key_id in (entry.signing_key_id, entry.e2ee_key_id):
             raise DeviceManifestError("DID root key cannot be a device key")
@@ -558,7 +649,7 @@ def _validate_root_method(
 
 def _validate_device_methods(
     did: str,
-    root_key_id: str,
+    root_key_id: Optional[str],
     device: DeviceManifestEntry,
     signing_method: Dict[str, Any],
     e2ee_method: Dict[str, Any],
@@ -701,6 +792,10 @@ def _decode_public_multikey(
         raise DeviceManifestError(
             "{}.publicKeyMultibase must be canonical".format(subject)
         )
+    # Preserve the existing typed X25519KeyAgreementKey2019 encoding used by
+    # published WBA documents. Untyped Multikey still requires its codec prefix.
+    if method_type == "X25519KeyAgreementKey2019" and len(decoded) == 32:
+        return _PublicKeyIdentity(algorithm="X25519", raw_public_key=decoded)
     if len(decoded) != 34:
         raise DeviceManifestError(
             "{}.publicKeyMultibase must contain a 32-byte key".format(subject)
@@ -800,7 +895,7 @@ def _unique_method(did_document: Dict[str, Any], key_id: str) -> Dict[str, Any]:
 
 def _append_device_material(
     document: Dict[str, Any],
-    root_key_id: str,
+    root_key_id: Optional[str],
     device: DeviceManifestEntry,
     signing_method: Dict[str, Any],
     e2ee_method: Dict[str, Any],

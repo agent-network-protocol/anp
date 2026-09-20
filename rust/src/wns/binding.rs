@@ -3,7 +3,9 @@ use serde_json::{json, Value};
 #[cfg(feature = "network")]
 use url::Url;
 
-use crate::authentication::{resolve_did_wba_document_with_options, DidResolutionOptions};
+use crate::authentication::{
+    resolve_did_document_with_options, validate_did_document_method, DidResolutionOptions,
+};
 
 use super::models::{BindingGeneration, HandleStatus, ANP_HANDLE_SERVICE_TYPE};
 use super::resolver::{resolve_handle_with_options, ResolveHandleOptions};
@@ -95,7 +97,8 @@ pub async fn verify_handle_binding_with_options(
         };
     }
     let did_value = resolution.did.clone();
-    if !did_value.starts_with("did:wba:") {
+    let is_web = did_value.starts_with("did:web:");
+    if !is_web && !did_value.starts_with("did:wba:") {
         return BindingVerificationResult {
             is_valid: false,
             handle: normalized_handle,
@@ -107,7 +110,7 @@ pub async fn verify_handle_binding_with_options(
         };
     }
     let did_domain = did_value.split(':').nth(2).unwrap_or_default().to_string();
-    if did_domain.to_ascii_lowercase() != domain {
+    if !is_web && did_domain.to_ascii_lowercase() != domain {
         return BindingVerificationResult {
             is_valid: false,
             handle: normalized_handle,
@@ -125,7 +128,7 @@ pub async fn verify_handle_binding_with_options(
     let did_document = if let Some(value) = options.did_document {
         value
     } else {
-        match resolve_did_wba_document_with_options(
+        match resolve_did_document_with_options(
             &resolution.did,
             false,
             &options.did_resolution_options,
@@ -147,6 +150,22 @@ pub async fn verify_handle_binding_with_options(
         }
     };
 
+    if is_web
+        && (did_document.get("id").and_then(Value::as_str) != Some(did_value.as_str())
+            || !validate_did_document_method(&did_document, false))
+    {
+        return BindingVerificationResult {
+            is_valid: false,
+            handle: normalized_handle,
+            did: did_value,
+            binding_generation: None,
+            forward_verified: true,
+            reverse_verified: false,
+            error_message: Some(
+                "DID Web document does not match the forward resolution".to_owned(),
+            ),
+        };
+    }
     let handle_services = extract_handle_service_from_did_document(&did_document);
     let reverse_verified = handle_services.iter().any(|service| {
         service

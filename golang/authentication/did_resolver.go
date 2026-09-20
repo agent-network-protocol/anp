@@ -3,11 +3,27 @@ package authentication
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/agent-network-protocol/anp/golang/proof"
 )
+
+// ValidateDIDDocumentMethod checks method rules after trusted resolution.
+// It does not establish HTTPS provenance or grant any verification purpose.
+func ValidateDIDDocumentMethod(document map[string]any, verifyProof bool) bool {
+	did, ok := document["id"].(string)
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(did, "did:wba:") {
+		return ValidateDIDDocumentBinding(document, verifyProof)
+	}
+	if strings.HasPrefix(did, "did:web:") {
+		_, err := BuildDIDWebResolutionURL(did)
+		return err == nil
+	}
+	return false
+}
 
 // ResolveDidDocument resolves a did:wba or did:web document.
 func ResolveDidDocument(ctx context.Context, did string, verifyProof bool) (map[string]any, error) {
@@ -22,31 +38,7 @@ func ResolveDidDocumentWithOptions(ctx context.Context, did string, verifyProof 
 	if !strings.HasPrefix(did, "did:web:") {
 		return nil, fmt.Errorf("invalid DID format")
 	}
-	parts := strings.Split(did, ":")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid DID format")
-	}
-	domain, err := url.PathUnescape(parts[2])
-	if err != nil {
-		return nil, err
-	}
-	baseURL := options.BaseURLOverride
-	if baseURL == "" {
-		baseURL = "https://" + domain
-	}
-	resourceURL := strings.TrimRight(baseURL, "/") + "/.well-known/did.json"
-	if len(parts) > 3 {
-		pathSegments := make([]string, 0, len(parts)-3)
-		for _, segment := range parts[3:] {
-			decoded, decodeErr := url.PathUnescape(segment)
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			pathSegments = append(pathSegments, decoded)
-		}
-		resourceURL = strings.TrimRight(baseURL, "/") + "/" + strings.Join(pathSegments, "/") + "/did.json"
-	}
-	document, err := fetchJSONDocument(ctx, resourceURL, options)
+	document, err := fetchDIDWebDocument(ctx, did, options)
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +46,11 @@ func ResolveDidDocumentWithOptions(ctx context.Context, did string, verifyProof 
 		return nil, fmt.Errorf("invalid DID document")
 	}
 	if verifyProof {
-		proofValue, ok := document["proof"].(map[string]any)
-		if ok {
+		if rawProof, present := document["proof"]; present {
+			proofValue, ok := rawProof.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid DID document proof")
+			}
 			verificationMethodID, _ := proofValue["verificationMethod"].(string)
 			verificationMethod := FindVerificationMethod(document, verificationMethodID)
 			if verificationMethod == nil {

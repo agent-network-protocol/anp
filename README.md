@@ -58,6 +58,7 @@ OpenMLS rebind and status capabilities.
 | Build a working ANP agent quickly | [Python OpenANP quick start](#quick-start-build-a-python-agent) |
 | Create an e1 DID and run complete authentication | [Python e1 authentication example](examples/python/did_wba_examples/e1_authenticate_and_verify.py) |
 | Add DID WBA authentication to an HTTP service | [DID WBA integration guide](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.en.md) |
+| Resolve/authenticate DID Web and manage its public device document | [DID Web SDK guide](docs/did-web-sdk.md) |
 | Use the latest stable SDK release | [SDKs and releases](#sdks-and-releases) |
 | Call or crawl another ANP agent | [ANP Crawler examples](examples/python/anp_crawler_examples/) |
 | Find runnable examples across languages | [Examples guide](docs/examples.md) |

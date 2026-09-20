@@ -18,6 +18,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 import jwt
+import aiohttp
 
 from .did_wba import (
     extract_auth_header_parts,
@@ -26,6 +27,7 @@ from .did_wba import (
     verify_auth_header_signature,
 )
 from .http_signatures import extract_signature_metadata, verify_http_message_signature
+from .did_resolver import resolve_did_document, validate_did_document_method
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +337,16 @@ class DidWbaVerifier:
                 ),
             ) from exc
 
-        did_document = await resolve_did_wba_document(did)
+        try:
+            did_document = (
+                await resolve_did_document(did)
+                if did.startswith("did:web:")
+                else await resolve_did_wba_document(did)
+            )
+        except (ValueError, OSError, aiohttp.ClientError) as exc:
+            raise DidWbaVerifierError(
+                "Failed to resolve DID document", status_code=401
+            ) from exc
         if not did_document:
             raise DidWbaVerifierError(
                 "Failed to resolve DID document",
@@ -347,7 +358,12 @@ class DidWbaVerifier:
                 ),
             )
 
-        self._validate_did_binding(did_document)
+        if did_document.get("id") != did:
+            raise DidWbaVerifierError("DID document ID mismatch", status_code=401)
+        if did.startswith("did:wba:"):
+            self._validate_did_binding(did_document)
+        elif not validate_did_document_method(did_document):
+            raise DidWbaVerifierError("DID method validation failed", status_code=401)
         if not self._is_authentication_authorized(did_document, keyid):
             raise DidWbaVerifierError(
                 "Verification method is not authorized for authentication",
@@ -555,8 +571,12 @@ class DidWbaVerifier:
                     )
 
             did = payload["sub"]
-            if not isinstance(did, str) or not did.startswith("did:wba:"):
+            if not isinstance(did, str) or not did.startswith(("did:wba:", "did:web:")):
                 raise DidWbaVerifierError("Invalid DID format", status_code=401)
+            if did.startswith("did:web:") and not validate_did_document_method(
+                {"id": did}
+            ):
+                raise DidWbaVerifierError("Invalid DID Web format", status_code=401)
 
             now = datetime.now(timezone.utc)
             issued_at = (

@@ -54,6 +54,7 @@ ANP-04 WNS 1.1 将 `binding_generation` 定义为必填安全字段。该收紧�
 | 快速构建一个可运行的 ANP 智能体 | [Python OpenANP 快速开始](#快速开始构建-python-智能体) |
 | 创建 e1 DID 并运行完整身份认证 | [Python e1 身份认证示例](examples/python/did_wba_examples/e1_authenticate_and_verify.py) |
 | 给 HTTP 服务添加 DID WBA 身份认证 | [DID WBA 集成指南](examples/python/did_wba_examples/DID_WBA_AUTH_GUIDE.md) |
+| 解析和认证 DID Web，管理其公开设备文档 | [DID Web SDK 指南](docs/did-web-sdk.md) |
 | 使用最新稳定 SDK 版本 | [SDK 与发布](#sdk-与发布) |
 | 调用或爬取另一个 ANP 智能体 | [ANP Crawler 示例](examples/python/anp_crawler_examples/) |
 | 查找多语言可运行示例 | [示例总览](docs/examples.cn.md) |

@@ -29,7 +29,8 @@ func VerifyHandleBindingWithOptions(ctx context.Context, handle string, options 
 	if resolution.Status != HandleStatusActive {
 		return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ErrorMessage: fmt.Sprintf("handle status is '%s', expected 'active'", resolution.Status)}
 	}
-	if !strings.HasPrefix(resolution.DID, "did:wba:") {
+	isWeb := strings.HasPrefix(resolution.DID, "did:web:")
+	if !isWeb && !strings.HasPrefix(resolution.DID, "did:wba:") {
 		return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ErrorMessage: "DID does not use did:wba method"}
 	}
 	parts := strings.Split(resolution.DID, ":")
@@ -37,15 +38,18 @@ func VerifyHandleBindingWithOptions(ctx context.Context, handle string, options 
 	if len(parts) > 2 {
 		didDomain = parts[2]
 	}
-	if strings.ToLower(didDomain) != domain {
+	if !isWeb && strings.ToLower(didDomain) != domain {
 		return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ErrorMessage: fmt.Sprintf("domain mismatch: handle domain '%s' != DID domain '%s'", domain, didDomain)}
 	}
 	didDocument := options.DidDocument
 	if didDocument == nil {
-		didDocument, err = authentication.ResolveDidWBADocumentWithOptions(ctx, resolution.DID, false, options.DidResolutionOptions)
+		didDocument, err = authentication.ResolveDidDocumentWithOptions(ctx, resolution.DID, false, options.DidResolutionOptions)
 		if err != nil {
 			return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ErrorMessage: "failed to resolve DID document: " + err.Error()}
 		}
+	}
+	if isWeb && (didDocument["id"] != resolution.DID || !authentication.ValidateDIDDocumentMethod(didDocument, false)) {
+		return BindingVerificationResult{IsValid: false, Handle: normalized, DID: resolution.DID, ForwardVerified: true, ErrorMessage: "DID Web document does not match the forward resolution"}
 	}
 	handleServices := ExtractHandleServiceFromDIDDocument(didDocument)
 	reverseVerified := false

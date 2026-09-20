@@ -249,3 +249,24 @@ func TestVerifyHandleBindingReturnsGenerationOnlyOnSuccess(t *testing.T) {
 		t.Fatalf("invalid verification exposed generation: %#v", result)
 	}
 }
+
+func TestWebHandleBindingRequiresForwardIDAndProviderDomain(t *testing.T) {
+	const did = "did:web:identity.example:users:alice"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(HandleResolutionDocument{Handle: "alice.example.com", DID: did, Status: HandleStatusActive, BindingGeneration: "8"})
+	}))
+	defer server.Close()
+	for _, c := range []struct {
+		did, endpoint string
+		valid         bool
+	}{
+		{did, "https://example.com/providers/wns", true}, {did, "https://identity.example/providers/wns", false},
+		{did, "http://example.com/providers/wns", false}, {"did:web:other.example", "https://example.com/providers/wns", false},
+	} {
+		document := map[string]any{"id": c.did, "service": []any{map[string]any{"id": c.did + "#handle", "type": ANPHandleServiceType, "serviceEndpoint": c.endpoint}}}
+		result := VerifyHandleBindingWithOptions(context.Background(), "alice.example.com", BindingVerificationOptions{DidDocument: document, ResolutionOptions: ResolveHandleOptions{BaseURLOverride: server.URL}})
+		if result.IsValid != c.valid || (result.BindingGeneration != nil) != c.valid {
+			t.Fatalf("%s %s: %#v", c.did, c.endpoint, result)
+		}
+	}
+}

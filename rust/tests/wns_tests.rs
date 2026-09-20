@@ -10,6 +10,45 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn web_handle_binding_requires_forward_id_and_provider_domain() {
+    let did = "did:web:identity.example:users:alice";
+    let server = JsonTestServer::start([(
+        "/.well-known/handle/alice",
+        json!({
+            "handle":"alice.example.com", "did":did, "status":"active", "binding_generation":"8"
+        }),
+    )]);
+    for (returned_did, endpoint, valid) in [
+        (did, "https://example.com/providers/wns", true),
+        (did, "https://identity.example/providers/wns", false),
+        (did, "http://example.com/providers/wns", false),
+        (
+            "did:web:other.example",
+            "https://example.com/providers/wns",
+            false,
+        ),
+    ] {
+        let result = verify_handle_binding_with_options(
+            "alice.example.com",
+            BindingVerificationOptions {
+                did_document: Some(
+                    json!({"id":returned_did,"service":[{"id":format!("{returned_did}#handle"),
+                "type":"ANPHandleService","serviceEndpoint":endpoint}]}),
+                ),
+                resolution_options: ResolveHandleOptions {
+                    base_url_override: Some(server.uri()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(result.is_valid, valid, "{returned_did} {endpoint}");
+        assert_eq!(result.binding_generation.is_some(), valid);
+    }
+}
+
 fn binding_generation_vectors() -> serde_json::Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../testdata/wns/binding_generation_vectors.json");

@@ -223,17 +223,15 @@ impl DidWbaVerifier {
             .next()
             .unwrap_or_default()
             .to_string();
-        let did_document =
-            resolve_did_wba_document_with_options(&did, false, &self.config.did_resolution_options)
-                .await
-                .map_err(|_| {
-                    self.challenge_error(
-                        "Failed to resolve DID document",
-                        401,
-                        domain,
-                        "invalid_did",
-                    )
-                })?;
+        let did_document = super::did_resolver::resolve_did_document_with_options(
+            &did,
+            false,
+            &self.config.did_resolution_options,
+        )
+        .await
+        .map_err(|_| {
+            self.challenge_error("Failed to resolve DID document", 401, domain, "invalid_did")
+        })?;
         self.handle_http_signature_auth_with_document(
             method,
             url,
@@ -264,7 +262,16 @@ impl DidWbaVerifier {
             .to_string();
 
         self.validate_document_id_matches(did_document, &did, domain)?;
-        self.validate_did_binding(did_document)?;
+        if did.starts_with("did:wba:") {
+            self.validate_did_binding(did_document)?;
+        } else if !super::did_resolver::validate_did_document_method(did_document, false) {
+            return Err(self.challenge_error(
+                "DID method validation failed",
+                401,
+                domain,
+                "invalid_did",
+            ));
+        }
         if !is_authentication_authorized(did_document, &metadata.keyid) {
             return Err(DidWbaVerifierError {
                 message: "Verification method is not authorized for authentication".to_string(),

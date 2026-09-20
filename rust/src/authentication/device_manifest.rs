@@ -32,6 +32,12 @@ const P6_DEPENDENCIES: &[&str] = &[
     PROFILE_GROUP_BASE_V1,
     PROFILE_GROUP_E2EE_V2,
 ];
+const P6_CURRENT_DEPENDENCIES: &[&str] = &[
+    PROFILE_CORE_BINDING_V1,
+    PROFILE_IDENTITY_DISCOVERY_V1,
+    PROFILE_GROUP_BASE_V2,
+    PROFILE_GROUP_E2EE_V2,
+];
 const P5_LEGACY_DRAFT_DEPENDENCIES: &[&str] = &[
     PROFILE_CORE_BINDING_V2,
     PROFILE_IDENTITY_DISCOVERY_V2,
@@ -174,12 +180,14 @@ pub fn validate_device_manifest(
             }
         }
         if profiles.contains(PROFILE_GROUP_E2EE_V2) {
-            require_dependencies(
-                &profiles,
-                P6_DEPENDENCIES,
-                P6_LEGACY_DRAFT_DEPENDENCIES,
-                PROFILE_GROUP_E2EE_V2,
-            )?;
+            if !P6_CURRENT_DEPENDENCIES.iter().all(|p| profiles.contains(p)) {
+                require_dependencies(
+                    &profiles,
+                    P6_DEPENDENCIES,
+                    P6_LEGACY_DRAFT_DEPENDENCIES,
+                    PROFILE_GROUP_E2EE_V2,
+                )?;
+            }
             if !relationship_contains(did_document, "assertionMethod", &device.signing_key_id) {
                 return Err(invalid(
                     "P6 signing_key_id must be authorized by assertionMethod",
@@ -241,6 +249,39 @@ pub fn build_vnext_did_document(
     device_signing_verification_method: &Value,
     device_e2ee_verification_method: &Value,
 ) -> Result<Value, DeviceManifestError> {
+    build_device_document(
+        base_document,
+        Some((root_key_id, root_verification_method)),
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+    )
+}
+
+/// Build a DID Web device document without a WBA root key or root proof.
+pub fn build_web_did_document(
+    base_document: &Value,
+    device: &DeviceManifestEntry,
+    device_signing_verification_method: &Value,
+    device_e2ee_verification_method: &Value,
+) -> Result<Value, DeviceManifestError> {
+    build_device_document(
+        base_document,
+        None,
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+    )
+}
+
+fn build_device_document(
+    base_document: &Value,
+    root: Option<(&str, &Value)>,
+    device: &DeviceManifestEntry,
+    device_signing_verification_method: &Value,
+    device_e2ee_verification_method: &Value,
+) -> Result<Value, DeviceManifestError> {
+    let root_key_id = root.map(|(key_id, _)| key_id);
     require_canonical_write_profiles(device)?;
     let mut document = base_document
         .as_object()
@@ -262,7 +303,9 @@ pub fn build_vnext_did_document(
     }
 
     let did = document_did(&document)?;
-    validate_root_method(did, root_key_id, root_verification_method)?;
+    if let Some((key_id, method)) = root {
+        validate_root_method(did, key_id, method)?;
+    }
     validate_device_methods(
         did,
         root_key_id,
@@ -272,25 +315,35 @@ pub fn build_vnext_did_document(
     )?;
     document.insert(
         "verificationMethod".to_string(),
-        Value::Array(vec![
-            root_verification_method.clone(),
-            device_signing_verification_method.clone(),
-            device_e2ee_verification_method.clone(),
-        ]),
+        Value::Array(
+            root.into_iter()
+                .map(|(_, method)| method.clone())
+                .chain([
+                    device_signing_verification_method.clone(),
+                    device_e2ee_verification_method.clone(),
+                ])
+                .collect(),
+        ),
     );
     document.insert(
         "authentication".to_string(),
-        Value::Array(vec![
-            Value::String(root_key_id.to_string()),
-            Value::String(device.signing_key_id.clone()),
-        ]),
+        Value::Array(
+            root_key_id
+                .into_iter()
+                .map(|key| Value::String(key.to_owned()))
+                .chain([Value::String(device.signing_key_id.clone())])
+                .collect(),
+        ),
     );
     document.insert(
         "assertionMethod".to_string(),
-        Value::Array(vec![
-            Value::String(root_key_id.to_string()),
-            Value::String(device.signing_key_id.clone()),
-        ]),
+        Value::Array(
+            root_key_id
+                .into_iter()
+                .map(|key| Value::String(key.to_owned()))
+                .chain([Value::String(device.signing_key_id.clone())])
+                .collect(),
+        ),
     );
     document.insert(
         "keyAgreement".to_string(),
@@ -313,6 +366,42 @@ pub fn build_vnext_did_document(
 pub fn add_device_to_did_document(
     did_document: &Value,
     root_key_id: &str,
+    device: &DeviceManifestEntry,
+    device_signing_verification_method: &Value,
+    device_e2ee_verification_method: &Value,
+    retired_device_ids: &[String],
+) -> Result<Value, DeviceManifestError> {
+    add_device(
+        did_document,
+        Some(root_key_id),
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+        retired_device_ids,
+    )
+}
+
+/// Apply the shared device lifecycle to a DID Web document.
+pub fn add_device_to_web_did_document(
+    did_document: &Value,
+    device: &DeviceManifestEntry,
+    device_signing_verification_method: &Value,
+    device_e2ee_verification_method: &Value,
+    retired_device_ids: &[String],
+) -> Result<Value, DeviceManifestError> {
+    add_device(
+        did_document,
+        None,
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+        retired_device_ids,
+    )
+}
+
+fn add_device(
+    did_document: &Value,
+    root_key_id: Option<&str>,
     device: &DeviceManifestEntry,
     device_signing_verification_method: &Value,
     device_e2ee_verification_method: &Value,
@@ -355,6 +444,22 @@ pub fn update_device_in_did_document(
     device_signing_verification_method: &Value,
     device_e2ee_verification_method: &Value,
 ) -> Result<Value, DeviceManifestError> {
+    update_device(
+        did_document,
+        Some(root_key_id),
+        device,
+        device_signing_verification_method,
+        device_e2ee_verification_method,
+    )
+}
+
+fn update_device(
+    did_document: &Value,
+    root_key_id: Option<&str>,
+    device: &DeviceManifestEntry,
+    device_signing_verification_method: &Value,
+    device_e2ee_verification_method: &Value,
+) -> Result<Value, DeviceManifestError> {
     require_canonical_write_profiles(device)?;
     let mut document = prepare_document_for_mutation(did_document, root_key_id)?;
     let manifest = validate_device_manifest(&document)?
@@ -383,6 +488,22 @@ pub fn remove_device_from_did_document(
     root_key_id: &str,
     device_id: &str,
 ) -> Result<Value, DeviceManifestError> {
+    remove_device(did_document, Some(root_key_id), device_id)
+}
+
+/// Apply the shared device lifecycle to a DID Web document.
+pub fn remove_device_from_web_did_document(
+    did_document: &Value,
+    device_id: &str,
+) -> Result<Value, DeviceManifestError> {
+    remove_device(did_document, None, device_id)
+}
+
+fn remove_device(
+    did_document: &Value,
+    root_key_id: Option<&str>,
+    device_id: &str,
+) -> Result<Value, DeviceManifestError> {
     let mut document = prepare_document_for_mutation(did_document, root_key_id)?;
     let manifest = validate_device_manifest(&document)?
         .ok_or_else(|| invalid("deviceManifest is required for device update"))?;
@@ -399,7 +520,7 @@ pub fn remove_device_from_did_document(
 
 fn prepare_document_for_mutation(
     did_document: &Value,
-    root_key_id: &str,
+    root_key_id: Option<&str>,
 ) -> Result<Value, DeviceManifestError> {
     validate_vnext_document(did_document, root_key_id)?;
     let manifest = validate_device_manifest(did_document)?
@@ -441,7 +562,7 @@ fn require_canonical_write_profiles(
 
 fn validate_vnext_document(
     did_document: &Value,
-    root_key_id: &str,
+    root_key_id: Option<&str>,
 ) -> Result<(), DeviceManifestError> {
     reject_private_key_material(did_document, "DID document")?;
     let object = did_document
@@ -452,24 +573,32 @@ fn validate_vnext_document(
         .get("verificationMethod")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("DID document verificationMethod must be an array"))?;
-    let root_methods = methods
-        .iter()
-        .filter(|method| method.get("id").and_then(Value::as_str) == Some(root_key_id))
-        .collect::<Vec<_>>();
-    if root_methods.len() != 1 {
-        return Err(invalid(
-            "root key must resolve exactly once in verificationMethod",
-        ));
-    }
-    let root_identity = validate_root_method(did, root_key_id, root_methods[0])?;
-    if !relationship_contains(did_document, "assertionMethod", root_key_id) {
-        return Err(invalid("DID root key is not authorized by assertionMethod"));
+    let mut seen_material = BTreeSet::new();
+    if let Some(key_id) = root_key_id {
+        let root_methods = methods
+            .iter()
+            .filter(|method| method.get("id").and_then(Value::as_str) == Some(key_id))
+            .collect::<Vec<_>>();
+        if root_methods.len() != 1 {
+            return Err(invalid(
+                "root key must resolve exactly once in verificationMethod",
+            ));
+        }
+        let root_identity = validate_root_method(did, key_id, root_methods[0])?;
+        if !relationship_contains(did_document, "assertionMethod", key_id) {
+            return Err(invalid("DID root key is not authorized by assertionMethod"));
+        }
+        seen_material.insert(root_identity.raw_public_key);
+    } else {
+        super::did_web::build_did_web_resolution_url(did)
+            .map_err(|_| invalid("Rootless device operations require DID Web"))?;
     }
     let manifest = validate_device_manifest(did_document)?
         .ok_or_else(|| invalid("deviceManifest is required"))?;
-    let mut seen_material = BTreeSet::from([root_identity.raw_public_key]);
     for device in &manifest.devices {
-        if device.signing_key_id == root_key_id || device.e2ee_key_id == root_key_id {
+        if root_key_id
+            .is_some_and(|key_id| device.signing_key_id == key_id || device.e2ee_key_id == key_id)
+        {
             return Err(invalid("DID root key cannot be a device key"));
         }
         let signing_method = unique_method(did_document, &device.signing_key_id)?;
@@ -532,12 +661,14 @@ fn validate_root_method(
 
 fn validate_device_methods(
     did: &str,
-    root_key_id: &str,
+    root_key_id: Option<&str>,
     device: &DeviceManifestEntry,
     signing_method: &Value,
     e2ee_method: &Value,
 ) -> Result<(PublicKeyIdentity, PublicKeyIdentity), DeviceManifestError> {
-    if device.signing_key_id == root_key_id || device.e2ee_key_id == root_key_id {
+    if root_key_id
+        .is_some_and(|key_id| device.signing_key_id == key_id || device.e2ee_key_id == key_id)
+    {
         return Err(invalid("DID root key cannot be a device key"));
     }
     validate_device_key_roles(did, device, signing_method, e2ee_method)
@@ -836,7 +967,7 @@ fn unique_method<'a>(
 
 fn append_device_material(
     did_document: &mut Value,
-    root_key_id: &str,
+    root_key_id: Option<&str>,
     device: &DeviceManifestEntry,
     signing_method: &Value,
     e2ee_method: &Value,

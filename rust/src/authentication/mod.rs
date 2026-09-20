@@ -1,5 +1,6 @@
 pub mod device_manifest;
 pub mod did_resolver;
+pub mod did_web;
 pub mod did_transition;
 pub mod did_wba;
 pub mod did_wba_authenticator;
@@ -9,6 +10,7 @@ pub mod http_signatures;
 pub mod verification_methods;
 
 pub use device_manifest::{
+    add_device_to_web_did_document, build_web_did_document, remove_device_from_web_did_document,
     add_device_to_did_document, build_vnext_did_document, find_eligible_device,
     parse_device_manifest, remove_device_from_did_document, update_device_in_did_document,
     validate_device_manifest, DeviceManifest, DeviceManifestEntry, DeviceManifestError,
@@ -17,7 +19,9 @@ pub use device_manifest::{
     PROFILE_GROUP_E2EE_V2, PROFILE_IDENTITY_DISCOVERY_V1, PROFILE_IDENTITY_DISCOVERY_V2,
 };
 pub use did_resolver::{
-    resolve_did_document, resolve_did_document_sync, resolve_did_document_with_options,
+    build_did_web_resolution_url, resolve_did_document, resolve_did_document_sync,
+    resolve_did_document_with_options,
+    validate_did_document_method,
 };
 pub use did_transition::{
     parse_did_wba_e1, resolve_current_did, verify_active_e1_document, verify_transition_hop,
