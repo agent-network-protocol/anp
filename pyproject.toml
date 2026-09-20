@@ -5,13 +5,13 @@ description = "An SDK that enables agents to connect with each other, allowing t
 authors = [
     {name = "changshan", email = "chgaowei@gmail.com"}
 ]
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = ["agent", "protocol", "authentication", "encryption", "communication"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
 
