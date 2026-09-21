@@ -283,4 +283,4 @@ uv run python examples/python/ap2_examples/ap2_complete_flow.py
 
 ## 许可证
 
-MIT License
+Apache License 2.0。详见 [LICENSE](../../LICENSE)。

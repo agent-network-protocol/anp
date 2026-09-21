@@ -508,4 +508,4 @@ uv run python examples/python/anp_crawler_examples/amap_crawler_example.py
 
 ## License
 
-MIT License
+Apache License 2.0. See [LICENSE](../../LICENSE).

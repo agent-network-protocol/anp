@@ -308,9 +308,11 @@ uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8
 
 ## 许可证
 
-本项目根目录许可证为 [Apache License 2.0（Apache-2.0）](LICENSE)，Python 包的许可元数据与根目录许可证保持一致。
+本项目采用 [Apache License 2.0](LICENSE) 授权。
 
-此说明不替代单个文件、SDK 子项目或第三方依赖的许可及署名声明。例如，[Rust 包元数据](rust/Cargo.toml)、[Dart 许可证](dart/LICENSE)和 [TypeScript 许可证](typescript/ts_sdk/LICENSE)需要按各自范围核对。请保留现有版权和第三方声明；此次文档修正不代表对整个仓库重新授权，也不代表所有 SDK 资产已完成权利清理。
+Copyright (c) 2024 GaoWei Chang and ANP Open Source Community.
+
+Python、Go、Rust、Dart、TypeScript 和 Java 的第一方 SDK 源码与包元数据均遵循根目录许可证。第三方依赖保留各自许可证。已经发布的历史包版本仍以当时构件中的声明为准；详见 [NOTICE](NOTICE)。
 
 ---
 

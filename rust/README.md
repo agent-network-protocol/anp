@@ -105,3 +105,7 @@ SDK layer.
 
 - Source: <https://github.com/agent-network-protocol/AgentConnect>
 - Protocol: <https://github.com/agent-network-protocol/AgentNetworkProtocol>
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

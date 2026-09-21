@@ -312,9 +312,11 @@ The release command validates the working tree, aligned version files, Python bu
 
 ## License
 
-The root project license is [Apache License 2.0 (Apache-2.0)](LICENSE). The Python package license metadata follows this root license.
+This project is licensed under the [Apache License 2.0](LICENSE).
 
-This statement does not replace license or attribution notices for individual files, SDK subprojects, or third-party dependencies. For example, the [Rust package metadata](rust/Cargo.toml), [Dart license](dart/LICENSE), and [TypeScript license](typescript/ts_sdk/LICENSE) must be reviewed in their own scope. Preserve existing copyright and third-party notices. This documentation correction is not a repository-wide relicensing or a claim that all SDK assets have completed rights clearance.
+Copyright (c) 2024 GaoWei Chang and ANP Open Source Community.
+
+Python, Go, Rust, Dart, TypeScript, and Java first-party SDK sources and package metadata follow this root license. Third-party dependencies keep their own licenses. Previously published package versions remain under the license declared in those artifacts; see [NOTICE](NOTICE).
 
 ---
 

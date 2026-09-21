@@ -59,3 +59,7 @@ flutter test --platform chrome
 ```
 
 Android debug build smoke has been verified with a temporary Flutter app that path-depends on this package. iOS/macOS build smoke is not claimed unless full Xcode/CocoaPods setup is available.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

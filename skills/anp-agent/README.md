@@ -121,4 +121,4 @@ DID (Decentralized Identifier) 是去中心化身份，用于 Agent 之间的身
 
 ## License
 
-MIT
+Apache License 2.0. See [LICENSE](../../LICENSE).

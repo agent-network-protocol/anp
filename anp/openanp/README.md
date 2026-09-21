@@ -634,4 +634,4 @@ uvicorn examples.python.openanp_examples.advanced_server:app_custom --port 8000
 
 ## License
 
-MIT License
+Apache License 2.0. See [LICENSE](../../LICENSE).

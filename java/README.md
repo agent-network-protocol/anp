@@ -432,4 +432,4 @@ public int add(@Param("a") int a, @Param("b") int b)
 
 ## License
 
-MIT License
+Apache License 2.0. See [LICENSE](LICENSE).

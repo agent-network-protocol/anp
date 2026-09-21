@@ -1,0 +1,15 @@
+ANP SDK
+Copyright 2024 GaoWei Chang
+Copyright 2024 ANP Open Source Community
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file in the project root.
+
+Until 10 October 2025 this repository was distributed under the MIT
+License (Copyright 2024 GaoWei Chang). Previously published package
+versions remain under the license declared at the time of their
+publication, including PyPI `anp` 1.0.3 (MIT) and crates.io `anp`
+1.0.3 (MIT). The original copyright holder merged
+https://github.com/agent-network-protocol/anp/pull/22, adopting
+Apache-2.0 as the current first-party project license. This is not a
+dual-license grant.

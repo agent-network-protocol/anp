@@ -101,3 +101,7 @@ headers, err := authentication.GenerateHTTPSignatureHeaders(
 ```bash
 go test ./...
 ```
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

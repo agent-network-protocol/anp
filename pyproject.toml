@@ -58,6 +58,7 @@ include = [
     "/README.md",
     "/README.cn.md",
     "/LICENSE",
+    "/NOTICE",
 ]
 exclude = [
     "/anp/**/*.md",

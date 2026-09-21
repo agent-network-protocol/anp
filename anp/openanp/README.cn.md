@@ -495,4 +495,4 @@ uv run python examples/python/openanp_examples/minimal_client.py
 
 ## 许可证
 
-MIT License
+Apache License 2.0。详见 [LICENSE](../../LICENSE)。

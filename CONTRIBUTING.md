@@ -29,6 +29,10 @@ Before you start writing code, we recommend that you:
 - If necessary, we will invite developers from relevant fields to participate in the discussion
 - You may be asked to make some modifications or optimizations
 
+## License
+
+By contributing, you agree that your contributions are licensed under the Apache License 2.0, unless you explicitly state otherwise.
+
 ## Contact Us
 
 If you have any questions, please contact us through the following ways:

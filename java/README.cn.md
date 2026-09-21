@@ -84,4 +84,4 @@ mvn exec:java -pl anp-examples -Dexec.mainClass="com.agentconnect.example.local.
 
 ## License
 
-MIT License
+Apache License 2.0。详见 [LICENSE](LICENSE)。
