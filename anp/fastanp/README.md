@@ -478,4 +478,4 @@ def search_users(query: str) -> dict:
 
 ## License
 
-This project is open-sourced under the MIT License. See [LICENSE](../../LICENSE) file.
+Apache License 2.0. See [LICENSE](../../LICENSE).

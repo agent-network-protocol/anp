@@ -58,3 +58,7 @@ go get github.com/agent-network-protocol/anp/golang
 ```bash
 go test ./...
 ```
+
+## 许可证
+
+Apache License 2.0。详见 [LICENSE](LICENSE)。

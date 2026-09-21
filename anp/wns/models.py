@@ -141,7 +141,7 @@ class HandleResolutionDocument(BaseModel):
     """
 
     handle: str = Field(description="Full handle identifier, e.g. alice.example.com")
-    did: str = Field(description="The did:wba DID bound to this handle")
+    did: str = Field(description="The DID bound to this handle")
     status: HandleStatus = Field(description="Current handle status")
     binding_generation: str = Field(
         description="Canonical positive decimal binding generation"

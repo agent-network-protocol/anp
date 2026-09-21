@@ -15,6 +15,7 @@ cargo add anp
 ## Features
 
 - DID WBA document creation and verification
+- [DID Web resolution, HTTP authentication and public device lifecycle](../docs/did-web-sdk.md)
 - HTTP authentication helpers
 - Proof generation and verification
 - Appendix-B object proof helpers for `group_receipt`, `prekey_bundle`, and `did_wba_binding`
@@ -104,3 +105,7 @@ SDK layer.
 
 - Source: <https://github.com/agent-network-protocol/AgentConnect>
 - Protocol: <https://github.com/agent-network-protocol/AgentNetworkProtocol>
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

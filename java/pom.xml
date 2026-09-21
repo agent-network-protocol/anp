@@ -11,6 +11,15 @@
     
     <name>ANP Parent</name>
     <description>Agent Network Protocol (ANP) Java SDK - Parent POM</description>
+    <url>https://github.com/agent-network-protocol/anp</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <modules>
         <module>anp4j</module>

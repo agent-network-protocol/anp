@@ -3,7 +3,7 @@
 # Email: chgaowei@gmail.com
 # Website: https://agent-network-protocol.com/
 #
-# This project is open-sourced under the MIT License. For details, please see the LICENSE file.
+# Licensed under the Apache License, Version 2.0. See the LICENSE file in the project root.
 
 """W3C Data Integrity Proof generation and verification.
 
@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Union
 
 import jcs
+import base58
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 from cryptography.hazmat.primitives import hashes
 
@@ -393,11 +394,24 @@ def verify_w3c_proof(
         # Reconstruct document without proof
         doc_without_proof = {k: v for k, v in document.items() if k != "proof"}
 
-        # Compute signing input
+        # Read current eddsa-jcs-2022 documents without rewriting the legacy
+        # base64url generation/signing contract. The multibase form carries the
+        # document context into the proof configuration as required by the suite.
+        signature = None
+        if (proof_type == PROOF_TYPE_DATA_INTEGRITY
+                and cryptosuite == CRYPTOSUITE_EDDSA_JCS_2022
+                and proof_value.startswith("z")):
+            try:
+                decoded = base58.b58decode(proof_value[1:])
+                if len(decoded) == 64 and "z" + base58.b58encode(decoded).decode("ascii") == proof_value:
+                    signature = decoded
+                    if "@context" in doc_without_proof:
+                        proof_options["@context"] = doc_without_proof["@context"]
+            except ValueError:
+                pass
+        if signature is None:
+            signature = _b64url_decode(proof_value)
         to_be_signed = _compute_signing_input(doc_without_proof, proof_options)
-
-        # Decode signature
-        signature = _b64url_decode(proof_value)
 
         # Verify
         if proof_type == PROOF_TYPE_SECP256K1:

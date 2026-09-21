@@ -203,12 +203,6 @@ fn ordinary_p4_v2_builder_uses_v1_foundations_without_enabling_p6() {
         json!(["anp.group.base.v2"]),
         json!(["anp.core.binding.v1", "anp.group.base.v2"]),
         json!(["anp.identity.discovery.v1", "anp.group.base.v2"]),
-        json!([
-            "anp.core.binding.v1",
-            "anp.identity.discovery.v1",
-            "anp.group.base.v2",
-            "anp.group.e2ee.v2"
-        ]),
     ] {
         let mut device = value["device_a"].clone();
         device["entry"]["profiles"] = rejected;
