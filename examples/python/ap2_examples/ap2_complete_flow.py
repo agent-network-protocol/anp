@@ -45,6 +45,7 @@ from anp.ap2.cart_mandate import build_cart_mandate, validate_cart_mandate
 from anp.ap2.credential_mandate import build_fulfillment_receipt, build_payment_receipt
 from anp.ap2.mandate import compute_hash
 from anp.ap2.payment_mandate import build_payment_mandate, validate_payment_mandate
+from anp.authentication import did_wba_verifier as verifier_module
 from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader
 from anp.authentication.did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig
 from anp.authentication.verification_methods import EcdsaSecp256k1VerificationKey2019
@@ -139,19 +140,23 @@ class MerchantServer:
         )
         self.cart_hashes: dict[str, str] = {}
 
+    async def _authenticate(self, request: web.Request) -> Dict[str, Any]:
+        # Clients sign requests with HTTP Message Signatures by default, so the
+        # whole request (method, URL, headers, body) has to go to the verifier.
+        return await self.verifier.verify_request(
+            method=request.method,
+            url=str(request.url),
+            headers=dict(request.headers),
+            body=await request.read(),
+            domain=get_local_ip(),
+        )
+
     async def handle_create_cart_mandate(self, request: web.Request) -> web.Response:
         print("\n[Merchant] Received create_cart_mandate request")
 
-        auth_header: str = request.headers.get("Authorization")
-        if not auth_header:
-            return web.json_response({"error": "Missing Authorization"}, status=401)
-
         access_token: str | None = None
         try:
-            auth_result: Dict[str, Any] = await self.verifier.verify_auth_header(
-                authorization=auth_header,
-                domain=get_local_ip(),
-            )
+            auth_result = await self._authenticate(request)
             shopper_did = auth_result["did"]
             access_token = auth_result.get("access_token")
             print(f"[Merchant] ✓ DID WBA auth: {shopper_did}")
@@ -252,14 +257,8 @@ class MerchantServer:
     async def handle_send_payment_mandate(self, request: web.Request) -> web.Response:
         print("\n[Merchant] Received send_payment_mandate request")
 
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            return web.json_response({"error": "Missing Authorization"}, status=401)
         try:
-            auth_result: Dict[str, Any] = await self.verifier.verify_auth_header(
-                authorization=auth_header,
-                domain=get_local_ip(),
-            )
+            auth_result = await self._authenticate(request)
             shopper_did = auth_result["did"]
         except Exception as exc:
             return web.json_response({"error": f"Auth failed: {exc}"}, status=401)
@@ -632,6 +631,13 @@ async def main():
     merchant_did = did_document["id"]
     jwt_private_key = load_text(root / "docs/jwt_rs256/RS256-private.pem")
     jwt_public_key = load_text(root / "docs/jwt_rs256/RS256-public.pem")
+
+    # Resolve the demo DID from the bundled document instead of the network,
+    # same as merchant_server.py does.
+    async def local_resolver(_: str) -> dict:
+        return did_document
+
+    verifier_module.resolve_did_wba_document = local_resolver
 
     runner, merchant_did = await start_merchant_server(
         host=local_ip,

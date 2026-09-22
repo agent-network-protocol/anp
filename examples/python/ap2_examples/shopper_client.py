@@ -29,7 +29,7 @@ from anp.ap2 import (
 )
 from anp.ap2.cart_mandate import validate_cart_mandate
 from anp.ap2.payment_mandate import build_payment_mandate, validate_payment_mandate
-from anp.ap2.utils import compute_hash
+from anp.ap2.mandate import compute_hash
 from anp.authentication.did_wba_authenticator import DIDWbaAuthHeader
 from anp.authentication.verification_methods import EcdsaSecp256k1VerificationKey2019
 
@@ -155,7 +155,7 @@ class ShopperAgent:
             messageId=f"cart-request-{cart_mandate_id}",
             from_=self.client_did,
             to=merchant_did,
-            data=request_data,
+            data=request_data.model_dump(exclude_none=True),
         )
         create_cart_endpoint = (
             f"{merchant_url.rstrip('/')}/ap2/merchant/create_cart_mandate"
@@ -182,34 +182,39 @@ class ShopperAgent:
                 )
                 cart_response = await response.json()
 
-        received_cart = CartMandate(**cart_response["data"])
-        validate_cart_mandate(
-            cart_mandate=received_cart,
+        received_cart = CartMandate.model_validate(cart_response["data"])
+        if not validate_cart_mandate(
+            cart_mandate=received_cart.model_dump(exclude_none=True),
             merchant_public_key=self.merchant_public_key,
             merchant_algorithm="ES256K",
             expected_shopper_did=self.client_did,
-        )
-        cart_hash = compute_hash(received_cart.contents.model_dump(exclude_none=True))
+        ):
+            raise ValueError("CartMandate validation failed")
+        # contents is already a dict
+        cart_hash = compute_hash(received_cart.contents)
         print("[Shopper] Step 3: ✓ CartMandate verified")
 
+        # Parse received cart contents to access fields
+        cart_contents_dict = received_cart.contents
+        payment_request_dict = cart_contents_dict["payment_request"]
+        details_dict = payment_request_dict["details"]
+        method_data_list = payment_request_dict["method_data"]
+
         payment_response = PaymentResponse(
-            request_id=received_cart.contents.payment_request.details.id,
+            request_id=details_dict["id"],
             method_name="QR_CODE",
             details=PaymentResponseDetails(
-                channel=received_cart.contents.payment_request.method_data[
-                    0
-                ].data.channel,
-                out_trade_no=received_cart.contents.payment_request.method_data[
-                    0
-                ].data.out_trade_no,
+                channel=method_data_list[0]["data"]["channel"],
+                out_trade_no=method_data_list[0]["data"]["out_trade_no"],
             ),
         )
+
         contents = PaymentMandateContents(
             payment_mandate_id="pm_20250127_001",
-            payment_details_id=received_cart.contents.payment_request.details.id,
+            payment_details_id=details_dict["id"],
             payment_details_total=PaymentDetailsTotal(
                 label="Total",
-                amount=received_cart.contents.payment_request.details.total.amount,
+                amount=MoneyAmount(**details_dict["total"]["amount"]),
                 refund_period=30,
             ),
             payment_response=payment_response,
@@ -217,27 +222,28 @@ class ShopperAgent:
             cart_hash=cart_hash,
         )
         payment_mandate = build_payment_mandate(
-            contents=contents,
-            user_private_key=self.payment_private_key,
-            user_did=self.client_did,
-            user_kid="shopper-key-001",
+            contents=contents.model_dump(exclude_none=True),
+            shopper_private_key=self.payment_private_key,
+            shopper_did=self.client_did,
+            shopper_kid="shopper-key-001",
             merchant_did=merchant_did,
             algorithm="ES256K",
         )
 
-        validate_payment_mandate(
-            payment_mandate=payment_mandate,
+        if not validate_payment_mandate(
+            payment_mandate=payment_mandate.model_dump(exclude_none=True),
             shopper_public_key=self.shopper_public_key,
             shopper_algorithm="ES256K",
             expected_merchant_did=merchant_did,
             expected_cart_hash=cart_hash,
-        )
+        ):
+            raise ValueError("PaymentMandate validation failed")
 
         payment_message = ANPMessage(
-            messageId=f"payment-request-{payment_mandate.payment_mandate_contents.payment_mandate_id}",
+            messageId=f"payment-request-{contents.payment_mandate_id}",
             from_=self.client_did,
             to=merchant_did,
-            data=payment_mandate,
+            data=payment_mandate.model_dump(exclude_none=True),
         )
         payment_endpoint = (
             f"{merchant_url.rstrip('/')}/ap2/merchant/send_payment_mandate"
