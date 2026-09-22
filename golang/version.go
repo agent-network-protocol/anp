@@ -1,4 +1,4 @@
 package anp
 
 // Version is the coordinated ANP SDK release number for the Go package.
-const Version = "1.0.3"
+const Version = "1.0.4-rc.1"
