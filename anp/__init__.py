@@ -29,12 +29,6 @@ from .direct_e2ee import (
 
 __version__ = "1.0.4rc1"
 
-# interfaces
-# from .authentication import didallclient
-
-# simple node
-# from .simple_node import simple_node
-
 # Define what should be exported when using "from anp import *"
 __all__ = [
     '__version__',
@@ -44,6 +38,4 @@ __all__ = [
     'FileSignedPrekeyStore',
     'MessageServiceDirectE2eeClient',
     'PrekeyManager',
-    'simple_node',
-    'didallclient',
 ]
