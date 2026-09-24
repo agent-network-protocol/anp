@@ -301,6 +301,7 @@ uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8
 
 - **作者**：GaoWei Chang
 - **邮箱**：chgaowei@gmail.com
+- **其他联系邮箱**：zynetzy1@aliyun.com、2764433097@qq.com
 - **网站**：[https://agent-network-protocol.com/](https://agent-network-protocol.com/)
 - **Discord**：[https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
 - **GitHub**：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)

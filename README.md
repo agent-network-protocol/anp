@@ -305,6 +305,7 @@ The release command validates the working tree, aligned version files, Python bu
 
 - **Author**: GaoWei Chang
 - **Email**: chgaowei@gmail.com
+- **Additional contact emails**: zynetzy1@aliyun.com, 2764433097@qq.com
 - **Website**: [https://agent-network-protocol.com/](https://agent-network-protocol.com/)
 - **Discord**: [https://discord.gg/sFjBKTY7sB](https://discord.gg/sFjBKTY7sB)
 - **GitHub**: [https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
