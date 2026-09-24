@@ -30,7 +30,7 @@ regression risk requires it. Update scenario examples when their protocol contra
 changes.
 
 ## Commit & Pull Request Guidelines
-Author imperative commit subjects (e.g., `Add credential signer`) and reference issues like `#42` when relevant. Pull requests should summarize behavior changes, risks, validation commands, and any compatibility impacts. Attach logs or screenshots for user-visible updates. CI runs only when explicitly requested; report unrun checks as not run rather than claiming success, and call out follow-up work.
+Author imperative commit subjects (e.g., `Add credential signer`) and reference issues like `#42` when relevant. Pull requests should summarize behavior changes, risks, validation commands, and any compatibility impacts. Attach logs or screenshots for user-visible updates. Ordinary CI runs only when explicitly requested; GitHub-managed CodeQL default scanning remains automatic. Report unrun checks as not run rather than claiming success, and call out follow-up work.
 
 ## Security & Configuration Tips
 Load secrets from `.env` via `python-dotenv`, never hardcode credentials, and validate partner certificates with helpers in `anp/authentication`. Honor the recommended cipher suites from `anp/e2e_encryption`, and review `docs/` for interoperability constraints before modifying negotiation flows. Keep configuration explicit and committed sample files redacted.
