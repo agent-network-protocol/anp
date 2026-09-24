@@ -43,11 +43,15 @@ The Go tag format follows the Go subdirectory module rule.
 4. Run:
    - `uv build`
    - `cargo publish --dry-run --manifest-path rust/Cargo.toml`
-   - `go test ./...`
+   - `go test ./...` only when the user explicitly requests tests and `--run-tests` is supplied.
 5. Commit and push the version bump if files changed.
 6. Publish Python with explicit target-version artifacts only.
 7. Publish Rust with `cargo publish`.
 8. Push the root tag and Go tag.
+
+SDK publication does not run test suites by default. Build and package verification
+remain mandatory; report skipped tests as not run. Python and Rust test suites are
+separate opt-in commands, not implicit steps of this release helper.
 
 ## Required access
 

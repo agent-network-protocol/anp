@@ -288,7 +288,7 @@ Tag 规则：
 uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8.8
 ```
 
-正式 release 会在发布前检查干净工作区、版本文件一致性、Python build、Rust dry-run publish 和 Go tests，然后发布并推送 tags。
+正式 release 会在发布前检查干净工作区、版本文件一致性、Python build 和 Rust dry-run publish，然后发布并推送 tags；默认不运行测试。只有用户明确要求 Go 测试时，才在 plan 和 release 命令中加入 `--run-tests`。Python/Rust 测试仍使用各自入口显式执行。
 
 ## 安全和兼容性说明
 

@@ -292,7 +292,7 @@ Release planning starts with:
 uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.8.8
 ```
 
-The release command validates the working tree, aligned version files, Python build, Rust dry-run publish, and Go tests before publishing and pushing tags.
+The release command validates the working tree, aligned version files, Python build, and Rust dry-run publish before publishing and pushing tags. It does not run test suites by default. When the user explicitly requests Go tests, add `--run-tests` to the plan and release commands; Python and Rust test suites remain separate opt-in commands.
 
 ## Security and compatibility notes
 

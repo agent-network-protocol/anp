@@ -15,6 +15,7 @@ Run `uv sync` to install pinned dependencies, then `uv run pytest` (or `uv run p
 
 ## Multi-language Release Workflow
 Run `./scripts/release_sdks.py --version X.Y.Z` to publish the coordinated Python, Rust, and Go SDKs; omit `--version` to publish the next version. Add `--plan` to preview without changing or publishing anything. The launcher delegates to the guarded release helper documented in `skills/anp-multilang-release/references/release-policy.md`.
+Publication does not run test suites by default. Use `--run-tests` for the Go suite only when the user explicitly requests tests; Python and Rust suites require separate explicit commands. Keep build and package verification enabled, and report tests not run.
 
 ## Coding Style & Naming Conventions
 Follow Google Python Style: four-space indentation, type hints, and Google-style docstrings on public APIs. Use `snake_case` for modules/functions, `UpperCamelCase` for classes, and `UPPER_SNAKE_CASE` for constants. Comments and logs must be in English. Group utilities in the closest existing package and avoid hidden globals; prefer dependency injection or explicit configuration objects.

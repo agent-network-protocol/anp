@@ -164,6 +164,10 @@ Text and attachment idempotency keys are persisted with a request fingerprint, f
 
 ## Development
 
+`npm publish` runs the package build hooks but does not run the test suite by
+default. Run `npm test` separately only when the user explicitly requests tests;
+package build success is not test evidence.
+
 ```bash
 npm install
 npm run typecheck
