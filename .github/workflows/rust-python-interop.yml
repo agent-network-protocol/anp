@@ -1,11 +1,6 @@
 name: Rust Python Interop
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
   workflow_dispatch:
 
 jobs:
