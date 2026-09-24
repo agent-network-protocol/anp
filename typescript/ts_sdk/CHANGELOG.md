@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5
+
+- Include the DID root key in the authentication relationship of built vNext documents, matching the shared SDK vectors.
+
 ## 0.9.3
 
 - Align the published npm version with the coordinated ANP `0.9.3` release.

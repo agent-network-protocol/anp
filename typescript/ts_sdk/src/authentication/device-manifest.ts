@@ -275,7 +275,7 @@ export function buildVnextDidDocument(
       structuredClone(deviceSigningVerificationMethod),
       structuredClone(deviceE2eeVerificationMethod),
     ],
-    authentication: [device.signingKeyId],
+    authentication: [rootKeyId, device.signingKeyId],
     assertionMethod: [rootKeyId, device.signingKeyId],
     keyAgreement: [device.e2eeKeyId],
     deviceManifest: {
