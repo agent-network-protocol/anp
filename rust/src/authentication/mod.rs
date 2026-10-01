@@ -20,8 +20,8 @@ pub use device_manifest::{
 };
 pub use did_resolver::{
     build_did_web_resolution_url, resolve_did_document, resolve_did_document_sync,
-    resolve_did_document_with_options,
-    validate_did_document_method,
+    resolve_did_document_with_address_policy, resolve_did_document_with_options,
+    validate_did_document_method, DidResolutionAddressPolicy,
 };
 pub use did_transition::{
     parse_did_wba_e1, resolve_current_did, verify_active_e1_document, verify_transition_hop,
