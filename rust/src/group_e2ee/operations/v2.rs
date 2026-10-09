@@ -5351,7 +5351,8 @@ pub fn list_received_decryption_keys_v2<S: GroupMlsStore>(
             })
         })
         .map_err(|error| sqlite_error("state_read_failed", error, request_id))?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()
+    Ok(rows
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| sqlite_error("state_read_failed", error, request_id))?)
 }
 

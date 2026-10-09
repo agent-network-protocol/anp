@@ -1,22 +1,23 @@
 pub mod device_manifest;
 pub mod did_resolver;
-pub mod did_web;
 pub mod did_transition;
 pub mod did_wba;
 pub mod did_wba_authenticator;
 pub mod did_wba_verifier;
+pub mod did_web;
 pub mod federation;
 pub mod http_signatures;
 pub mod verification_methods;
 
 pub use device_manifest::{
-    add_device_to_web_did_document, build_web_did_document, remove_device_from_web_did_document,
-    add_device_to_did_document, build_vnext_did_document, find_eligible_device,
-    parse_device_manifest, remove_device_from_did_document, update_device_in_did_document,
-    validate_device_manifest, DeviceManifest, DeviceManifestEntry, DeviceManifestError,
-    DEVICE_MANIFEST_TYPE, PROFILE_CORE_BINDING_V1, PROFILE_CORE_BINDING_V2, PROFILE_DIRECT_BASE_V1,
-    PROFILE_DIRECT_BASE_V2, PROFILE_DIRECT_E2EE_V2, PROFILE_GROUP_BASE_V1, PROFILE_GROUP_BASE_V2,
-    PROFILE_GROUP_E2EE_V2, PROFILE_IDENTITY_DISCOVERY_V1, PROFILE_IDENTITY_DISCOVERY_V2,
+    add_device_to_did_document, add_device_to_web_did_document, build_vnext_did_document,
+    build_web_did_document, find_eligible_device, parse_device_manifest,
+    remove_device_from_did_document, remove_device_from_web_did_document,
+    update_device_in_did_document, validate_device_manifest, DeviceManifest, DeviceManifestEntry,
+    DeviceManifestError, DEVICE_MANIFEST_TYPE, PROFILE_CORE_BINDING_V1, PROFILE_CORE_BINDING_V2,
+    PROFILE_DIRECT_BASE_V1, PROFILE_DIRECT_BASE_V2, PROFILE_DIRECT_E2EE_V2, PROFILE_GROUP_BASE_V1,
+    PROFILE_GROUP_BASE_V2, PROFILE_GROUP_E2EE_V2, PROFILE_IDENTITY_DISCOVERY_V1,
+    PROFILE_IDENTITY_DISCOVERY_V2,
 };
 pub use did_resolver::{
     build_did_web_resolution_url, resolve_did_document, resolve_did_document_sync,
