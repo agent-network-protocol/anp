@@ -1,11 +1,15 @@
 # ANP vNext Device Manifest SDK surface
 
-This SDK implements the minimal P2 `deviceManifest` contract frozen at ANP
-protocol commit `97896407a21cc5a0ea6c30908592bc41f669ac0c`.
+This SDK implements the P2 `deviceManifest` contract and complete P5/P6
+Profile dependencies in ANP Messaging 1.2. The current Profile baseline is ANP
+protocol commit `de99d26f26a80a9c9a9a70b2f6f37c72c5d605ea`; see the
+[Messaging 1.2 catalog](https://github.com/agent-network-protocol/AgentNetworkProtocol/blob/de99d26f26a80a9c9a9a70b2f6f37c72c5d605ea/message/README.md).
+Earlier draft dependency bundles remain readable only for compatibility, as
+specified below.
 
 ## Scope
 
-Rust, Python, Go, and Dart expose equivalent typed operations to:
+Rust, Python, Go, Dart, and TypeScript expose equivalent typed operations to:
 
 - parse the optional `deviceManifest` DID document extension;
 - validate its closed Manifest and device-entry schema;
@@ -83,26 +87,55 @@ input, and therefore preserve unknown top-level DID extensions. A missing
 Manifest returns no value rather than creating a default device because
 Base-only ANP DIDs may omit the extension.
 
-For ANP Messaging 1.2, the canonical dependency bundles are mixed-version:
+For ANP Messaging 1.2, the canonical dependency bundles are mixed-version
+(all identifiers below have the `anp.` prefix):
 
 ```text
 P5 v2: core.binding.v1, identity.discovery.v1, direct.base.v1, direct.e2ee.v2
-P6 v2: core.binding.v1, identity.discovery.v1, group.base.v1, group.e2ee.v2
+P6 v2: core.binding.v1, identity.discovery.v1, group.base.v2, group.e2ee.v2
 ```
 
-Validators temporarily also accept the complete all-v2 draft dependency
-bundle so already published Manifests remain readable during convergence.
-Builders and shared canonical fixtures only emit the mixed-version bundles;
-partial or hybrid dependency bundles remain invalid.
+P6 requires the current P4 v2 business contract. Group Base v2 does not require
+Core, Identity, or Direct Base v2; it is not the former all-v2 draft bundle.
+The shared canonical read and build/add/update/remove fixtures use this current
+P6 dependency set in every language.
 
-The Rust builder additionally accepts the ordinary DID-only P4 V2 draft
-(`anp.group.base.v2`) with `anp.core.binding.v1` and
-`anp.identity.discovery.v1`, matching ANP-P4-vNext at protocol commit
-`541e4e73594800064fd8bcf66b7b2ebd0d4728cc`. This supports AWiki Gateway's
-ordinary Group V2 identity declarations; it does not publish the draft or enable
-P6/E2EE. P5/P6 dependency checks are unchanged, and old P1/P2/P3 all-v2
-foundation profiles remain read-only. This change is Rust-specific; the shared
-multi-language fixtures and other language builders are unchanged.
+Validators also accept the complete historical P6 mixed bundle containing
+`group.base.v1`, and the complete all-v2 draft bundles, so existing Manifests
+remain readable. Partial bundles and hybrids without any complete supported
+bundle remain invalid. A current P6 eligible-device lookup requires the complete
+current dependency set and returns no eligible device for either historical P6
+bundle, even though parsing and validation still succeed. Reading a historical
+declaration does not establish current P4/P6 interoperability or replace service
+capability negotiation.
+
+All vNext build/add/update/remove helpers require the complete current bundle
+for every P6 device they write. A P6 device with only the historical
+`group.base.v1` mixed bundle is read-only, as are the former all-v2 foundation
+profiles. The helpers reject these inputs instead of silently adding or
+rewriting capability declarations. Mutation inputs use the historical read
+validation rules; canonical write rules apply to the complete result. A caller
+can explicitly replace a historical device with its confirmed current profiles,
+or remove that device, when every remaining entry satisfies the write rules.
+An unrelated change that leaves a historical entry in the result is rejected.
+The helpers never infer another device's capabilities or silently migrate it.
+If several historical entries require migration, callers must explicitly prepare
+a complete canonical replacement before publication; single-device helpers do
+not return intermediate documents containing historical write profiles.
+Successful mutations strip the old proof for re-signing, and both successful
+and rejected mutations preserve the input document. An extra explicit
+`group.base.v1` declaration does not replace the required `group.base.v2`.
+
+Ordinary P4 v2 declarations require `core.binding.v1` and
+`identity.discovery.v1`. This support neither enables P6 nor makes ordinary
+Base operations device-addressed. P5 dependencies and pure Base v1 declarations
+are unchanged.
+
+A caller that currently supplies the old P6 bundle must explicitly update its
+device profiles and, where applicable, its `ANPMessageService.profiles` and
+runtime capability declarations after confirming actual P4 v2 support. The SDK
+does not rewrite service declarations, signed requests, or stored MLS state.
+P6 remains a candidate subject to its separate release and discovery gates.
 
 ## Compatibility boundary
 
@@ -122,12 +155,12 @@ concurrency bookkeeping remain outside the ANP SDK and cross-domain document.
 
 The document helper names are:
 
-| Operation | Rust / Python | Go | Dart |
-| --- | --- | --- | --- |
-| Build | `build_vnext_did_document` | `BuildVNextDIDDocument` | `buildVNextDidDocument` |
-| Add (requires retired device IDs) | `add_device_to_did_document` | `AddDeviceToDIDDocument` | `addDeviceToDidDocument` |
-| Update | `update_device_in_did_document` | `UpdateDeviceInDIDDocument` | `updateDeviceInDidDocument` |
-| Remove | `remove_device_from_did_document` | `RemoveDeviceFromDIDDocument` | `removeDeviceFromDidDocument` |
+| Operation | Rust / Python | Go | Dart | TypeScript |
+| --- | --- | --- | --- | --- |
+| Build | `build_vnext_did_document` | `BuildVNextDIDDocument` | `buildVNextDidDocument` | `buildVnextDidDocument` |
+| Add (requires retired device IDs) | `add_device_to_did_document` | `AddDeviceToDIDDocument` | `addDeviceToDidDocument` | `addDeviceToDidDocument` |
+| Update | `update_device_in_did_document` | `UpdateDeviceInDIDDocument` | `updateDeviceInDidDocument` | `updateDeviceInDidDocument` |
+| Remove | `remove_device_from_did_document` | `RemoveDeviceFromDIDDocument` | `removeDeviceFromDidDocument` | `removeDeviceFromDidDocument` |
 
 Cross-language acceptance and rejection cases live in
 [`../../testdata/device_manifest/vnext_device_manifest_fixtures.json`](../../testdata/device_manifest/vnext_device_manifest_fixtures.json).

@@ -11,13 +11,13 @@ export const PROFILE_CORE_BINDING_V1 = 'anp.core.binding.v1';
 export const PROFILE_IDENTITY_DISCOVERY_V1 = 'anp.identity.discovery.v1';
 export const PROFILE_DIRECT_BASE_V1 = 'anp.direct.base.v1';
 export const PROFILE_GROUP_BASE_V1 = 'anp.group.base.v1';
+export const PROFILE_GROUP_BASE_V2 = 'anp.group.base.v2';
 export const PROFILE_DIRECT_E2EE_V2 = 'anp.direct.e2ee.v2';
 export const PROFILE_GROUP_E2EE_V2 = 'anp.group.e2ee.v2';
 
 export const PROFILE_CORE_BINDING_V2 = 'anp.core.binding.v2';
 export const PROFILE_IDENTITY_DISCOVERY_V2 = 'anp.identity.discovery.v2';
 export const PROFILE_DIRECT_BASE_V2 = 'anp.direct.base.v2';
-export const PROFILE_GROUP_BASE_V2 = 'anp.group.base.v2';
 
 const MANIFEST_FIELDS = new Set(['type', 'devices']);
 const ENTRY_FIELDS = new Set(['device_id', 'signing_key_id', 'e2ee_key_id', 'profiles']);
@@ -28,6 +28,13 @@ const P5_DEPENDENCIES = new Set([
   PROFILE_DIRECT_E2EE_V2,
 ]);
 const P6_DEPENDENCIES = new Set([
+  PROFILE_CORE_BINDING_V1,
+  PROFILE_IDENTITY_DISCOVERY_V1,
+  PROFILE_GROUP_BASE_V2,
+  PROFILE_GROUP_E2EE_V2,
+]);
+// Previously emitted P6 bundles remain readable without being republished.
+const P6_LEGACY_MIXED_DEPENDENCIES = new Set([
   PROFILE_CORE_BINDING_V1,
   PROFILE_IDENTITY_DISCOVERY_V1,
   PROFILE_GROUP_BASE_V1,
@@ -49,7 +56,6 @@ const LEGACY_DRAFT_FOUNDATION_PROFILES = new Set([
   PROFILE_CORE_BINDING_V2,
   PROFILE_IDENTITY_DISCOVERY_V2,
   PROFILE_DIRECT_BASE_V2,
-  PROFILE_GROUP_BASE_V2,
 ]);
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const SIGNING_ALGORITHMS = new Set(['Ed25519', 'P-256', 'secp256k1']);
@@ -208,7 +214,13 @@ export function validateDeviceManifest(didDocument: ManifestDidDocument): Device
       requireRelationship(didDocument, 'assertionMethod', entry.signingKeyId, 'P5 signing key');
     }
     if (profileSet.has(PROFILE_GROUP_E2EE_V2)) {
-      requireDependencies(profileSet, P6_DEPENDENCIES, P6_LEGACY_DRAFT_DEPENDENCIES, 'P6');
+      requireDependencies(
+        profileSet,
+        P6_DEPENDENCIES,
+        P6_LEGACY_DRAFT_DEPENDENCIES,
+        'P6',
+        P6_LEGACY_MIXED_DEPENDENCIES
+      );
       requireRelationship(didDocument, 'assertionMethod', entry.signingKeyId, 'P6 binding key');
       requireRelationship(didDocument, 'authentication', entry.signingKeyId, 'P6 origin-proof key');
     }
@@ -218,6 +230,7 @@ export function validateDeviceManifest(didDocument: ManifestDidDocument): Device
   return manifest;
 }
 
+/** Legacy P6 bundles remain readable but do not establish current eligibility. */
 export function findEligibleDevice(
   didDocument: ManifestDidDocument,
   deviceId: string,
@@ -232,7 +245,11 @@ export function findEligibleDevice(
   }
   return (
     manifest.devices.find(
-      (entry) => entry.deviceId === deviceId && entry.profiles.includes(requiredProfile)
+      (entry) =>
+        entry.deviceId === deviceId &&
+        entry.profiles.includes(requiredProfile) &&
+        (requiredProfile !== PROFILE_GROUP_E2EE_V2 ||
+          [...P6_DEPENDENCIES].every((profile) => entry.profiles.includes(profile)))
     ) ?? null
   );
 }
@@ -283,7 +300,7 @@ export function buildVnextDidDocument(
       devices: [device.toDict()],
     },
   });
-  validateVnextDocument(document, rootKeyId);
+  validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -315,7 +332,7 @@ export function addDeviceToDidDocument(
     deviceSigningVerificationMethod,
     deviceE2eeVerificationMethod
   );
-  validateVnextDocument(document, rootKeyId);
+  validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -344,7 +361,7 @@ export function updateDeviceInDidDocument(
     deviceSigningVerificationMethod,
     deviceE2eeVerificationMethod
   );
-  validateVnextDocument(document, rootKeyId);
+  validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -363,7 +380,7 @@ export function removeDeviceFromDidDocument(
     throw new DeviceManifestError('device_id does not exist');
   }
   removeDeviceMaterial(document, oldEntry);
-  validateVnextDocument(document, rootKeyId);
+  validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -385,6 +402,13 @@ function prepareDocumentForMutation(
 ): ManifestDidDocument {
   const document = cloneDocument(didDocument);
   validateVnextDocument(document, rootKeyId);
+  delete document.proof;
+  return document;
+}
+
+// Validate the result so legacy inputs can be explicitly upgraded or removed.
+function validateDocumentForWrite(document: ManifestDidDocument, rootKeyId: string): void {
+  validateVnextDocument(document, rootKeyId);
   const manifest = validateDeviceManifest(document);
   if (manifest === null) {
     throw new DeviceManifestError('deviceManifest is required');
@@ -392,14 +416,30 @@ function prepareDocumentForMutation(
   for (const entry of manifest.devices) {
     requireCanonicalWriteProfiles(entry);
   }
-  delete document.proof;
-  return document;
 }
 
 function requireCanonicalWriteProfiles(device: DeviceManifestEntry): void {
+  const profiles = new Set(device.profiles);
+  if (
+    profiles.has(PROFILE_GROUP_E2EE_V2) &&
+    ![...P6_DEPENDENCIES].every((profile) => profiles.has(profile))
+  ) {
+    throw new DeviceManifestError(
+      'P6 legacy dependency bundles are read-only; new documents require ' +
+        'core.binding.v1, identity.discovery.v1, group.base.v2, and group.e2ee.v2'
+    );
+  }
   if (device.profiles.some((profile) => LEGACY_DRAFT_FOUNDATION_PROFILES.has(profile))) {
     throw new DeviceManifestError(
       'legacy draft foundation profiles are read-only and cannot be published'
+    );
+  }
+  if (
+    profiles.has(PROFILE_GROUP_BASE_V2) &&
+    (!profiles.has(PROFILE_CORE_BINDING_V1) || !profiles.has(PROFILE_IDENTITY_DISCOVERY_V1))
+  ) {
+    throw new DeviceManifestError(
+      'group.base.v2 requires core.binding.v1 and identity.discovery.v1'
     );
   }
 }
@@ -854,11 +894,14 @@ function requireDependencies(
   profiles: Set<string>,
   required: Set<string>,
   legacyDraft: Set<string>,
-  profileName: string
+  profileName: string,
+  legacyMixed?: Set<string>
 ): void {
   const hasRequired = [...required].every((profile) => profiles.has(profile));
   const hasLegacy = [...legacyDraft].every((profile) => profiles.has(profile));
-  if (!hasRequired && !hasLegacy) {
+  const hasLegacyMixed =
+    legacyMixed !== undefined && [...legacyMixed].every((profile) => profiles.has(profile));
+  if (!hasRequired && !hasLegacy && !hasLegacyMixed) {
     throw new DeviceManifestError(`${profileName} device profile dependencies are incomplete`);
   }
 }

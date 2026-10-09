@@ -200,14 +200,14 @@ void main() {
     manifest['devices'] = devices;
     legacyDocument['deviceManifest'] = manifest;
     expect(validateDeviceManifest(legacyDocument), isNotNull);
-    expect(
-      () => removeDeviceFromDidDocument(
-        legacyDocument,
-        fixture['root_key_id']! as String,
-        legacyEntry['device_id']! as String,
-      ),
-      throwsA(isA<AnpAuthenticationException>()),
+    final before = _clone(legacyDocument);
+    final removed = removeDeviceFromDidDocument(
+      legacyDocument,
+      fixture['root_key_id']! as String,
+      legacyEntry['device_id']! as String,
     );
+    expect(validateDeviceManifest(removed)!.devices, isEmpty);
+    expect(legacyDocument, equals(before));
   });
 
   test('builder rejects malformed or role-incompatible public keys', () {

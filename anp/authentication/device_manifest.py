@@ -45,7 +45,8 @@ _P5_DEPENDENCIES = frozenset(
         PROFILE_DIRECT_E2EE_V2,
     }
 )
-_P6_DEPENDENCIES = frozenset(
+# Historical Messaging 1.2 bundle: accepted for reading, never for new writes.
+_P6_LEGACY_MIXED_DEPENDENCIES = frozenset(
     {
         PROFILE_CORE_BINDING_V1,
         PROFILE_IDENTITY_DISCOVERY_V1,
@@ -53,7 +54,7 @@ _P6_DEPENDENCIES = frozenset(
         PROFILE_GROUP_E2EE_V2,
     }
 )
-_P6_CURRENT_DEPENDENCIES = frozenset(
+_P6_DEPENDENCIES = frozenset(
     {
         PROFILE_CORE_BINDING_V1,
         PROFILE_IDENTITY_DISCOVERY_V1,
@@ -253,10 +254,10 @@ def validate_device_manifest(
                 "P5 signing key",
             )
         if PROFILE_GROUP_E2EE_V2 in profile_set:
-            if not _P6_CURRENT_DEPENDENCIES.issubset(profile_set):
+            if not _P6_DEPENDENCIES.issubset(profile_set):
                 _require_dependencies(
                     profile_set,
-                    _P6_DEPENDENCIES,
+                    _P6_LEGACY_MIXED_DEPENDENCIES,
                     _P6_LEGACY_DRAFT_DEPENDENCIES,
                     "P6",
                 )
@@ -287,7 +288,10 @@ def find_eligible_device(
     device_id: str,
     required_profile: str,
 ) -> Optional[DeviceManifestEntry]:
-    """Return a validated device that declares ``required_profile``."""
+    """Return a validated device eligible for ``required_profile``.
+
+    Historical P6 dependency bundles are readable, not current P6 eligibility.
+    """
     manifest = validate_device_manifest(did_document)
     if manifest is None:
         return None
@@ -298,6 +302,10 @@ def find_eligible_device(
         return None
     for entry in manifest.devices:
         if entry.device_id == device_id and required_profile in entry.profiles:
+            if required_profile == PROFILE_GROUP_E2EE_V2 and not _P6_DEPENDENCIES.issubset(
+                entry.profiles
+            ):
+                return None
             _validate_device_methods(
                 _document_did(did_document),
                 None,
@@ -373,7 +381,7 @@ def build_vnext_did_document(
             },
         }
     )
-    _validate_vnext_document(document, root_key_id)
+    _validate_document_for_write(document, root_key_id)
     return document
 
 
@@ -450,7 +458,7 @@ def add_device_to_did_document(
         device_signing_verification_method,
         device_e2ee_verification_method,
     )
-    _validate_vnext_document(document, root_key_id)
+    _validate_document_for_write(document, root_key_id)
     return document
 
 
@@ -482,7 +490,7 @@ def update_device_in_did_document(
         device_signing_verification_method,
         device_e2ee_verification_method,
     )
-    _validate_vnext_document(document, root_key_id)
+    _validate_document_for_write(document, root_key_id)
     return document
 
 
@@ -504,7 +512,7 @@ def remove_device_from_did_document(
         raise DeviceManifestError("device_id does not exist")
 
     _remove_device_material(document, old_entry)
-    _validate_vnext_document(document, root_key_id)
+    _validate_document_for_write(document, root_key_id)
     return document
 
 
@@ -524,15 +532,22 @@ def _prepare_document_for_mutation(
 ) -> Dict[str, Any]:
     document = _clone_document(did_document)
     _validate_vnext_document(document, root_key_id)
+    # A mutation invalidates any existing root proof. Returning it would make a
+    # stale signature look publishable, so callers must explicitly sign again.
+    document.pop("proof", None)
+    return document
+
+
+def _validate_document_for_write(
+    document: Dict[str, Any], root_key_id: Optional[str]
+) -> None:
+    """Validate the final document without rejecting legacy mutation inputs."""
+    _validate_vnext_document(document, root_key_id)
     manifest = validate_device_manifest(document)
     if manifest is None:
         raise DeviceManifestError("deviceManifest is required")
     for entry in manifest.devices:
         _require_canonical_write_profiles(entry)
-    # A mutation invalidates any existing root proof. Returning it would make a
-    # stale signature look publishable, so callers must explicitly sign again.
-    document.pop("proof", None)
-    return document
 
 
 def _require_canonical_write_profiles(device: DeviceManifestEntry) -> None:
@@ -546,6 +561,13 @@ def _require_canonical_write_profiles(device: DeviceManifestEntry) -> None:
     }.issubset(device.profiles):
         raise DeviceManifestError(
             "P4 V2 requires core.binding.v1 and identity.discovery.v1"
+        )
+    if PROFILE_GROUP_E2EE_V2 in device.profiles and not _P6_DEPENDENCIES.issubset(
+        device.profiles
+    ):
+        raise DeviceManifestError(
+            "P6 legacy dependency bundles are read-only; new documents require "
+            "core.binding.v1, identity.discovery.v1, group.base.v2, and group.e2ee.v2"
         )
 
 

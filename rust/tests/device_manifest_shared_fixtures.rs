@@ -82,6 +82,28 @@ fn shared_valid_manifests_parse_validate_and_lookup() {
 }
 
 #[test]
+fn legacy_p6_read_compatibility_keeps_existing_p5_eligibility() {
+    let fixtures = load_fixtures();
+    let fixture = fixtures
+        .valid
+        .iter()
+        .find(|case| case.name == "legacy_all_v2_draft_bundle")
+        .expect("legacy compatibility fixture");
+    let document = document_with_manifest(
+        &fixtures.base_did_document,
+        &fixture.device_manifest,
+        &Map::new(),
+    );
+    let before = document.clone();
+    assert!(
+        find_eligible_device(&document, &fixture.lookup.device_id, "anp.direct.e2ee.v2",)
+            .expect("existing P5 dependency compatibility")
+            .is_some()
+    );
+    assert_eq!(document, before);
+}
+
+#[test]
 fn shared_invalid_manifests_are_rejected() {
     let fixtures = load_fixtures();
     for fixture in fixtures.invalid {

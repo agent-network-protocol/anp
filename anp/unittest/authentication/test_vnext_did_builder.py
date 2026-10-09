@@ -218,12 +218,148 @@ def test_legacy_draft_foundation_profiles_are_read_only():
         "entry"
     ]["profiles"]
     assert validate_device_manifest(legacy_document) is not None
+    before = copy.deepcopy(legacy_document)
+    removed = remove_device_from_did_document(
+        legacy_document,
+        fixture["root_key_id"],
+        legacy_device["entry"]["device_id"],
+    )
+    assert removed["deviceManifest"]["devices"] == []
+    assert legacy_document == before
+
+
+@pytest.mark.parametrize(
+    "legacy_profiles",
+    [
+        [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v1",
+            "anp.group.e2ee.v2",
+        ],
+        [
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2",
+        ],
+    ],
+    ids=["legacy-mixed", "legacy-all-v2"],
+)
+def test_legacy_p6_mutations_require_canonical_results(legacy_profiles):
+    fixture = _load_fixture()
+    fixture_before = copy.deepcopy(fixture)
+    current = _build(fixture)
+    current_before = copy.deepcopy(current)
+    device_a = fixture["device_a"]
+    device_b = fixture["device_b"]
+    legacy_a = copy.deepcopy(device_a)
+    legacy_b = copy.deepcopy(device_b)
+    legacy_a["entry"]["profiles"] = list(legacy_profiles)
+    legacy_b["entry"]["profiles"] = list(legacy_profiles)
+
     with pytest.raises(DeviceManifestError, match="read-only"):
-        remove_device_from_did_document(
-            legacy_document,
+        build_vnext_did_document(
+            fixture["base_document"],
             fixture["root_key_id"],
-            legacy_device["entry"]["device_id"],
+            fixture["root_verification_method"],
+            _entry(legacy_a),
+            legacy_a["signing_verification_method"],
+            legacy_a["e2ee_verification_method"],
         )
+
+    legacy_document = copy.deepcopy(current)
+    legacy_document["deviceManifest"]["devices"][0]["profiles"] = list(legacy_profiles)
+    legacy_document["proof"] = {"proofValue": "preserve-input-proof"}
+    legacy_before = copy.deepcopy(legacy_document)
+    assert validate_device_manifest(legacy_document) is not None
+
+    for document, candidate in [(current, legacy_b), (legacy_document, device_b)]:
+        with pytest.raises(DeviceManifestError, match="read-only"):
+            add_device_to_did_document(
+                document,
+                fixture["root_key_id"],
+                _entry(candidate),
+                candidate["signing_verification_method"],
+                candidate["e2ee_verification_method"],
+                fixture["retired_device_ids"],
+            )
+
+    with pytest.raises(DeviceManifestError, match="read-only"):
+        update_device_in_did_document(
+            current,
+            fixture["root_key_id"],
+            _entry(legacy_a),
+            legacy_a["signing_verification_method"],
+            legacy_a["e2ee_verification_method"],
+        )
+
+    upgraded = update_device_in_did_document(
+        legacy_document, fixture["root_key_id"], _entry(device_a),
+        device_a["signing_verification_method"], device_a["e2ee_verification_method"],
+    )
+    assert upgraded == current
+    assert "proof" not in upgraded
+
+    mixed_document = add_device_to_did_document(
+        current, fixture["root_key_id"], _entry(device_b),
+        device_b["signing_verification_method"], device_b["e2ee_verification_method"],
+        fixture["retired_device_ids"],
+    )
+    mixed_document["deviceManifest"]["devices"][1]["profiles"] = list(legacy_profiles)
+    mixed_document["proof"] = {"proofValue": "preserve-input-proof"}
+    mixed_before = copy.deepcopy(mixed_document)
+    removed = remove_device_from_did_document(
+        mixed_document, fixture["root_key_id"], device_b["entry"]["device_id"]
+    )
+    assert removed == current
+    assert "proof" not in removed
+
+    # Updating or deleting an unrelated device must not republish a legacy entry.
+    with pytest.raises(DeviceManifestError):
+        update_device_in_did_document(
+            mixed_document, fixture["root_key_id"], _entry(device_a),
+            device_a["signing_verification_method"], device_a["e2ee_verification_method"],
+        )
+    with pytest.raises(DeviceManifestError):
+        remove_device_from_did_document(
+            mixed_document, fixture["root_key_id"], device_a["entry"]["device_id"]
+        )
+    assert mixed_document == mixed_before
+    assert legacy_document == legacy_before
+    assert current == current_before
+    assert fixture == fixture_before
+
+
+@pytest.mark.parametrize(
+    "profiles",
+    [
+        [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2",
+            "anp.group.base.v1",
+        ],
+        [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.direct.e2ee.v2",
+        ],
+        [
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v1",
+        ],
+    ],
+    ids=["current-p6-extra-base-v1", "p5-unchanged", "base-v1-only"],
+)
+def test_current_p6_and_non_p6_writes_preserve_explicit_profiles(profiles):
+    fixture = _load_fixture()
+    fixture["device_a"]["entry"]["profiles"] = profiles
+    document = _build(fixture)
+    assert document["deviceManifest"]["devices"][0]["profiles"] == profiles
 
 
 @pytest.mark.parametrize("case", _load_fixture()["invalid_public_key_cases"])

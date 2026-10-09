@@ -39,11 +39,12 @@ var (
 		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
 		ProfileDirectBaseV1: {}, ProfileDirectE2EEV2: {},
 	}
-	p6Dependencies = map[string]struct{}{
+	// Historical Messaging 1.2 bundle: accepted for reading, never for new writes.
+	p6LegacyMixedDependencies = map[string]struct{}{
 		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
 		ProfileGroupBaseV1: {}, ProfileGroupE2EEV2: {},
 	}
-	p6CurrentDependencies = map[string]struct{}{
+	p6Dependencies = map[string]struct{}{
 		ProfileCoreBindingV1: {}, ProfileIdentityDiscoveryV1: {},
 		ProfileGroupBaseV2: {}, ProfileGroupE2EEV2: {},
 	}
@@ -238,8 +239,8 @@ func ValidateDeviceManifest(didDocument map[string]any) (*DeviceManifest, error)
 			}
 		}
 		if _, supportsP6 := profiles[ProfileGroupE2EEV2]; supportsP6 {
-			if err := requireDependencies(profiles, p6Dependencies, p6LegacyDraftDependencies, "P6"); err != nil {
-				if currentErr := requireDependencies(profiles, p6CurrentDependencies, p6CurrentDependencies, "P6"); currentErr != nil {
+			if err := requireDependencies(profiles, p6LegacyMixedDependencies, p6LegacyDraftDependencies, "P6"); err != nil {
+				if currentErr := requireDependencies(profiles, p6Dependencies, p6Dependencies, "P6"); currentErr != nil {
 					return nil, currentErr
 				}
 			}
@@ -257,7 +258,8 @@ func ValidateDeviceManifest(didDocument map[string]any) (*DeviceManifest, error)
 	return manifest, nil
 }
 
-// FindEligibleDevice returns a validated device that declares requiredProfile.
+// FindEligibleDevice returns a validated device eligible for requiredProfile.
+// Historical P6 dependency bundles are readable, not current P6 eligibility.
 func FindEligibleDevice(didDocument map[string]any, deviceID string, requiredProfile string) (*DeviceManifestEntry, error) {
 	manifest, err := ValidateDeviceManifest(didDocument)
 	if err != nil || manifest == nil {
@@ -269,6 +271,13 @@ func FindEligibleDevice(didDocument map[string]any, deviceID string, requiredPro
 	for index := range manifest.Devices {
 		device := &manifest.Devices[index]
 		if device.DeviceID == deviceID && containsString(device.Profiles, requiredProfile) {
+			if requiredProfile == ProfileGroupE2EEV2 {
+				for required := range p6Dependencies {
+					if !containsString(device.Profiles, required) {
+						return nil, nil
+					}
+				}
+			}
 			did, err := documentDID(didDocument)
 			if err != nil {
 				return nil, err
@@ -472,7 +481,7 @@ func buildDeviceDocument(
 	document["deviceManifest"] = DeviceManifest{
 		Type: DeviceManifestType, Devices: []DeviceManifestEntry{device},
 	}.ToMap()
-	if err := validateVNextDIDDocument(document, rootKeyID); err != nil {
+	if err := validateDIDDocumentForWrite(document, rootKeyID); err != nil {
 		return nil, err
 	}
 	return document, nil
@@ -546,7 +555,7 @@ func addDeviceDocument(
 	); err != nil {
 		return nil, err
 	}
-	if err := validateVNextDIDDocument(document, rootKeyID); err != nil {
+	if err := validateDIDDocumentForWrite(document, rootKeyID); err != nil {
 		return nil, err
 	}
 	return document, nil
@@ -608,7 +617,7 @@ func updateDeviceDocument(
 	); err != nil {
 		return nil, err
 	}
-	if err := validateVNextDIDDocument(document, rootKeyID); err != nil {
+	if err := validateDIDDocumentForWrite(document, rootKeyID); err != nil {
 		return nil, err
 	}
 	return document, nil
@@ -662,7 +671,7 @@ func removeDeviceDocument(
 	if err := removeDeviceMaterial(document, *oldEntry); err != nil {
 		return nil, err
 	}
-	if err := validateVNextDIDDocument(document, rootKeyID); err != nil {
+	if err := validateDIDDocumentForWrite(document, rootKeyID); err != nil {
 		return nil, err
 	}
 	return document, nil
@@ -671,18 +680,6 @@ func removeDeviceDocument(
 func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID *string) (map[string]any, error) {
 	if err := validateVNextDIDDocument(didDocument, rootKeyID); err != nil {
 		return nil, err
-	}
-	manifest, err := ValidateDeviceManifest(didDocument)
-	if err != nil {
-		return nil, err
-	}
-	if manifest == nil {
-		return nil, fmt.Errorf("deviceManifest is required")
-	}
-	for _, device := range manifest.Devices {
-		if err := requireCanonicalWriteProfiles(device); err != nil {
-			return nil, err
-		}
 	}
 	document, err := cloneDIDJSONObject(didDocument)
 	if err != nil {
@@ -694,6 +691,26 @@ func prepareDIDDocumentForMutation(didDocument map[string]any, rootKeyID *string
 	return document, nil
 }
 
+// Apply publication rules after the caller's explicit upgrade or removal.
+func validateDIDDocumentForWrite(document map[string]any, rootKeyID *string) error {
+	if err := validateVNextDIDDocument(document, rootKeyID); err != nil {
+		return err
+	}
+	manifest, err := ValidateDeviceManifest(document)
+	if err != nil {
+		return err
+	}
+	if manifest == nil {
+		return fmt.Errorf("deviceManifest is required")
+	}
+	for _, device := range manifest.Devices {
+		if err := requireCanonicalWriteProfiles(device); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func requireCanonicalWriteProfiles(device DeviceManifestEntry) error {
 	for _, profile := range device.Profiles {
 		if _, legacy := legacyDraftFoundationProfiles[profile]; legacy {
@@ -703,6 +720,13 @@ func requireCanonicalWriteProfiles(device DeviceManifestEntry) error {
 	if containsString(device.Profiles, ProfileGroupBaseV2) &&
 		(!containsString(device.Profiles, ProfileCoreBindingV1) || !containsString(device.Profiles, ProfileIdentityDiscoveryV1)) {
 		return fmt.Errorf("P4 V2 requires core.binding.v1 and identity.discovery.v1")
+	}
+	if containsString(device.Profiles, ProfileGroupE2EEV2) {
+		for required := range p6Dependencies {
+			if !containsString(device.Profiles, required) {
+				return fmt.Errorf("P6 legacy dependency bundles are read-only; new documents require core.binding.v1, identity.discovery.v1, group.base.v2, and group.e2ee.v2")
+			}
+		}
 	}
 	return nil
 }

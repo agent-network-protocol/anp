@@ -272,12 +272,172 @@ func TestLegacyDraftFoundationProfilesAreReadOnly(t *testing.T) {
 	if manifest, err := ValidateDeviceManifest(legacyDocument); err != nil || manifest == nil {
 		t.Fatalf("legacy draft document must remain readable: %v", err)
 	}
-	if _, err := RemoveDeviceFromDIDDocument(
+	before := cloneMapForTest(t, legacyDocument)
+	removed, err := RemoveDeviceFromDIDDocument(
 		legacyDocument,
 		fixture.RootKeyID,
 		legacyEntry.DeviceID,
-	); err == nil {
-		t.Fatal("mutation republished legacy draft foundation profiles")
+	)
+	if err != nil {
+		t.Fatalf("removing a legacy entry failed: %v", err)
+	}
+	manifest, err := ValidateDeviceManifest(removed)
+	if err != nil || manifest == nil || len(manifest.Devices) != 0 {
+		t.Fatalf("removed legacy entry remains: %v", err)
+	}
+	if !reflect.DeepEqual(legacyDocument, before) {
+		t.Fatal("removal changed the input document")
+	}
+}
+
+func TestLegacyP6MutationsRequireCanonicalResults(t *testing.T) {
+	fixture := loadVNextDIDBuilderFixture(t)
+	baseBefore := cloneMapForTest(t, fixture.BaseDocument)
+	current, err := buildFixtureDocument(fixture)
+	if err != nil {
+		t.Fatalf("build current fixture: %v", err)
+	}
+	currentBefore := cloneMapForTest(t, current)
+
+	for name, profiles := range map[string][]string{
+		"legacy-mixed": {
+			ProfileCoreBindingV1, ProfileIdentityDiscoveryV1, ProfileGroupBaseV1, ProfileGroupE2EEV2,
+		},
+		"legacy-all-v2": {
+			ProfileCoreBindingV2, ProfileIdentityDiscoveryV2, ProfileGroupBaseV2, ProfileGroupE2EEV2,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			legacyA, legacyB := fixture.DeviceA, fixture.DeviceB
+			legacyA.Entry.Profiles = append([]string(nil), profiles...)
+			legacyB.Entry.Profiles = append([]string(nil), profiles...)
+			if _, err := BuildVNextDIDDocument(
+				fixture.BaseDocument, fixture.RootKeyID, fixture.RootVerificationMethod,
+				legacyA.Entry, legacyA.SigningVerificationMethod, legacyA.E2EEVerificationMethod,
+			); err == nil {
+				t.Fatal("build accepted a historical P6 bundle")
+			}
+
+			legacyDocument := cloneMapForTest(t, current)
+			devices := legacyDocument["deviceManifest"].(map[string]any)["devices"].([]any)
+			wireProfiles := make([]any, len(profiles))
+			for index, profile := range profiles {
+				wireProfiles[index] = profile
+			}
+			devices[0].(map[string]any)["profiles"] = wireProfiles
+			legacyDocument["proof"] = map[string]any{"proofValue": "preserve-input-proof"}
+			legacyBefore := cloneMapForTest(t, legacyDocument)
+			if manifest, err := ValidateDeviceManifest(legacyDocument); err != nil || manifest == nil {
+				t.Fatalf("historical P6 bundle must remain readable: %v", err)
+			}
+
+			for _, attempt := range []struct {
+				name      string
+				document  map[string]any
+				candidate builderDevice
+			}{
+				{"add legacy entry", current, legacyB},
+				{"add to legacy document", legacyDocument, fixture.DeviceB},
+			} {
+				if _, err := AddDeviceToDIDDocument(
+					attempt.document, fixture.RootKeyID, attempt.candidate.Entry,
+					attempt.candidate.SigningVerificationMethod, attempt.candidate.E2EEVerificationMethod,
+					fixture.RetiredDeviceIDs,
+				); err == nil {
+					t.Fatalf("%s republished a historical P6 bundle", attempt.name)
+				}
+			}
+			for _, attempt := range []struct {
+				name      string
+				document  map[string]any
+				candidate builderDevice
+			}{
+				{"update to legacy entry", current, legacyA},
+			} {
+				if _, err := UpdateDeviceInDIDDocument(
+					attempt.document, fixture.RootKeyID, attempt.candidate.Entry,
+					attempt.candidate.SigningVerificationMethod, attempt.candidate.E2EEVerificationMethod,
+				); err == nil {
+					t.Fatalf("%s republished a historical P6 bundle", attempt.name)
+				}
+			}
+			upgraded, err := UpdateDeviceInDIDDocument(
+				legacyDocument, fixture.RootKeyID, fixture.DeviceA.Entry,
+				fixture.DeviceA.SigningVerificationMethod, fixture.DeviceA.E2EEVerificationMethod,
+			)
+			if err != nil || !reflect.DeepEqual(upgraded, current) {
+				t.Fatalf("explicit upgrade did not produce the canonical document: %v", err)
+			}
+			mixedDocument, err := AddDeviceToDIDDocument(
+				current, fixture.RootKeyID, fixture.DeviceB.Entry,
+				fixture.DeviceB.SigningVerificationMethod, fixture.DeviceB.E2EEVerificationMethod,
+				fixture.RetiredDeviceIDs,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mixedDevices := mixedDocument["deviceManifest"].(map[string]any)["devices"].([]any)
+			mixedDevices[1].(map[string]any)["profiles"] = append([]any(nil), wireProfiles...)
+			mixedDocument["proof"] = map[string]any{"proofValue": "preserve-input-proof"}
+			mixedBefore := cloneMapForTest(t, mixedDocument)
+			removed, err := RemoveDeviceFromDIDDocument(
+				mixedDocument, fixture.RootKeyID, fixture.DeviceB.Entry.DeviceID,
+			)
+			if err != nil || !reflect.DeepEqual(removed, current) {
+				t.Fatalf("removing the historical device did not retain the current document: %v", err)
+			}
+			// Unrelated mutations must not republish a remaining historical entry.
+			if _, err := UpdateDeviceInDIDDocument(
+				mixedDocument, fixture.RootKeyID, fixture.DeviceA.Entry,
+				fixture.DeviceA.SigningVerificationMethod, fixture.DeviceA.E2EEVerificationMethod,
+			); err == nil {
+				t.Fatal("update republished an untouched historical device")
+			}
+			if _, err := RemoveDeviceFromDIDDocument(
+				mixedDocument, fixture.RootKeyID, fixture.DeviceA.Entry.DeviceID,
+			); err == nil {
+				t.Fatal("remove republished the remaining historical device")
+			}
+			if !reflect.DeepEqual(mixedDocument, mixedBefore) {
+				t.Fatal("mutation changed its input document")
+			}
+			if !reflect.DeepEqual(legacyDocument, legacyBefore) || !reflect.DeepEqual(current, currentBefore) {
+				t.Fatal("rejected mutation changed an input document")
+			}
+		})
+	}
+	if !reflect.DeepEqual(fixture.BaseDocument, baseBefore) {
+		t.Fatal("rejected build changed its base document")
+	}
+}
+
+func TestCurrentP6AndNonP6WritesPreserveExplicitProfiles(t *testing.T) {
+	for name, profiles := range map[string][]string{
+		"current-p6-extra-base-v1": {
+			ProfileCoreBindingV1, ProfileIdentityDiscoveryV1, ProfileGroupBaseV2, ProfileGroupE2EEV2, ProfileGroupBaseV1,
+		},
+		"p5-unchanged": {
+			ProfileCoreBindingV1, ProfileIdentityDiscoveryV1, ProfileDirectBaseV1, ProfileDirectE2EEV2,
+		},
+		"base-v1-only": {
+			ProfileCoreBindingV1, ProfileIdentityDiscoveryV1, ProfileGroupBaseV1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := loadVNextDIDBuilderFixture(t)
+			fixture.DeviceA.Entry.Profiles = profiles
+			document, err := buildFixtureDocument(fixture)
+			if err != nil {
+				t.Fatalf("build accepted profiles: %v", err)
+			}
+			manifest, err := ValidateDeviceManifest(document)
+			if err != nil || manifest == nil {
+				t.Fatalf("validate built document: %v", err)
+			}
+			if !reflect.DeepEqual(manifest.Devices[0].Profiles, profiles) {
+				t.Fatal("builder silently changed declared profiles")
+			}
+		})
 	}
 }
 

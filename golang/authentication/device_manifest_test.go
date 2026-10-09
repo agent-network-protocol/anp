@@ -67,6 +67,26 @@ func TestSharedDeviceManifestValidFixtures(t *testing.T) {
 	}
 }
 
+func TestLegacyP6ReadCompatibilityKeepsExistingP5Eligibility(t *testing.T) {
+	fixtures := loadDeviceManifestFixtures(t)
+	for _, testCase := range fixtures.Valid {
+		if testCase.Name != "legacy_all_v2_draft_bundle" {
+			continue
+		}
+		document := buildDeviceManifestDocument(t, fixtures.BaseDIDDocument, testCase.deviceManifestCase)
+		before := cloneJSONMap(t, document)
+		device, err := FindEligibleDevice(document, testCase.Lookup.DeviceID, ProfileDirectE2EEV2)
+		if err != nil || device == nil {
+			t.Fatalf("existing P5 dependency compatibility changed: %v", err)
+		}
+		if !reflect.DeepEqual(document, before) {
+			t.Fatal("lookup changed a historical document")
+		}
+		return
+	}
+	t.Fatal("missing legacy compatibility fixture")
+}
+
 func TestSharedDeviceManifestInvalidFixtures(t *testing.T) {
 	fixtures := loadDeviceManifestFixtures(t)
 	for _, testCase := range fixtures.Invalid {
