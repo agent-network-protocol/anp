@@ -2649,7 +2649,60 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         draft_extension_negotiated: true,
         request_id: "req-welcome-a1".to_owned(),
     };
-    process_welcome_v2(&a1_store, welcome_a1.clone()).expect("A1 processes Welcome");
+    let mut incomplete_welcome = welcome_a1.clone();
+    incomplete_welcome
+        .member_documents
+        .retain(|entry| entry.did == alice.did);
+    assert_eq!(
+        process_welcome_v2(&a1_store, incomplete_welcome)
+            .expect_err("incomplete cross-Home roster must fail closed")
+            .code,
+        "group.e2ee.did_binding_invalid"
+    );
+    let reopened_a1 = store(directory.path(), &alice.did, &a1_device.device_id);
+    let connection = Connection::open(reopened_a1.state_db_path()).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        1,
+        "failed Welcome validation must roll back private KeyPackage consumption"
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM group_mls_welcome_receipts",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0,
+        "failed Welcome must not leave an accepted receipt"
+    );
+    drop(connection);
+    let connection = Connection::open(reopened_a1.state_db_path()).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_welcome_receipt BEFORE INSERT ON group_mls_welcome_receipts BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END;").unwrap();
+    assert!(process_welcome_v2(&reopened_a1, welcome_a1.clone()).is_err());
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        1,
+        "receipt failure must roll back cryptographic state too"
+    );
+    connection
+        .execute_batch("DROP TRIGGER fail_welcome_receipt;")
+        .unwrap();
+    drop(connection);
+    process_welcome_v2(&reopened_a1, welcome_a1.clone())
+        .expect("corrected Welcome retries after reopening");
+
     let mut repeated_welcome_a1 = welcome_a1.clone();
     repeated_welcome_a1.request_id = "req-welcome-a1-repeat".to_owned();
     assert_eq!(
@@ -3216,6 +3269,35 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
             .code,
         "group.e2ee.did_binding_invalid"
     );
+    let mut bad_authenticator = welcome_a2_notice.clone();
+    bad_authenticator.notice.epoch_authenticator = Some(URL_SAFE_NO_PAD.encode([0_u8; 32]));
+    assert_eq!(
+        process_notice_v2(&a2_store, bad_authenticator)
+            .expect_err("outer authenticator mismatch must roll back the entire Welcome")
+            .code,
+        "group.e2ee.welcome_invalid"
+    );
+    let connection = Connection::open(a2_store.state_db_path()).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM openmls_key_packages", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM group_mls_welcome_receipts",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    drop(connection);
     let welcome_output = process_notice_v2(&a2_store, welcome_a2_notice.clone())
         .expect("A2 processes its own standard Welcome notice");
     let mut repeated_welcome_notice = welcome_a2_notice;

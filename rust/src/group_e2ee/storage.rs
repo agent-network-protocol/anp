@@ -200,11 +200,24 @@ pub trait GroupMlsStore {
 pub struct GroupMlsOperationScope {
     _lock: StateLock,
     data_dir: PathBuf,
-    pub(crate) app_conn: Connection,
+    pub(crate) app_conn: Rc<Connection>,
     pub(crate) provider: SqliteMlsProvider,
 }
 
 impl GroupMlsOperationScope {
+    /// Share the OpenMLS connection for an atomic receive operation. Existing
+    /// prepare/finalize operations retain their separate-connection journals.
+    pub(crate) fn share_provider_connection(
+        &mut self,
+        owner: Option<&GroupMlsOwnerScope>,
+    ) -> Result<(), rusqlite::Error> {
+        if let Some(owner) = owner {
+            install_im_core_compat_views(&self.provider.connection, owner)?;
+        }
+        self.app_conn = Rc::clone(&self.provider.connection);
+        Ok(())
+    }
+
     pub(crate) fn data_dir(&self) -> &Path {
         &self.data_dir
     }
@@ -270,7 +283,7 @@ impl GroupMlsStore for CompatDataDirStore {
         Ok(GroupMlsOperationScope {
             _lock: lock,
             data_dir: self.data_dir.clone(),
-            app_conn,
+            app_conn: Rc::new(app_conn),
             provider,
         })
     }
@@ -364,7 +377,7 @@ impl GroupMlsStore for ImCoreSqliteGroupMlsStore {
         Ok(GroupMlsOperationScope {
             _lock: lock,
             data_dir: self.lock_dir.clone(),
-            app_conn,
+            app_conn: Rc::new(app_conn),
             provider,
         })
     }

@@ -70,6 +70,15 @@ An actor's post-finalize Commit echo is receipt-only: it is accepted after
 restart only when the finalized local journal exactly matches actor device,
 operation, group/state/epoch, subject and Commit digest, so the Commit is never
 merged twice.
+Welcome receive uses one SQLite transaction for OpenMLS and SDK metadata. A
+missing/current-invalid member DID document, invalid tree, outer epoch or
+authenticator, or failed receipt write rolls back private KeyPackage consumption,
+group state and both Welcome/notice receipts together. Reopening can retry the
+same valid Welcome after resolving the cause; a successful Welcome still consumes
+the one-time bundle, and conflicting accepted replays still fail closed. This is
+local recovery only, without a wire change or private-state export. Existing
+prepare/finalize operations retain their separate-connection journals.
+
 P4 membership, owner policy, service CAS and KeyPackage lease/consumption remain
 product and Group Host checks rather than local MLS checks.
 

@@ -1757,10 +1757,11 @@ fn claim_legacy_key_package_publish_family(
     // device-store lock serializes recovery, and this transaction makes the
     // first digest-valid retry the durable owner. A later conflicting retry is
     // terminally superseded instead of adopting the first family's package.
-    let transaction = scope
-        .app_conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let transaction = rusqlite::Transaction::new_unchecked(
+        &scope.app_conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )
+    .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
     let conflict = key_package_publish_wire_ids_bound_elsewhere(
         &transaction,
         &journal.meta.operation_id,
@@ -1794,10 +1795,11 @@ fn persist_hydrated_legacy_superseded_family(
     stored_response_json: &str,
     journal: &V2KeyPackagePublishJournal,
 ) -> GroupMlsOperationResult<()> {
-    let transaction = scope
-        .app_conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let transaction = rusqlite::Transaction::new_unchecked(
+        &scope.app_conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )
+    .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
     let next_response_json = serialize_key_package_publish_journal(journal, &input.request_id)?;
     cas_persist_legacy_key_package_publish_family(
         &transaction,
@@ -1954,10 +1956,11 @@ fn rotate_expired_key_package_publish_attempt(
     journal.accepted_result = None;
     let next_response_json = serialize_key_package_publish_journal(&journal, &input.request_id)?;
 
-    let transaction = scope
-        .app_conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let transaction = rusqlite::Transaction::new_unchecked(
+        &scope.app_conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )
+    .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
     let current: Option<(String, String, String)> = transaction
         .query_row(
             "SELECT input_digest, response_json, status FROM operations\n             WHERE operation_id = ?1 AND command = ?2",
@@ -3460,8 +3463,20 @@ pub fn process_welcome_v2<S: GroupMlsStore>(
         &input.recipient_device_id,
         &input.request_id,
     )?;
-    let scope = open_scope(store, &input.request_id)?;
-    process_welcome_with_scope(&scope, input)
+    let mut scope = open_scope(store, &input.request_id)?;
+    scope
+        .share_provider_connection(store.owner_scope().as_ref())
+        .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+    let request_id = input.request_id.clone();
+    let transaction = scope
+        .app_conn
+        .unchecked_transaction()
+        .map_err(|err| sqlite_operation_error(err, &request_id))?;
+    let output = process_welcome_with_scope(&scope, input)?;
+    transaction
+        .commit()
+        .map_err(|err| sqlite_operation_error(err, &request_id))?;
+    Ok(output)
 }
 
 /// Recovers the exact finalized transition-Add body needed by a successor store.
@@ -3960,13 +3975,34 @@ pub fn process_notice_v2<S: GroupMlsStore>(
         &input.recipient_device_id,
         &input.request_id,
     )?;
-    let scope = open_scope(store, &input.request_id)?;
-    let digest = notice_input_digest(&input)?;
+    let mut scope = open_scope(store, &input.request_id)?;
+    if input.notice.notice_type == "welcome-delivery" {
+        scope
+            .share_provider_connection(store.owner_scope().as_ref())
+            .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+        let transaction = scope
+            .app_conn
+            .unchecked_transaction()
+            .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+        let output = process_notice_with_scope(&scope, &input)?;
+        transaction
+            .commit()
+            .map_err(|err| sqlite_operation_error(err, &input.request_id))?;
+        return Ok(output);
+    }
+    process_notice_with_scope(&scope, &input)
+}
+
+fn process_notice_with_scope(
+    scope: &GroupMlsOperationScope,
+    input: &V2ProcessNoticeInput,
+) -> GroupMlsOperationResult<V2ProcessNoticeOutput> {
+    let digest = notice_input_digest(input)?;
     let receipt_key = format!("p6-v2-notice:{}", input.meta.operation_id);
     match begin_notice_receipt(&scope.app_conn, &receipt_key, &digest, &input.request_id)? {
         NoticeReceiptState::Finalized(output) => return Ok(output),
         NoticeReceiptState::Processing(Some(output)) => {
-            if recover_notice_if_applied(&scope, &input, &output)? {
+            if recover_notice_if_applied(scope, input, &output)? {
                 finalize_notice_receipt(&scope.app_conn, &receipt_key, &output, &input.request_id)?;
                 return Ok(output);
             }
@@ -3977,7 +4013,7 @@ pub fn process_notice_v2<S: GroupMlsStore>(
     let output = match input.notice.notice_type.as_str() {
         "welcome-delivery" => {
             let processed = process_welcome_with_scope(
-                &scope,
+                scope,
                 V2ProcessWelcomeInput {
                     recipient_did: input.recipient_did.clone(),
                     recipient_device_id: input.recipient_device_id.clone(),
@@ -4006,7 +4042,7 @@ pub fn process_notice_v2<S: GroupMlsStore>(
                 },
             )?;
             if let Err(err) = validate_persisted_epoch_authenticator(
-                &scope,
+                scope,
                 &input.notice.crypto_group_id_b64u,
                 input.notice.epoch_authenticator.as_deref(),
                 &input.request_id,
@@ -4037,7 +4073,7 @@ pub fn process_notice_v2<S: GroupMlsStore>(
                 self_removed: processed.self_removed,
             }
         }
-        "commit-delivery" => process_notice_commit(&scope, &input, &receipt_key)?,
+        "commit-delivery" => process_notice_commit(scope, input, &receipt_key)?,
         _ => {
             return Err(operation_error(
                 "group.e2ee.notice_type_unsupported",
