@@ -2606,6 +2606,7 @@ fn add_member_prepare_with_controller_v2<S: GroupMlsStore>(
         &input.group_state_ref.group_did,
         &input.request_id,
     )?;
+    ensure_no_pending_membership_commit(&group, &input.request_id)?;
     let (key_package, evidence) = parse_and_validate_key_package(
         &scope.provider,
         &input.group_key_package,
@@ -2780,6 +2781,7 @@ pub fn remove_member_prepare_v2<S: GroupMlsStore>(
         &input.group_state_ref.group_did,
         &input.request_id,
     )?;
+    ensure_no_pending_membership_commit(&group, &input.request_id)?;
     let leaf = find_exact_accepted_leaf(
         &scope,
         &group,
@@ -5965,6 +5967,23 @@ fn validate_control_meta(
         return Err(operation_error(
             "group.e2ee.state_not_ready",
             "control target must equal group_state_ref.group_did",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_no_pending_membership_commit(
+    group: &MlsGroup,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    // The operation scope holds the device store lock. A prior prepare may
+    // still await its Host decision between SDK calls; never create a second
+    // preparing journal that cannot own this group's existing pending Commit.
+    if group.pending_commit().is_some() {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "an existing membership Commit must be finalized or aborted before another prepare",
             request_id,
         ));
     }
