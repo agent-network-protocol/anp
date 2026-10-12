@@ -52,6 +52,9 @@ const EXPIRES_AT: &str = "2026-08-19T00:00:00Z";
 const GROUP_DID: &str = "did:wba:p6-runtime.example:groups:operations";
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[path = "group_e2ee_v2_operations/legacy_prepare.rs"]
+mod legacy_prepare;
+
 #[derive(Debug)]
 struct DeviceFixture {
     device_id: String,
@@ -2657,6 +2660,12 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         .status,
         "finalized"
     );
+    legacy_prepare::assert_recovery_preserves_finalized_membership(
+        &owner_store,
+        &owner,
+        owner_device,
+        &add_a1.pending_commit_id,
+    );
     let welcome_a1 = V2ProcessWelcomeInput {
         recipient_did: alice.did.clone(),
         recipient_device_id: a1_device.device_id.clone(),
@@ -3156,6 +3165,7 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
     .expect("a rejected Remove leaves the original Add intact");
     assert_eq!(pending_status.auto_reconcile_pending_count, 0);
     assert_eq!(pending_status.host_recheck_pending_count, 1);
+    legacy_prepare::assert_live_prepare_is_preserved(&owner_store, &add_a2.pending_commit_id);
     let add_a2_commit_notice = V2ProcessNoticeInput {
         recipient_did: alice.did.clone(),
         recipient_device_id: a1_device.device_id.clone(),
@@ -3224,6 +3234,7 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("finalize A2 Add");
+    legacy_prepare::assert_recovery_after_further_epoch_advance(&owner_store);
     let add_a2_self_echo = V2ProcessNoticeInput {
         recipient_did: owner.did.clone(),
         recipient_device_id: owner_device.device_id.clone(),
