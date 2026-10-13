@@ -52,6 +52,9 @@ const EXPIRES_AT: &str = "2026-08-19T00:00:00Z";
 const GROUP_DID: &str = "did:wba:p6-runtime.example:groups:operations";
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[path = "group_e2ee_v2_operations/legacy_prepare.rs"]
+mod legacy_prepare;
+
 #[derive(Debug)]
 struct DeviceFixture {
     device_id: String,
@@ -2590,6 +2593,37 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
     )
     .expect("prepare A1 Add");
     assert_public_commit(&add_a1.body.commit_b64u);
+    // A second controller process can prepare while the first awaits the Host.
+    // Reject it without creating an orphan WAL or disturbing the first Commit.
+    add_member_prepare_v2(
+        &owner_store,
+        V2AddMemberInput {
+            meta: control_meta(&owner.did, &owner_device.device_id, "op-competing-add"),
+            group_state_ref: state_ref(2),
+            group_key_package: a2_package.clone(),
+            member_did_document: alice.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-competing-add".to_owned(),
+            request_id: "req-competing-add".to_owned(),
+        },
+    )
+    .expect_err("another Add must wait for the existing pending Commit");
+    let pending_status = inspect_local_group_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-competing-add".to_owned(),
+        },
+    )
+    .expect("inspect the original pending Commit");
+    assert_eq!(
+        pending_status.auto_reconcile_pending_count, 0,
+        "a rejected competing Add must not leave a preparing WAL"
+    );
+    assert_eq!(pending_status.host_recheck_pending_count, 1);
     force_pending_status(&owner_store, &add_a1.pending_commit_id, "accepted");
     let restarted_owner_store = store(directory.path(), &owner.did, &owner_device.device_id);
     let reconciled = reconcile_pending_v2(
@@ -2625,6 +2659,12 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         .expect("membership finalize is idempotent after restart")
         .status,
         "finalized"
+    );
+    legacy_prepare::assert_recovery_preserves_finalized_membership(
+        &owner_store,
+        &owner,
+        owner_device,
+        &add_a1.pending_commit_id,
     );
     let welcome_a1 = V2ProcessWelcomeInput {
         recipient_did: alice.did.clone(),
@@ -3097,6 +3137,35 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("prepare A2 Add");
+    let competing_remove = remove_member_prepare_v2(
+        &owner_store,
+        V2RemoveMemberInput {
+            meta: control_meta(&owner.did, &owner_device.device_id, "op-competing-remove"),
+            group_state_ref: state_ref(3),
+            member_did: alice.did.clone(),
+            member_device_id: a1_device.device_id.clone(),
+            member_did_document: alice.document.clone(),
+            now: NOW.to_owned(),
+            draft_extension_negotiated: true,
+            pending_commit_id: "pending-competing-remove".to_owned(),
+            request_id: "req-competing-remove".to_owned(),
+        },
+    )
+    .expect_err("Remove must not disturb an Add awaiting its Host decision");
+    assert_eq!(competing_remove.code, "group.e2ee.state_not_ready");
+    let pending_status = inspect_local_group_v2(
+        &owner_store,
+        V2InspectLocalGroupInput {
+            owner_did: owner.did.clone(),
+            owner_device_id: owner_device.device_id.clone(),
+            group_did: GROUP_DID.to_owned(),
+            request_id: "req-inspect-competing-remove".to_owned(),
+        },
+    )
+    .expect("a rejected Remove leaves the original Add intact");
+    assert_eq!(pending_status.auto_reconcile_pending_count, 0);
+    assert_eq!(pending_status.host_recheck_pending_count, 1);
+    legacy_prepare::assert_live_prepare_is_preserved(&owner_store, &add_a2.pending_commit_id);
     let add_a2_commit_notice = V2ProcessNoticeInput {
         recipient_did: alice.did.clone(),
         recipient_device_id: a1_device.device_id.clone(),
@@ -3165,6 +3234,7 @@ fn v1b_persistent_v2_operations_keep_same_did_devices_independent() {
         },
     )
     .expect("finalize A2 Add");
+    legacy_prepare::assert_recovery_after_further_epoch_advance(&owner_store);
     let add_a2_self_echo = V2ProcessNoticeInput {
         recipient_did: owner.did.clone(),
         recipient_device_id: owner_device.device_id.clone(),

@@ -5,6 +5,8 @@
 //! enforcing the v2 LeafNode device binding, exact-device membership changes,
 //! and RFC 8785 authenticated data.
 
+mod prepare_recovery;
+
 use super::{
     active_binding, binding, binding_status, ciphersuite, decode_b64u, delete_binding,
     delete_openmls_group_state, encode_b64u, ensure_agent, load_group, load_signer,
@@ -2606,6 +2608,7 @@ fn add_member_prepare_with_controller_v2<S: GroupMlsStore>(
         &input.group_state_ref.group_did,
         &input.request_id,
     )?;
+    ensure_no_pending_membership_commit(&group, &input.request_id)?;
     let (key_package, evidence) = parse_and_validate_key_package(
         &scope.provider,
         &input.group_key_package,
@@ -2780,6 +2783,7 @@ pub fn remove_member_prepare_v2<S: GroupMlsStore>(
         &input.group_state_ref.group_did,
         &input.request_id,
     )?;
+    ensure_no_pending_membership_commit(&group, &input.request_id)?;
     let leaf = find_exact_accepted_leaf(
         &scope,
         &group,
@@ -3003,7 +3007,7 @@ pub fn reconcile_pending_v2<S: GroupMlsStore>(
         let previous_status = pending.status.clone();
         let (status, action) = match pending.status.as_str() {
             "preparing" => {
-                rollback_pending(&scope, &pending, &input.request_id)?;
+                let rollback = rollback_pending(&scope, &pending, &input.request_id)?;
                 update_pending_commit_status(
                     &scope.app_conn,
                     &pending.pending_commit_id,
@@ -3011,7 +3015,11 @@ pub fn reconcile_pending_v2<S: GroupMlsStore>(
                     &input.request_id,
                 )
                 .map_err(GroupMlsOperationError::from)?;
-                ("aborted", "rolled-back-interrupted-prepare")
+                let action = match rollback {
+                    PrepareRollback::RolledBack => "rolled-back-interrupted-prepare",
+                    PrepareRollback::Superseded => "discarded-superseded-prepare",
+                };
+                ("aborted", action)
             }
             "prepared" | "pending" => ("prepared", "awaiting-service-decision"),
             "accepted" => {
@@ -3401,11 +3409,16 @@ fn complete_accepted_pending(
     Ok(())
 }
 
+enum PrepareRollback {
+    RolledBack,
+    Superseded,
+}
+
 fn rollback_pending(
     scope: &GroupMlsOperationScope,
     pending: &super::PendingCommitRecord,
     request_id: &str,
-) -> GroupMlsOperationResult<()> {
+) -> GroupMlsOperationResult<PrepareRollback> {
     let group_id = GroupId::from_slice(
         &decode_b64u(&pending.crypto_group_id_b64u, request_id)
             .map_err(GroupMlsOperationError::from)?,
@@ -3421,7 +3434,7 @@ fn rollback_pending(
             request_id,
         )
         .map_err(GroupMlsOperationError::from)?;
-        return Ok(());
+        return Ok(PrepareRollback::RolledBack);
     }
 
     let Some(mut group) = MlsGroup::load(scope.provider.storage(), &group_id)
@@ -3433,6 +3446,9 @@ fn rollback_pending(
             request_id,
         ));
     };
+    if prepare_recovery::superseded_by_finalized_commit(scope, pending, &group, request_id)? {
+        return Ok(PrepareRollback::Superseded);
+    }
     if group.epoch().as_u64() == pending.to_epoch {
         return Err(operation_error(
             "group.e2ee.commit_invalid",
@@ -3450,7 +3466,7 @@ fn rollback_pending(
     group
         .clear_pending_commit(scope.provider.storage())
         .map_err(|err| mls_operation_error("group.e2ee.commit_invalid", err, request_id))?;
-    Ok(())
+    Ok(PrepareRollback::RolledBack)
 }
 
 pub fn process_welcome_v2<S: GroupMlsStore>(
@@ -5965,6 +5981,23 @@ fn validate_control_meta(
         return Err(operation_error(
             "group.e2ee.state_not_ready",
             "control target must equal group_state_ref.group_did",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_no_pending_membership_commit(
+    group: &MlsGroup,
+    request_id: &str,
+) -> GroupMlsOperationResult<()> {
+    // The operation scope holds the device store lock. A prior prepare may
+    // still await its Host decision between SDK calls; never create a second
+    // preparing journal that cannot own this group's existing pending Commit.
+    if group.pending_commit().is_some() {
+        return Err(operation_error(
+            "group.e2ee.state_not_ready",
+            "an existing membership Commit must be finalized or aborted before another prepare",
             request_id,
         ));
     }
