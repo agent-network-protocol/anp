@@ -10,6 +10,6 @@ pub mod proof;
 pub mod sealed_handoff;
 pub mod wns;
 
-pub const VERSION: &str = "1.0.5";
+pub const VERSION: &str = "1.0.6";
 
 pub use keys::{PrivateKeyMaterial, PublicKeyMaterial};
