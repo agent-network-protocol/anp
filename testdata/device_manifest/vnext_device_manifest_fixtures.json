@@ -1,6 +1,6 @@
 {
   "version": "anp-device-manifest-vnext-fixtures-v1",
-  "protocol_commit": "97896407a21cc5a0ea6c30908592bc41f669ac0c",
+  "protocol_commit": "de99d26f26a80a9c9a9a70b2f6f37c72c5d605ea",
   "base_did_document": {
     "@context": [
       "https://www.w3.org/ns/did/v1"
@@ -109,7 +109,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -144,7 +144,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -178,6 +178,55 @@
       },
       "lookup": {
         "device_id": "dev-a-7N3KQ2",
+        "profile": "anp.group.e2ee.v2",
+        "found": false
+      }
+    },
+    {
+      "name": "legacy_group_base_v1_mixed_bundle",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.group.base.v1",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      },
+      "lookup": {
+        "device_id": "dev-b-9R5TLM",
+        "profile": "anp.group.e2ee.v2",
+        "found": false
+      }
+    },
+    {
+      "name": "current_p6_with_explicit_group_base_v1",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v1",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2",
+              "anp.group.base.v1"
+            ]
+          }
+        ]
+      },
+      "lookup": {
+        "device_id": "dev-b-9R5TLM",
         "profile": "anp.group.e2ee.v2",
         "found": true
       }
@@ -319,7 +368,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -350,7 +399,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -381,7 +430,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -491,7 +540,7 @@
             "profiles": [
               "anp.core.binding.v1",
               "anp.identity.discovery.v1",
-              "anp.group.base.v1",
+              "anp.group.base.v2",
               "anp.group.e2ee.v2"
             ]
           }
@@ -543,6 +592,64 @@
               "anp.identity.discovery.v1",
               "anp.direct.base.v1",
               "anp.direct.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "current_p6_missing_core_binding",
+      "reason": "Current P6 requires core.binding.v1, identity.discovery.v1 and group.base.v2",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.identity.discovery.v1",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "current_p6_missing_identity_discovery",
+      "reason": "Current P6 requires core.binding.v1, identity.discovery.v1 and group.base.v2",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "hybrid_p6_dependencies",
+      "reason": "P6 dependencies must contain one complete current or historical read-only bundle",
+      "device_manifest": {
+        "type": "ANPDeviceManifest",
+        "devices": [
+          {
+            "device_id": "dev-b-9R5TLM",
+            "signing_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-sign",
+            "e2ee_key_id": "did:wba:example.com:agents:alice:e1_fixture#dev-b-e2ee",
+            "profiles": [
+              "anp.core.binding.v1",
+              "anp.identity.discovery.v2",
+              "anp.group.base.v2",
+              "anp.group.e2ee.v2"
             ]
           }
         ]

@@ -27,7 +27,7 @@ from .direct_e2ee import (
     PrekeyManager,
 )
 
-__version__ = "1.0.4rc1"
+__version__ = "1.0.6"
 
 # Define what should be exported when using "from anp import *"
 __all__ = [

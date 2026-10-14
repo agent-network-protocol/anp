@@ -56,6 +56,20 @@ def test_valid_shared_device_manifest_fixture(case):
     assert document["x-fixture-extension"]["must_survive_validation"] is True
 
 
+def test_legacy_p6_read_compatibility_keeps_existing_p5_eligibility():
+    fixtures = _load_fixtures()
+    case = next(
+        case for case in fixtures["valid"]
+        if case["name"] == "legacy_all_v2_draft_bundle"
+    )
+    document = _build_document(fixtures, case)
+    before = copy.deepcopy(document)
+    assert find_eligible_device(
+        document, case["lookup"]["device_id"], "anp.direct.e2ee.v2"
+    ) is not None
+    assert document == before
+
+
 @pytest.mark.parametrize(
     "case", _load_fixtures()["invalid"], ids=lambda c: c["name"]
 )

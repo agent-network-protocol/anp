@@ -1,6 +1,6 @@
 ---
 name: anp-multilang-release
-description: 在 ANP SDK 仓库里统一发布 Go、Python、Rust 三个 SDK。用于同时更新 pyproject.toml、anp/__init__.py、uv.lock、rust/Cargo.toml、rust/src/lib.rs、rust/Cargo.lock、golang/version.go，执行 uv/cargo/go 校验，发布 PyPI 与 crates.io，并按 Go 子目录 module 规则推送 golang/vX.Y.Z tag。用户提到 Go/Python/Rust 一起发版、统一版本号、固定发布 0.7.2、下一版自动 +1、保持版本段为一位数时使用此 skill。
+description: 在 ANP SDK 仓库里统一发布 Go、Python、Rust 三个 SDK。用于同时更新 pyproject.toml、anp/__init__.py、uv.lock、rust/Cargo.toml、rust/src/lib.rs、rust/Cargo.lock、golang/version.go，执行 uv/cargo 打包校验、仅在用户明确要求时执行 Go 测试，发布 PyPI 与 crates.io，并按 Go 子目录 module 规则推送 golang/vX.Y.Z tag。用户提到 Go/Python/Rust 一起发版、统一版本号、固定发布 0.7.2、下一版自动 +1、保持版本段为一位数时使用此 skill。
 ---
 
 # ANP Multi SDK Release
@@ -30,6 +30,9 @@ uv run python skills/anp-multilang-release/scripts/release.py plan --version 0.7
 cd anp
 uv run python skills/anp-multilang-release/scripts/release.py release --version 0.7.2
 ```
+默认发布不运行测试。只有用户明确要求测试时，才在 `plan` 和 `release` 使用 `--run-tests`；该选项执行 `golang/` 的 `go test ./...`。Python/Rust 测试也需要用户明确要求，由各自入口单独执行。`uv build` 和 `cargo publish --dry-run` 是打包校验，不是测试套件。
+
+用户明确要求 Go 测试时，先用 `plan --version X.Y.Z --run-tests` 查看步骤，再用 `release --version X.Y.Z --run-tests` 发布。
 
 ### 下次自动递增版本
 
@@ -76,7 +79,7 @@ uv run python skills/anp-multilang-release/scripts/release.py release
 4. 执行校验：
    - `uv build`
    - `cargo publish --dry-run --manifest-path rust/Cargo.toml`
-   - `go test ./...`
+   - 仅当用户明确要求测试并传入 `--run-tests` 时：`go test ./...`
 5. 如果版本文件有变化，提交并推送分支
 6. 发布 Python 包
 7. 发布 Rust crate

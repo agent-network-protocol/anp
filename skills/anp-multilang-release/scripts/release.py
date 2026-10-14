@@ -108,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="origin",
         help="Git remote used to check or push tags. Defaults to origin.",
     )
+    plan_parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Include the Go test suite in the release plan; tests are off by default.",
+    )
 
     next_parser = subparsers.add_parser(
         "next-version",
@@ -140,6 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-dirty",
         action="store_true",
         help="Skip the clean working tree check before modifying files.",
+    )
+    release_parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Run the Go test suite before publishing; tests are off by default.",
     )
     return parser
 
@@ -437,8 +447,8 @@ def clean_dist_directory(dist_dir: Path) -> None:
             child.unlink()
 
 
-def run_release_validations(paths: ReleasePaths) -> None:
-    """Run build and validation commands before publishing."""
+def run_release_validations(paths: ReleasePaths, *, run_tests: bool = False) -> None:
+    """Validate packages, running the Go suite only when explicitly requested."""
     clean_dist_directory(paths.dist_dir)
 
     run_command(["uv", "build"], cwd=paths.repo_root)
@@ -453,7 +463,10 @@ def run_release_validations(paths: ReleasePaths) -> None:
         ],
         cwd=paths.repo_root,
     )
-    run_command(["go", "test", "./..."], cwd=paths.repo_root / "golang")
+    if run_tests:
+        run_command(["go", "test", "./..."], cwd=paths.repo_root / "golang")
+    else:
+        print("Go test suite: not run (no explicit test request).")
 
 
 def collect_python_publish_files(
@@ -485,6 +498,8 @@ def maybe_commit_version_bump(
     changed_paths: Sequence[Path],
     target_version: SemVer,
     remote: str,
+    *,
+    run_tests: bool = False,
 ) -> None:
     """Commit and push changed version files when needed."""
     if not changed_paths:
@@ -500,11 +515,16 @@ def maybe_commit_version_bump(
 
     relative_paths = [str(path.relative_to(repo_root)) for path in tracked_paths]
     run_command(["git", "add", *relative_paths], cwd=repo_root)
-    run_command(build_version_bump_commit_command(target_version), cwd=repo_root)
+    run_command(
+        build_version_bump_commit_command(target_version, run_tests=run_tests),
+        cwd=repo_root,
+    )
     run_command(["git", "push", remote, "HEAD"], cwd=repo_root)
 
 
-def build_version_bump_commit_command(target_version: SemVer) -> list[str]:
+def build_version_bump_commit_command(
+    target_version: SemVer, *, run_tests: bool = False
+) -> list[str]:
     """Build a Lore-compatible git commit command for the release bump."""
     return [
         "git",
@@ -539,7 +559,12 @@ def build_version_bump_commit_command(target_version: SemVer) -> list[str]:
                     "Tested: cargo publish --dry-run --allow-dirty "
                     "--manifest-path rust/Cargo.toml"
                 ),
-                "Tested: go test ./... from golang/",
+                (
+                    "Tested: go test ./... from golang/"
+                    if run_tests
+                    else "Not-tested: Go test suite was not requested"
+                ),
+                "Not-tested: Python and Rust test suites are separate opt-in commands",
                 "Not-tested: Registry publication happens after this commit",
             ]
         ),
@@ -585,6 +610,8 @@ def print_release_plan(
     current_version: SemVer,
     target_version: SemVer,
     remote: str,
+    *,
+    run_tests: bool = False,
 ) -> None:
     """Print the release plan without modifying files."""
     root_tag, go_tag = build_release_tags(target_version)
@@ -606,7 +633,13 @@ def print_release_plan(
     print("Validation steps:")
     print("- uv build")
     print("- cargo publish --dry-run --manifest-path rust/Cargo.toml")
-    print("- go test ./... (from golang/)")
+    print(
+        "Test execution: explicitly requested"
+        if run_tests else "Test execution: skipped by default"
+    )
+    print("- Python and Rust test suites: separate opt-in commands")
+    if run_tests:
+        print("- go test ./... (from golang/)")
     print("Publish steps:")
     print("- git push origin HEAD (after version commit)")
     print(
@@ -667,7 +700,10 @@ def main() -> int:
     root_tag, go_tag = build_release_tags(target_version)
 
     if args.command == "plan":
-        print_release_plan(paths, current_version, target_version, args.remote)
+        print_release_plan(
+            paths, current_version, target_version, args.remote,
+            run_tests=args.run_tests,
+        )
         return 0
 
     if not args.allow_dirty:
@@ -677,8 +713,11 @@ def main() -> int:
     check_tag_absent(paths.repo_root, args.remote, go_tag)
 
     changed_paths = update_version_files(paths, target_version)
-    run_release_validations(paths)
-    maybe_commit_version_bump(paths.repo_root, changed_paths, target_version, args.remote)
+    run_release_validations(paths, run_tests=args.run_tests)
+    maybe_commit_version_bump(
+        paths.repo_root, changed_paths, target_version, args.remote,
+        run_tests=args.run_tests,
+    )
     publish_python(paths, target_version)
     publish_rust(paths.repo_root)
     create_and_push_tags(paths.repo_root, args.remote, root_tag, go_tag)

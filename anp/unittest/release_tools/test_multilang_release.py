@@ -199,7 +199,40 @@ def test_version_bump_commit_command_uses_lore_trailers():
     assert "Constraint:" in message_parts[2]
     assert "Rejected:" in message_parts[2]
     assert "Tested: uv build" in message_parts[2]
+    assert "Not-tested: Go test suite was not requested" in message_parts[2]
+    assert "Tested: go test ./..." not in message_parts[2]
+    assert "Not-tested: Python and Rust test suites" in message_parts[2]
     assert "Not-tested:" in message_parts[2]
+
+    opt_in = release.build_version_bump_commit_command(
+        release.SemVer.parse("0.8.6"), run_tests=True
+    )
+    assert "Tested: go test ./... from golang/" in opt_in[-1]
+
+
+def test_release_validations_only_run_tests_when_requested(tmp_path, monkeypatch):
+    """Package checks are unconditional while the Go suite is opt-in."""
+    release = _load_release_module()
+    paths = _build_release_paths(release, tmp_path)
+    commands = []
+
+    def fake_run_command(command, *, cwd, capture_output=False, env=None):
+        commands.append((command, cwd))
+
+    monkeypatch.setattr(release, "run_command", fake_run_command)
+
+    release.run_release_validations(paths)
+    assert [command for command, _ in commands] == [
+        ["uv", "build"],
+        [
+            "cargo", "publish", "--dry-run", "--allow-dirty",
+            "--manifest-path", "rust/Cargo.toml",
+        ],
+    ]
+
+    commands.clear()
+    release.run_release_validations(paths, run_tests=True)
+    assert commands[-1] == (["go", "test", "./..."], tmp_path / "golang")
 
 
 def test_release_launcher_defaults_to_a_real_coordinated_release(tmp_path):
@@ -228,6 +261,22 @@ def test_release_launcher_defaults_to_a_real_coordinated_release(tmp_path):
     ]
 
 
+def test_release_launcher_forwards_explicit_test_request(tmp_path):
+    """The short launcher must not turn test execution on implicitly."""
+    launcher = _load_release_launcher_module()
+
+    command = launcher.build_release_command(
+        tmp_path,
+        plan=False,
+        version="1.0.5",
+        remote="origin",
+        run_tests=True,
+    )
+
+    assert command[-3:] == ["--version", "1.0.5", "--run-tests"]
+    assert command.count("--run-tests") == 1
+
+
 def test_release_launcher_plan_runs_without_publishing():
     """The launcher plan path must reach the helper without registry writes."""
     repo_root = Path(__file__).resolve().parents[3]
@@ -247,6 +296,8 @@ def test_release_launcher_plan_runs_without_publishing():
 
     assert result.returncode == 0, result.stderr
     assert "Target version: 0.9.4" in result.stdout
+    assert "Test execution: skipped by default" in result.stdout
+    assert "go test ./..." not in result.stdout
     assert "Publish steps:" in result.stdout
 
 

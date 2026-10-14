@@ -105,15 +105,23 @@ async fn web_response_boundary() {
 #[cfg(feature = "network")]
 #[tokio::test]
 async fn web_production_requires_tls() {
-    use anp::authentication::{resolve_did_document_with_options, DidResolutionOptions};
-    assert!(resolve_did_document_with_options(
-        "did:web:example.com",
-        false,
-        &DidResolutionOptions {
-            verify_ssl: false,
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
+    use anp::authentication::{
+        resolve_did_document_with_address_policy, DidResolutionAddressPolicy, DidResolutionOptions,
+    };
+    for address_policy in [
+        DidResolutionAddressPolicy::PublicOnly,
+        DidResolutionAddressPolicy::HostNetwork,
+    ] {
+        assert!(resolve_did_document_with_address_policy(
+            "did:web:example.com",
+            false,
+            &DidResolutionOptions {
+                verify_ssl: false,
+                ..Default::default()
+            },
+            address_policy,
+        )
+        .await
+        .is_err());
+    }
 }

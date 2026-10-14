@@ -253,14 +253,185 @@ fn legacy_draft_foundation_profiles_are_read_only() {
     assert!(validate_device_manifest(&legacy_document)
         .expect("legacy draft document remains readable")
         .is_some());
-    assert!(remove_device_from_did_document(
+    let before = legacy_document.clone();
+    let removed = remove_device_from_did_document(
         &legacy_document,
         value["root_key_id"].as_str().expect("root key id"),
         legacy_device["entry"]["device_id"]
             .as_str()
             .expect("device id"),
     )
-    .is_err());
+    .expect("removing a legacy entry does not republish its profiles");
+    assert_eq!(removed["deviceManifest"]["devices"], json!([]));
+    assert_eq!(legacy_document, before);
+}
+
+#[test]
+fn legacy_p6_mutations_require_canonical_results() {
+    let value = fixture();
+    let value_before = value.clone();
+    let root = value["root_key_id"].as_str().expect("root key id");
+    let device_a = &value["device_a"];
+    let device_b = &value["device_b"];
+    let current = build(&value);
+    let current_before = current.clone();
+
+    for profiles in [
+        json!([
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v1",
+            "anp.group.e2ee.v2"
+        ]),
+        json!([
+            "anp.core.binding.v2",
+            "anp.identity.discovery.v2",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2"
+        ]),
+    ] {
+        let mut legacy_a = device_a.clone();
+        legacy_a["entry"]["profiles"] = profiles.clone();
+        let mut legacy_b = device_b.clone();
+        legacy_b["entry"]["profiles"] = profiles.clone();
+        assert!(build_vnext_did_document(
+            &value["base_document"],
+            root,
+            &value["root_verification_method"],
+            &entry(&legacy_a),
+            &legacy_a["signing_verification_method"],
+            &legacy_a["e2ee_verification_method"],
+        )
+        .is_err());
+
+        let mut legacy_document = current.clone();
+        legacy_document["deviceManifest"]["devices"][0]["profiles"] = profiles.clone();
+        legacy_document["proof"] = json!({"proofValue": "preserve-input-proof"});
+        let legacy_before = legacy_document.clone();
+        assert!(validate_device_manifest(&legacy_document)
+            .expect("historical P6 bundle remains readable")
+            .is_some());
+
+        for (operation, result) in [
+            (
+                "add legacy entry",
+                add_device_to_did_document(
+                    &current,
+                    root,
+                    &entry(&legacy_b),
+                    &legacy_b["signing_verification_method"],
+                    &legacy_b["e2ee_verification_method"],
+                    &retired(&value),
+                ),
+            ),
+            (
+                "update to legacy entry",
+                update_device_in_did_document(
+                    &current,
+                    root,
+                    &entry(&legacy_a),
+                    &legacy_a["signing_verification_method"],
+                    &legacy_a["e2ee_verification_method"],
+                ),
+            ),
+            (
+                "add to legacy document",
+                add_device_to_did_document(
+                    &legacy_document,
+                    root,
+                    &entry(device_b),
+                    &device_b["signing_verification_method"],
+                    &device_b["e2ee_verification_method"],
+                    &retired(&value),
+                ),
+            ),
+        ] {
+            assert!(result.is_err(), "{operation} must not republish legacy P6");
+        }
+        let upgraded = update_device_in_did_document(
+            &legacy_document,
+            root,
+            &entry(device_a),
+            &device_a["signing_verification_method"],
+            &device_a["e2ee_verification_method"],
+        )
+        .expect("explicitly upgrade the historical device");
+        assert_eq!(upgraded, current);
+        assert!(upgraded.get("proof").is_none());
+
+        let mut mixed_document = add_device_to_did_document(
+            &current,
+            root,
+            &entry(device_b),
+            &device_b["signing_verification_method"],
+            &device_b["e2ee_verification_method"],
+            &retired(&value),
+        )
+        .unwrap();
+        mixed_document["deviceManifest"]["devices"][1]["profiles"] = profiles;
+        mixed_document["proof"] = json!({"proofValue": "preserve-input-proof"});
+        let mixed_before = mixed_document.clone();
+        let removed = remove_device_from_did_document(
+            &mixed_document,
+            root,
+            device_b["entry"]["device_id"].as_str().unwrap(),
+        )
+        .expect("remove the historical device while retaining the current device");
+        assert_eq!(removed, current);
+        assert!(removed.get("proof").is_none());
+
+        // Unrelated mutations must not republish a remaining historical entry.
+        assert!(update_device_in_did_document(
+            &mixed_document,
+            root,
+            &entry(device_a),
+            &device_a["signing_verification_method"],
+            &device_a["e2ee_verification_method"],
+        )
+        .is_err());
+        assert!(remove_device_from_did_document(
+            &mixed_document,
+            root,
+            device_a["entry"]["device_id"].as_str().unwrap(),
+        )
+        .is_err());
+        assert_eq!(mixed_document, mixed_before);
+        assert_eq!(legacy_document, legacy_before);
+        assert_eq!(current, current_before);
+    }
+    assert_eq!(value, value_before);
+}
+
+#[test]
+fn current_p6_and_non_p6_writes_preserve_explicit_profiles() {
+    for profiles in [
+        json!([
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v2",
+            "anp.group.e2ee.v2",
+            "anp.group.base.v1"
+        ]),
+        json!([
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.direct.base.v1",
+            "anp.direct.e2ee.v2"
+        ]),
+        json!([
+            "anp.core.binding.v1",
+            "anp.identity.discovery.v1",
+            "anp.group.base.v1"
+        ]),
+    ] {
+        let mut value = fixture();
+        value["device_a"]["entry"]["profiles"] = profiles.clone();
+        let document = build(&value);
+        assert_eq!(
+            document["deviceManifest"]["devices"][0]["profiles"],
+            profiles
+        );
+    }
 }
 
 #[test]

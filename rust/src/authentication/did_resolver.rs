@@ -54,6 +54,29 @@ pub async fn resolve_did_document_with_options(
     verify_proof: bool,
     options: &DidResolutionOptions,
 ) -> Result<Value, AuthenticationError> {
+    resolve_did_document_with_address_policy(
+        did,
+        verify_proof,
+        options,
+        DidResolutionAddressPolicy::PublicOnly,
+    )
+    .await
+}
+
+/// Address policy for Web DID retrieval. TLS and document validation are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DidResolutionAddressPolicy {
+    PublicOnly,
+    /// Delegate final network destinations to the host, including TUN/Fake-IP.
+    HostNetwork,
+}
+
+pub async fn resolve_did_document_with_address_policy(
+    did: &str,
+    verify_proof: bool,
+    options: &DidResolutionOptions,
+    address_policy: DidResolutionAddressPolicy,
+) -> Result<Value, AuthenticationError> {
     if did.starts_with("did:wba:") {
         return resolve_did_wba_document_with_options(did, verify_proof, options).await;
     }
@@ -63,13 +86,14 @@ pub async fn resolve_did_document_with_options(
 
     #[cfg(not(feature = "network"))]
     {
+        let _ = address_policy;
         build_did_web_resolution_url(did)?;
         return Err(AuthenticationError::NetworkFailure);
     }
 
     #[cfg(feature = "network")]
     {
-        let document = super::did_web::fetch_document(did, options).await?;
+        let document = super::did_web::fetch_document(did, options, address_policy).await?;
         if verify_proof {
             verify_optional_web_proof(&document)?;
         }

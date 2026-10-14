@@ -126,6 +126,24 @@ conservatively rolled back by `reconcile_pending_v2`; a `prepared` entry waits
 for the Group Host decision and returns its persisted public request artifact;
 an `accepted` entry completes an already-started merge idempotently.
 `finalize_commit_v2` and `abort_commit_v2` are restart-safe.
+Add/Remove preparation holds the device-store operation lock and rejects an
+existing OpenMLS pending Commit with `group.e2ee.state_not_ready` before writing
+a new `preparing` journal. The original Host decision and pending Commit remain
+intact. This prevents a competing CLI/listener operation from leaving an orphan
+prepare record that keeps readiness in `Syncing`; callers must resolve the
+original operation before preparing another membership change. The existing
+restart reconciliation rules above are unchanged.
+For an orphan left by an older SDK, reconciliation may instead return
+`aborted / discarded-superseded-prepare`. This is limited to a `preparing`
+Add/Remove with the original empty v2 journal and no prepared wire artifacts.
+The scoped store must contain exactly one different finalized operation for
+the same owner/device, business and crypto group, and source/target epochs;
+its typed public journal must agree with its stored Commit and subject. The
+current binding and OpenMLS head must agree and have reached that target, with
+no live pending Commit. Only the orphan journal changes: accepted MLS state,
+membership, keys and the completed operation remain untouched. Missing,
+ambiguous, malformed or cross-scope proof fails closed; `prepared` operations
+still await an explicit Host decision. Later accepted epochs are never rewound.
 The journal stores only public operation artifacts and identifiers; it does not
 copy or export Leaf private keys, epoch secrets, or the OpenMLS database.
 

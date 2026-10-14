@@ -341,7 +341,7 @@ fn p6_v2_binding_verifies_manifest_leaf_and_extension_chain() {
             "profiles": [
                 "anp.core.binding.v1",
                 "anp.identity.discovery.v1",
-                "anp.group.base.v1",
+                "anp.group.base.v2",
                 "anp.group.e2ee.v2"
             ]
         }]

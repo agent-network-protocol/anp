@@ -26,13 +26,14 @@ const P5_DEPENDENCIES: &[&str] = &[
     PROFILE_DIRECT_BASE_V1,
     PROFILE_DIRECT_E2EE_V2,
 ];
-const P6_DEPENDENCIES: &[&str] = &[
+// Historical Messaging 1.2 bundle: accepted for reading, never for new writes.
+const P6_LEGACY_MIXED_DEPENDENCIES: &[&str] = &[
     PROFILE_CORE_BINDING_V1,
     PROFILE_IDENTITY_DISCOVERY_V1,
     PROFILE_GROUP_BASE_V1,
     PROFILE_GROUP_E2EE_V2,
 ];
-const P6_CURRENT_DEPENDENCIES: &[&str] = &[
+const P6_DEPENDENCIES: &[&str] = &[
     PROFILE_CORE_BINDING_V1,
     PROFILE_IDENTITY_DISCOVERY_V1,
     PROFILE_GROUP_BASE_V2,
@@ -180,10 +181,10 @@ pub fn validate_device_manifest(
             }
         }
         if profiles.contains(PROFILE_GROUP_E2EE_V2) {
-            if !P6_CURRENT_DEPENDENCIES.iter().all(|p| profiles.contains(p)) {
+            if !P6_DEPENDENCIES.iter().all(|p| profiles.contains(p)) {
                 require_dependencies(
                     &profiles,
-                    P6_DEPENDENCIES,
+                    P6_LEGACY_MIXED_DEPENDENCIES,
                     P6_LEGACY_DRAFT_DEPENDENCIES,
                     PROFILE_GROUP_E2EE_V2,
                 )?;
@@ -205,6 +206,7 @@ pub fn validate_device_manifest(
 }
 
 /// Return a validated device entry when it supports the requested Profile.
+/// Historical P6 dependency bundles remain readable but are not current P6 eligibility.
 pub fn find_eligible_device(
     did_document: &Value,
     device_id: &str,
@@ -225,6 +227,10 @@ pub fn find_eligible_device(
                 .profiles
                 .iter()
                 .any(|profile| profile == required_profile)
+            && (required_profile != PROFILE_GROUP_E2EE_V2
+                || P6_DEPENDENCIES
+                    .iter()
+                    .all(|required| device.profiles.iter().any(|p| p == required)))
     });
     if let Some(device) = &selected {
         let did = did_document
@@ -358,7 +364,7 @@ fn build_device_document(
         .map_err(|error| DeviceManifestError::InvalidSchema(error.to_string()))?,
     );
     let result = Value::Object(document);
-    validate_vnext_document(&result, root_key_id)?;
+    validate_document_for_write(&result, root_key_id)?;
     Ok(result)
 }
 
@@ -432,7 +438,7 @@ fn add_device(
         device_signing_verification_method,
         device_e2ee_verification_method,
     )?;
-    validate_vnext_document(&document, root_key_id)?;
+    validate_document_for_write(&document, root_key_id)?;
     Ok(document)
 }
 
@@ -478,7 +484,7 @@ fn update_device(
         device_signing_verification_method,
         device_e2ee_verification_method,
     )?;
-    validate_vnext_document(&document, root_key_id)?;
+    validate_document_for_write(&document, root_key_id)?;
     Ok(document)
 }
 
@@ -514,7 +520,7 @@ fn remove_device(
         .cloned()
         .ok_or_else(|| invalid("device_id does not exist"))?;
     remove_device_material(&mut document, &old_entry)?;
-    validate_vnext_document(&document, root_key_id)?;
+    validate_document_for_write(&document, root_key_id)?;
     Ok(document)
 }
 
@@ -523,17 +529,26 @@ fn prepare_document_for_mutation(
     root_key_id: Option<&str>,
 ) -> Result<Value, DeviceManifestError> {
     validate_vnext_document(did_document, root_key_id)?;
-    let manifest = validate_device_manifest(did_document)?
-        .ok_or_else(|| invalid("deviceManifest is required"))?;
-    for device in &manifest.devices {
-        require_canonical_write_profiles(device)?;
-    }
     let mut document = did_document.clone();
     document
         .as_object_mut()
         .ok_or(DeviceManifestError::InvalidDidDocument)?
         .remove("proof");
     Ok(document)
+}
+
+// Apply publication rules to the result, after an explicit upgrade or removal.
+fn validate_document_for_write(
+    did_document: &Value,
+    root_key_id: Option<&str>,
+) -> Result<(), DeviceManifestError> {
+    validate_vnext_document(did_document, root_key_id)?;
+    let manifest = validate_device_manifest(did_document)?
+        .ok_or_else(|| invalid("deviceManifest is required"))?;
+    for device in &manifest.devices {
+        require_canonical_write_profiles(device)?;
+    }
+    Ok(())
 }
 
 fn require_canonical_write_profiles(
@@ -555,6 +570,15 @@ fn require_canonical_write_profiles(
     }) {
         return Err(invalid(
             "legacy draft foundation profiles are read-only and cannot be published",
+        ));
+    }
+    if device.profiles.iter().any(|p| p == PROFILE_GROUP_E2EE_V2)
+        && !P6_DEPENDENCIES
+            .iter()
+            .all(|required| device.profiles.iter().any(|p| p == required))
+    {
+        return Err(invalid(
+            "P6 legacy dependency bundles are read-only; new documents require core.binding.v1, identity.discovery.v1, group.base.v2, and group.e2ee.v2",
         ));
     }
     Ok(())

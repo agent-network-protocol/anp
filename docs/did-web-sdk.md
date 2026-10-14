@@ -54,6 +54,14 @@ Production resolution verifies TLS, uses the checked DNS addresses for the actua
 connection, rejects non-public destinations, disables ambient proxy discovery,
 requires HTTP 200 and an exact document `id`, and caps the decoded response at
 1 MiB. Redirects are rejected. The existing timeout option applies to resolution.
+Rust hosts can call `resolve_did_document_with_address_policy` with
+`DidResolutionAddressPolicy::HostNetwork` when their network uses TUN/Fake-IP
+mappings. This only skips DNS address classification;
+nonempty DNS results are still pinned, production TLS verification is mandatory,
+and URL, response, document ID and proof validation remain unchanged. Existing
+resolver APIs and `DidResolutionOptions` remain unchanged and use `PublicOnly`.
+The host then owns the final network
+destination policy; the option is not a claim that Fake-IP addresses are public.
 The explicit `base_url_override` / `BaseURLOverride` option is trusted host/test
 configuration and permits a controlled local endpoint; it must never come from a
 peer document. Disabling certificate verification is permitted only with that

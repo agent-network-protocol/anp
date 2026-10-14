@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the release plan without changing or publishing anything.",
     )
+    parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Run the Go test suite before publishing; tests are off by default.",
+    )
     return parser
 
 
@@ -38,6 +43,7 @@ def build_release_command(
     plan: bool,
     version: str | None,
     remote: str,
+    run_tests: bool = False,
 ) -> list[str]:
     """Build the command for the existing coordinated release helper."""
     command = [
@@ -55,6 +61,8 @@ def build_release_command(
     ]
     if version:
         command.extend(["--version", version])
+    if run_tests:
+        command.append("--run-tests")
     return command
 
 
@@ -67,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         plan=args.plan,
         version=args.version,
         remote=args.remote,
+        run_tests=args.run_tests,
     )
     result = subprocess.run(command, cwd=repo_root, check=False)
     return result.returncode

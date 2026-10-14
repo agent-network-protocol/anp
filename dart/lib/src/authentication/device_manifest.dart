@@ -12,6 +12,7 @@ const String profileCoreBindingV1 = 'anp.core.binding.v1';
 const String profileIdentityDiscoveryV1 = 'anp.identity.discovery.v1';
 const String profileDirectBaseV1 = 'anp.direct.base.v1';
 const String profileGroupBaseV1 = 'anp.group.base.v1';
+const String profileGroupBaseV2 = 'anp.group.base.v2';
 const String profileDirectE2eeV2 = 'anp.direct.e2ee.v2';
 const String profileGroupE2eeV2 = 'anp.group.e2ee.v2';
 
@@ -19,7 +20,6 @@ const String profileGroupE2eeV2 = 'anp.group.e2ee.v2';
 const String profileCoreBindingV2 = 'anp.core.binding.v2';
 const String profileIdentityDiscoveryV2 = 'anp.identity.discovery.v2';
 const String profileDirectBaseV2 = 'anp.direct.base.v2';
-const String profileGroupBaseV2 = 'anp.group.base.v2';
 
 const Set<String> _manifestFields = {'type', 'devices'};
 const Set<String> _entryFields = {
@@ -35,6 +35,13 @@ const Set<String> _p5Dependencies = {
   profileDirectE2eeV2,
 };
 const Set<String> _p6Dependencies = {
+  profileCoreBindingV1,
+  profileIdentityDiscoveryV1,
+  profileGroupBaseV2,
+  profileGroupE2eeV2,
+};
+// Previously emitted P6 bundles remain readable without being republished.
+const Set<String> _p6LegacyMixedDependencies = {
   profileCoreBindingV1,
   profileIdentityDiscoveryV1,
   profileGroupBaseV1,
@@ -56,7 +63,6 @@ const Set<String> _legacyDraftFoundationProfiles = {
   profileCoreBindingV2,
   profileIdentityDiscoveryV2,
   profileDirectBaseV2,
-  profileGroupBaseV2,
 };
 const Set<String> _signingAlgorithms = {'Ed25519', 'P-256', 'secp256k1'};
 final RegExp _base64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
@@ -230,6 +236,7 @@ DeviceManifest? validateDeviceManifest(JsonMap didDocument) {
         _p6Dependencies,
         _p6LegacyDraftDependencies,
         'P6',
+        legacyMixed: _p6LegacyMixedDependencies,
       );
       _requireRelationship(
         didDocument,
@@ -254,7 +261,8 @@ DeviceManifest? validateDeviceManifest(JsonMap didDocument) {
   return manifest;
 }
 
-/// Returns a validated device that declares [requiredProfile].
+/// Returns a validated device that supports [requiredProfile].
+/// Legacy P6 bundles remain readable but do not establish current eligibility.
 DeviceManifestEntry? findEligibleDevice(
   JsonMap didDocument,
   String deviceId,
@@ -269,6 +277,10 @@ DeviceManifestEntry? findEligibleDevice(
   for (final device in manifest.devices) {
     if (device.deviceId == deviceId &&
         device.profiles.contains(requiredProfile)) {
+      if (requiredProfile == profileGroupE2eeV2 &&
+          !device.profiles.toSet().containsAll(_p6Dependencies)) {
+        return null;
+      }
       return device;
     }
   }
@@ -326,7 +338,7 @@ JsonMap buildVNextDidDocument(
       'devices': [device.toJson()],
     },
   });
-  _validateVNextDocument(document, rootKeyId);
+  _validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -363,7 +375,7 @@ JsonMap addDeviceToDidDocument(
     deviceSigningVerificationMethod,
     deviceE2eeVerificationMethod,
   );
-  _validateVNextDocument(document, rootKeyId);
+  _validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -401,7 +413,7 @@ JsonMap updateDeviceInDidDocument(
     deviceSigningVerificationMethod,
     deviceE2eeVerificationMethod,
   );
-  _validateVNextDocument(document, rootKeyId);
+  _validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
@@ -429,19 +441,12 @@ JsonMap removeDeviceFromDidDocument(
     throw const AnpAuthenticationException('device_id does not exist');
   }
   _removeDeviceMaterial(document, oldEntry);
-  _validateVNextDocument(document, rootKeyId);
+  _validateDocumentForWrite(document, rootKeyId);
   return document;
 }
 
 JsonMap _prepareDocumentForMutation(JsonMap didDocument, String rootKeyId) {
   _validateVNextDocument(didDocument, rootKeyId);
-  final manifest = validateDeviceManifest(didDocument);
-  if (manifest == null) {
-    throw const AnpAuthenticationException('deviceManifest is required');
-  }
-  for (final device in manifest.devices) {
-    _requireCanonicalWriteProfiles(device);
-  }
   final document = _deepCloneJsonMap(didDocument);
   // A mutation invalidates any existing root proof. The caller must sign the
   // returned unsigned document instead of accidentally publishing stale proof.
@@ -449,10 +454,39 @@ JsonMap _prepareDocumentForMutation(JsonMap didDocument, String rootKeyId) {
   return document;
 }
 
+// Validate the result so legacy inputs can be explicitly upgraded or removed.
+void _validateDocumentForWrite(JsonMap document, String rootKeyId) {
+  _validateVNextDocument(document, rootKeyId);
+  final manifest = validateDeviceManifest(document);
+  if (manifest == null) {
+    throw const AnpAuthenticationException('deviceManifest is required');
+  }
+  for (final device in manifest.devices) {
+    _requireCanonicalWriteProfiles(device);
+  }
+}
+
 void _requireCanonicalWriteProfiles(DeviceManifestEntry device) {
+  final profiles = device.profiles.toSet();
+  if (profiles.contains(profileGroupE2eeV2) &&
+      !profiles.containsAll(_p6Dependencies)) {
+    throw const AnpAuthenticationException(
+      'P6 legacy dependency bundles are read-only; new documents require '
+      'core.binding.v1, identity.discovery.v1, group.base.v2, and group.e2ee.v2',
+    );
+  }
   if (device.profiles.any(_legacyDraftFoundationProfiles.contains)) {
     throw const AnpAuthenticationException(
       'legacy draft foundation profiles are read-only and cannot be published',
+    );
+  }
+  if (profiles.contains(profileGroupBaseV2) &&
+      !profiles.containsAll({
+        profileCoreBindingV1,
+        profileIdentityDiscoveryV1,
+      })) {
+    throw const AnpAuthenticationException(
+      'group.base.v2 requires core.binding.v1 and identity.discovery.v1',
     );
   }
 }
@@ -1018,9 +1052,12 @@ void _requireDependencies(
   Set<String> actual,
   Set<String> required,
   Set<String> legacyDraft,
-  String profileName,
-) {
-  if (!actual.containsAll(required) && !actual.containsAll(legacyDraft)) {
+  String profileName, {
+  Set<String>? legacyMixed,
+}) {
+  if (!actual.containsAll(required) &&
+      !actual.containsAll(legacyDraft) &&
+      !(legacyMixed != null && actual.containsAll(legacyMixed))) {
     throw AnpAuthenticationException(
       '$profileName device profile dependencies are incomplete',
     );

@@ -153,39 +153,28 @@ pub(crate) fn is_public_address(ip: std::net::IpAddr) -> bool {
 }
 
 #[cfg(all(test, feature = "network"))]
-mod tests {
-    use super::is_public_address;
+#[path = "did_web_tests.rs"]
+mod tests;
 
-    #[test]
-    fn web_public_addresses() {
-        for address in [
-            "127.0.0.1",
-            "10.0.0.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "192.168.0.1",
-            "198.18.0.1",
-            "224.0.0.1",
-            "::1",
-            "fc00::1",
-            "fe80::1",
-            "::ffff:127.0.0.1",
-            "2002:7f00:1::",
-            "2001:db8::1",
-            "3fff::1",
-        ] {
-            assert!(!is_public_address(address.parse().unwrap()), "{address}");
-        }
-        for address in ["8.8.8.8", "2606:4700:4700::1111"] {
-            assert!(is_public_address(address.parse().unwrap()), "{address}");
-        }
+#[cfg(feature = "network")]
+fn check_resolution_addresses(
+    addresses: &[std::net::SocketAddr],
+    address_policy: super::did_resolver::DidResolutionAddressPolicy,
+) -> Result<(), AuthenticationError> {
+    if addresses.is_empty()
+        || (address_policy == super::did_resolver::DidResolutionAddressPolicy::PublicOnly
+            && addresses.iter().any(|a| !is_public_address(a.ip())))
+    {
+        return Err(AuthenticationError::NetworkFailure);
     }
+    Ok(())
 }
 
 #[cfg(feature = "network")]
 pub(crate) async fn fetch_document(
     did: &str,
     options: &super::did_wba::DidResolutionOptions,
+    address_policy: super::did_resolver::DidResolutionAddressPolicy,
 ) -> Result<serde_json::Value, AuthenticationError> {
     use serde_json::Value;
     use std::{net::SocketAddr, time::Duration};
@@ -226,10 +215,8 @@ pub(crate) async fn fetch_document(
                     .await
                     .map_err(|_| AuthenticationError::NetworkFailure)?
                     .collect();
-            if addresses.is_empty() || addresses.iter().any(|a| !is_public_address(a.ip())) {
-                return Err(AuthenticationError::NetworkFailure);
-            }
-            // Pin the checked DNS result so the connection cannot re-resolve it.
+            check_resolution_addresses(&addresses, address_policy)?;
+            // Pin this DNS result even when the host allows TUN/Fake-IP mappings.
             builder = builder.resolve_to_addrs(host, &addresses);
         }
         let client = builder
