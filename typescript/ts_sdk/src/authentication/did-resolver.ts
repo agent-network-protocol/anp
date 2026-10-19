@@ -1,10 +1,8 @@
 import { AuthenticationError, NetworkError } from '../errors/index.js';
 import { verifyW3cProof } from '../proof/proof.js';
 import type { DidDocument, DidResolutionOptions } from './types.js';
-import {
-  findVerificationMethod,
-  resolveDidWbaDocument,
-} from './did-wba.js';
+import { findVerificationMethod, resolveDidWbaDocument } from './did-wba.js';
+import { resolveBidDocument } from './did-bid.js';
 import { extractPublicKey } from './verification-methods.js';
 
 export async function resolveDidDocument(
@@ -14,6 +12,11 @@ export async function resolveDidDocument(
 ): Promise<DidDocument> {
   if (did.startsWith('did:wba:')) {
     return resolveDidWbaDocument(did, verifyProof, options);
+  }
+  if (did.startsWith('did:bid:')) {
+    // did:bid documents carry no self-certifying proof; trust rests on the
+    // chain/parser. `verifyProof` is therefore not applicable here.
+    return resolveBidDocument(did);
   }
   if (!did.startsWith('did:web:')) {
     throw new AuthenticationError('Unsupported DID method');

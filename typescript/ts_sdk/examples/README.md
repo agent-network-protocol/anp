@@ -49,3 +49,16 @@ uv run python typescript/ts_sdk/examples/python_to_ts_did_wba_client.py
 ```
 
 The examples generate local demo TS DID files under `examples/.generated/`.
+
+## did:bid (Xinghuo BIF)
+
+Resolve a real `did:bid` document, and optionally sign with a pre-provisioned
+identity:
+
+```bash
+npm run build
+cp .env.example .env   # set ANP_BID_PARSER_URL; add ANP_BID_TEST_PRIVATE_KEY to sign
+node --env-file=.env examples/did-bid.mjs
+```
+
+See [docs/did-bid.md](../docs/did-bid.md) for configuration and the trust model.

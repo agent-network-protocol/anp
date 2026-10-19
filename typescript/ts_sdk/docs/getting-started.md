@@ -139,6 +139,26 @@ const binding = await verifyBinding('alice.example.com', {
 });
 ```
 
+## 6. Use a did:bid (Xinghuo BIF) identity
+
+```ts
+import {
+  bidPrivateKeyToPem,
+  configureBid,
+  createLegacyAuthHeader,
+  resolveDidDocument,
+} from '@awiki/anp-typescript-sdk';
+
+configureBid({ parserUrl: 'https://xinghuoid.zetrix.com/bid/' });
+
+const document = await resolveDidDocument('did:bid:ef...');
+const pem = await bidPrivateKeyToPem('priSPK...');
+const header = createLegacyAuthHeader(document, 'api.example.com', pem);
+```
+
+ED25519 only, pre-provisioned identity, read-only (no chain writes). See
+[did:bid Integration](./did-bid.md).
+
 ## Examples
 
 Build the SDK first, then run:
@@ -148,6 +168,7 @@ npm run build
 node examples/authentication.mjs
 node examples/proof.mjs
 node examples/wns.mjs
+node --env-file=.env examples/did-bid.mjs   # needs ANP_BID_PARSER_URL in .env
 ```
 
 ## Next Steps
@@ -155,3 +176,4 @@ node examples/wns.mjs
 - Read the [API Reference](./api-reference.md)
 - Review [Configuration](./configuration.md)
 - Review [Error Handling](./errors.md)
+- Review [did:bid Integration](./did-bid.md)
