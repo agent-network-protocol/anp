@@ -120,3 +120,22 @@ const im = createAwikiImClient({
 Use HTTPS URLs in production. Keep `statePath` stable across restarts. It is plaintext JSON protected by mode `0600`, not at-rest encryption: the same OS account and backup readers can recover private keys and access tokens. Use disk encryption and encrypted, access-controlled backups; credential-vault integration is deferred. Changing `userServiceDomain` or `messageServiceDid` while reusing an existing state file fails with a conflict instead of silently reusing the identity under a different deployment.
 
 The first version owns one Legacy single-device identity. It does not expose configuration for Manifest registration, multiple devices, end-to-end encryption, real-time subscriptions, or group creation.
+
+## did:bid (Xinghuo BIF)
+
+Call `configureBid()` once at startup before resolving `did:bid` documents.
+
+```ts
+import { configureBid } from '@awiki/anp-typescript-sdk';
+
+configureBid({
+  parserUrl: 'https://xinghuoid.zetrix.com/bid/', // resolution service (required)
+  // directNodeUrl defaults to the placeholder 'https://example.invalid'
+});
+```
+
+- `parserUrl` — BID resolution service base URL. With it set, resolution goes
+  through the parser.
+- `directNodeUrl` — optional; only satisfies the BID SDK `connect()` check. When
+  `parserUrl` is set it is never contacted, so a placeholder is safe (it must
+  still be a valid absolute URL).

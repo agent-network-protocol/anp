@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './verification-methods.js';
 export * from './did-wba.js';
 export * from './did-resolver.js';
+export * from './did-bid.js';
 export * from './http-signatures.js';
 export * from './did-wba-authenticator.js';
 export * from './did-wba-verifier.js';
@@ -26,9 +27,7 @@ export {
   extractSignatureMetadata as parseSignatureMetadata,
 } from './http-signatures.js';
 
-export {
-  DIDWbaAuthHeader as DidAuthHeaders,
-} from './did-wba-authenticator.js';
+export { DIDWbaAuthHeader as DidAuthHeaders } from './did-wba-authenticator.js';
 
 export {
   DidWbaVerifier as RequestVerifier,
@@ -51,6 +50,7 @@ import {
   verifyAuthJsonSignature,
 } from './did-wba.js';
 import { resolveDidDocument } from './did-resolver.js';
+import * as bid from './did-bid.js';
 import {
   buildContentDigest,
   verifyContentDigest,
@@ -95,6 +95,7 @@ export const authentication = {
   didDocuments,
   legacyAuth,
   httpSignatures,
+  bid,
   deviceManifest,
   federation: {
     verifyRequest: verifyFederatedHttpRequest,

@@ -2,10 +2,11 @@ import { SignJWT, importPKCS8, importSPKI, jwtVerify } from 'jose';
 import {
   extractAuthHeaderParts,
   isAuthenticationAuthorized,
-  resolveDidWbaDocument,
   validateDidDocumentBinding,
   verifyAuthHeaderSignature,
 } from './did-wba.js';
+import { resolveDidDocument as resolveAnyDidDocument } from './did-resolver.js';
+import { isBidDid } from './did-bid.js';
 import { extractSignatureMetadata, verifyHttpMessageSignature } from './http-signatures.js';
 import type { DidDocument, DidResolutionOptions, DidResolver } from './types.js';
 
@@ -300,7 +301,7 @@ export class DidWbaVerifier {
     });
 
     const did = result.payload.sub;
-    if (!did || !did.startsWith('did:wba:')) {
+    if (!did || !(did.startsWith('did:wba:') || did.startsWith('did:web:') || isBidDid(did))) {
       throw new DidWbaVerifierError('Invalid DID format', 401);
     }
 
@@ -402,7 +403,7 @@ export class DidWbaVerifier {
     try {
       const resolved = this.config.didResolver
         ? await this.config.didResolver(did)
-        : await resolveDidWbaDocument(did, false, this.config.didResolutionOptions);
+        : await resolveAnyDidDocument(did, false, this.config.didResolutionOptions);
       if (!resolved) {
         throw this.challengeError('Failed to resolve DID document', 401, domain, 'invalid_did');
       }

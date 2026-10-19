@@ -22,6 +22,23 @@ This draft documents the stable public API for the current TypeScript SDK.
 | `parseSignatureMetadata()` | Parse `Signature-Input` / `Signature` metadata |
 | `verifySignatureHeaders()` | Verify HTTP Message Signatures |
 
+### did:bid exports (part of `authentication`)
+
+See [did:bid Integration](./did-bid.md).
+
+| Export | Description |
+|---|---|
+| `configureBid(config)` | Configure parser-based did:bid resolution once at startup |
+| `resolveBidDocument(did)` | Resolve a did:bid document and map it to the SDK shape |
+| `mapBidDocumentToDidDocument(doc)` | Map a raw BID document to the SDK DID document |
+| `bidPrivateKeyToPem(key)` | Starfire private key → SDK Ed25519 PEM |
+| `bidPrivateKeyToMaterial(key)` / `bidPublicKeyToMaterial(key)` | Starfire key → `{ type, bytes }` |
+| `isEd25519StarfirePublicKey(key)` | Detect the ED25519 starfire encoding |
+| `DEFAULT_BID_DIRECT_NODE_URL` | Placeholder direct node URL used by default |
+| `resetBidIntegration()` | Reset cached BID SDK state (tests) |
+
+`authentication.bid` exposes the same functions as a namespace.
+
 ### Proof aliases
 
 | Export | Description |

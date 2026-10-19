@@ -129,6 +129,11 @@ Low-level Rust-aligned names are still exported for compatibility.
 - Generate and verify legacy `DIDWba` authorization headers
 - Generate and verify HTTP Message Signatures
 - Verify requests with `DidWbaVerifier`
+- Resolve `did:bid` (Xinghuo BIF) documents and sign with a pre-provisioned `did:bid` identity — see [docs/did-bid.md](docs/did-bid.md)
+
+`did:bid` is an optional DID-method extension of this module. It requires the
+`@caict-bif/bid-typescript-sdk` package and a BID parser service URL, supports
+ED25519 only, and never writes to the chain.
 
 ### proof
 
