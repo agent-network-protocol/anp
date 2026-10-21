@@ -1,0 +1,70 @@
+name: Bug Report
+description: Report a bug you encountered during use
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please choose a title that clearly describes your issue to help developers resolve it effectively.
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug Details
+
+        Describe the bug you encountered. You may attach screenshots, relevant code, stack traces, etc., to help developers track down the issue.
+
+  - type: textarea
+    id: about_info
+    attributes:
+      label: Error Information
+      description: Error messages you encountered
+    validations:
+      required: true
+
+  - type: textarea
+    id: about_code
+    attributes:
+      label: Related Code
+      description: The relevant code where the error occurred (please be sure to hide any sensitive information)
+      render: python
+    validations:
+      required: false
+
+  - type: textarea
+    id: stacktrace
+    attributes:
+      label: Stack Trace
+      description: Paste the generated stack trace here to help developers locate the bug.
+      render: shell
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python Version
+      description: The version of Python you are currently using
+      placeholder: e.g., 0.3.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime_environment
+    attributes:
+      label: Runtime Environment
+      description: The environment in which the program is running
+      options:
+        - Windows
+        - MacOS
+        - Linux
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: revision
+    attributes:
+      label: Final Step
+      description: Review your answers
+      options:
+        - label: I believe the above description is detailed enough to allow developers to reproduce the issue. If my issue does not meet the above requirements, it may be **closed unconditionally**.
+          required: true
