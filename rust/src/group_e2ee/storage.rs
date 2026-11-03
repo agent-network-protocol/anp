@@ -63,7 +63,10 @@ impl StateLock {
             match file.try_lock_exclusive() {
                 Ok(()) => break,
                 Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
+                    if (error.kind() == std::io::ErrorKind::WouldBlock
+                        || (error.raw_os_error().is_some()
+                            && error.raw_os_error()
+                                == fs2::lock_contended_error().raw_os_error()))
                         && started.elapsed() < wait_timeout =>
                 {
                     thread::sleep(STATE_LOCK_RETRY_DELAY);
