@@ -6,6 +6,7 @@ pub mod did_wba_authenticator;
 pub mod did_wba_verifier;
 pub mod did_web;
 pub mod federation;
+pub mod http_auth_security;
 pub mod http_signatures;
 pub mod verification_methods;
 
@@ -54,15 +55,24 @@ pub use did_wba_verifier::{
     DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError, VerificationSuccess,
 };
 pub use federation::{
-    verify_federated_http_request, FederatedVerificationError, FederatedVerificationOptions,
+    verify_federated_http_request, verify_federated_http_request_with_security,
+    FederatedHttpSecurity, FederatedVerificationError, FederatedVerificationOptions,
     FederatedVerificationResult,
+};
+pub use http_auth_security::{
+    authentication_origin, HttpReplayContext, HttpReplayStore, HttpReplayUnavailable,
+    HttpSignaturePolicy, MemoryHttpReplayStore,
 };
 pub use http_signatures::{
     build_content_digest, complete_http_signature_headers, extract_signature_metadata,
     generate_http_signature_headers, generate_http_signature_headers_with_kid,
-    prepare_http_signature_headers, verify_content_digest, verify_http_message_signature,
-    HttpSignatureError, HttpSignatureOptions, PreparedHttpSignature, SignatureMetadata,
+    http_signature_replay_context, prepare_http_signature_headers, verify_content_digest,
+    verify_http_message_signature, verify_http_message_signature_with_policy, HttpSignatureError,
+    HttpSignatureOptions, PreparedHttpSignature, SignatureMetadata,
 };
+
+#[cfg(test)]
+mod http_auth_security_tests;
 pub use verification_methods::{
     create_verification_method, extract_public_key, VerificationMethod, VerificationMethodError,
 };

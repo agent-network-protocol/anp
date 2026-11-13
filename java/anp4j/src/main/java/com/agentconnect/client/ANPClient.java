@@ -14,9 +14,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -46,63 +43,44 @@ import java.util.concurrent.CompletableFuture;
 public class ANPClient {
     
     private static final Logger logger = LoggerFactory.getLogger(ANPClient.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper objectMapper = new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION).enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     
     private final DIDWbaAuthHeader authHeader;
-    private final HttpClient httpClient;
-    private final Duration timeout;
-    
-    /**
-     * Create an ANP client without DID authentication (for local testing).
-     */
-    public ANPClient() {
-        this.authHeader = null;
-        this.timeout = DEFAULT_TIMEOUT;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(timeout)
-            .build();
+    private final com.agentconnect.authentication.PublicHttpTransport.Transport transport;
+    private final java.util.Set<String> authenticatedOrigins;
+    private final URI trustedBase;
+
+    public ANPClient() { this((DIDWbaAuthHeader)null,DEFAULT_TIMEOUT); }
+    public ANPClient(String didDocumentPath,String privateKeyPath) { this(didDocumentPath,privateKeyPath,DEFAULT_TIMEOUT); }
+    public ANPClient(String didDocumentPath,String privateKeyPath,Duration timeout) { this(new DIDWbaAuthHeader(didDocumentPath,privateKeyPath),timeout); }
+    public ANPClient(DIDWbaAuthHeader authHeader) { this(authHeader,DEFAULT_TIMEOUT); }
+    public ANPClient(DIDWbaAuthHeader authHeader,Duration timeout) { this(authHeader,timeout,java.util.Set.of(),null,null); }
+
+    /** Host-only policy: discovery is unsigned unless an origin is approved. */
+    public ANPClient(DIDWbaAuthHeader authHeader,Duration timeout,java.util.Set<String> authenticatedOrigins,
+            URI trustedBase,com.agentconnect.authentication.PublicHttpTransport.Transport transport) {
+        this.authHeader=authHeader;this.trustedBase=trustedBase;
+        this.authenticatedOrigins=authenticatedOrigins.stream().map(URI::create)
+            .map(com.agentconnect.authentication.PublicNetworkPolicy::origin).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        this.transport=transport!=null?transport:new com.agentconnect.authentication.PublicHttpTransport(trustedBase,timeout).asTransport();
     }
-    
-    /**
-     * Create an ANP client with DID authentication.
-     * 
-     * @param didDocumentPath Path to the DID document
-     * @param privateKeyPath Path to the private key
-     */
-    public ANPClient(String didDocumentPath, String privateKeyPath) {
-        this(didDocumentPath, privateKeyPath, DEFAULT_TIMEOUT);
+
+    private Map<String,Object> requestJson(String raw,String method,byte[] body) throws IOException {
+        URI uri=URI.create(raw);
+        com.agentconnect.authentication.PublicNetworkPolicy.validate(uri,trustedBase);
+        String origin=com.agentconnect.authentication.PublicNetworkPolicy.origin(uri);
+        boolean authenticate=authenticatedOrigins.contains(origin);
+        if(authenticate&&authHeader==null)throw new SecurityException("Approved authenticated origin requires credentials");
+        Map<String,String> headers=new HashMap<>();
+        if(body.length>0)headers.put("Content-Type","application/json");
+        if(authenticate)headers.putAll(authHeader.getAuthHeader(raw));
+        var response=transport.request(uri,method,headers,body);
+        if(response.status()!=200)throw new HttpException(response.status(),"Request rejected",raw);
+        if(authenticate)authHeader.updateToken(raw,response.authenticationHeaders());
+        return objectMapper.readValue(response.body(),new TypeReference<Map<String,Object>>(){});
     }
-    
-    /**
-     * Create an ANP client with custom timeout.
-     */
-    public ANPClient(String didDocumentPath, String privateKeyPath, Duration timeout) {
-        this.authHeader = new DIDWbaAuthHeader(didDocumentPath, privateKeyPath);
-        this.timeout = timeout;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(timeout)
-            .build();
-    }
-    
-    /**
-     * Create an ANP client with existing auth header.
-     */
-    public ANPClient(DIDWbaAuthHeader authHeader) {
-        this(authHeader, DEFAULT_TIMEOUT);
-    }
-    
-    /**
-     * Create an ANP client with existing auth header and custom timeout.
-     */
-    public ANPClient(DIDWbaAuthHeader authHeader, Duration timeout) {
-        this.authHeader = authHeader;
-        this.timeout = timeout;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(timeout)
-            .build();
-    }
-    
+
     /**
      * Fetch a URL with authentication.
      * 
@@ -113,48 +91,20 @@ public class ANPClient {
     public Map<String, Object> fetch(String url) throws IOException, InterruptedException {
         logger.debug("Fetching URL: {}", url);
         
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(timeout)
-            .GET();
-        
-        if (authHeader != null) {
-            Map<String, String> headers = authHeader.getAuthHeader(url);
-            headers.forEach(requestBuilder::header);
-        }
-        requestBuilder.header("Accept", "application/json");
-        
-        HttpRequest request = requestBuilder.build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        
-        if (authHeader != null) {
-            Map<String, String> responseHeaders = new HashMap<>();
-            response.headers().map().forEach((k, v) -> {
-                if (!v.isEmpty()) {
-                    responseHeaders.put(k.toLowerCase(), v.get(0));
-                }
-            });
-            authHeader.updateToken(url, responseHeaders);
-        }
-        
-        if (response.statusCode() >= 400) {
-            throw new HttpException(response.statusCode(), response.body(), url);
-        }
-        
-        return objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+        return requestJson(url,"GET",new byte[0]);
     }
     
     /**
      * Fetch a URL asynchronously.
      */
     public CompletableFuture<Map<String, Object>> fetchAsync(String url) {
-        return CompletableFuture.supplyAsync(() -> {
+        return com.agentconnect.authentication.PublicHttpTransport.async(() -> {
             try {
                 return fetch(url);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        });
+        }, DEFAULT_TIMEOUT);
     }
     
     /**
@@ -174,40 +124,8 @@ public class ANPClient {
         JsonRpc.Request rpcRequest = JsonRpc.Request.create(method, params);
         String requestBody = objectMapper.writeValueAsString(rpcRequest);
         
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-            .uri(URI.create(serverUrl))
-            .timeout(timeout)
-            .POST(HttpRequest.BodyPublishers.ofString(requestBody));
-        
-        if (authHeader != null) {
-            Map<String, String> headers = authHeader.getAuthHeader(serverUrl);
-            headers.forEach(requestBuilder::header);
-        }
-        requestBuilder.header("Content-Type", "application/json");
-        requestBuilder.header("Accept", "application/json");
-        
-        HttpRequest request = requestBuilder.build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        
-        if (authHeader != null) {
-            Map<String, String> responseHeaders = new HashMap<>();
-            response.headers().map().forEach((k, v) -> {
-                if (!v.isEmpty()) {
-                    responseHeaders.put(k.toLowerCase(), v.get(0));
-                }
-            });
-            authHeader.updateToken(serverUrl, responseHeaders);
-        }
-        
-        if (response.statusCode() >= 400) {
-            throw new HttpException(response.statusCode(), response.body(), serverUrl);
-        }
-        
-        Map<String, Object> responseJson = objectMapper.readValue(
-            response.body(), 
-            new TypeReference<Map<String, Object>>() {}
-        );
-        
+        Map<String,Object> responseJson=requestJson(serverUrl,"POST",requestBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
         if (responseJson.containsKey("error") && responseJson.get("error") != null) {
             @SuppressWarnings("unchecked")
             Map<String, Object> errorMap = (Map<String, Object>) responseJson.get("error");
@@ -224,13 +142,13 @@ public class ANPClient {
      * Call JSON-RPC asynchronously.
      */
     public CompletableFuture<Object> callJsonRpcAsync(String serverUrl, String method, Map<String, Object> params) {
-        return CompletableFuture.supplyAsync(() -> {
+        return com.agentconnect.authentication.PublicHttpTransport.async(() -> {
             try {
                 return callJsonRpc(serverUrl, method, params);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        });
+        }, DEFAULT_TIMEOUT);
     }
     
     /**

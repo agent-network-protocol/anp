@@ -19,7 +19,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from ...authentication import DIDWbaAuthHeader
 from ...anp_crawler.anp_client import ANPClient
@@ -86,19 +86,24 @@ class RemoteAgent:
     description: str
     methods: tuple[Method, ...]
     _auth: DIDWbaAuthHeader
+    _authenticated_origins: tuple[str, ...] = ()
 
     @classmethod
-    async def discover(cls, ad_url: str, auth: DIDWbaAuthHeader) -> RemoteAgent:
+    async def discover(
+        cls, ad_url: str, auth: DIDWbaAuthHeader, *, authenticated_origins: Iterable[str] = (),
+    ) -> RemoteAgent:
         """
         Discover agent from AD URL.
 
         Uses anp_crawler.ANPClient for authenticated HTTP requests.
         Fail Fast: Raises if no methods found.
         """
-        # Create ANPClient from auth header
+        approved_origins = tuple(authenticated_origins)
+        # Discovery alone grants no permission to send or adopt credentials.
         client = ANPClient(
             did_document_path=auth.did_document_path,
             private_key_path=auth.private_key_path,
+            authenticated_origins=approved_origins,
         )
 
         # Fetch AD document
@@ -179,6 +184,7 @@ class RemoteAgent:
             ),
             methods=methods,
             _auth=auth,
+            _authenticated_origins=approved_origins,
         )
 
     @property
@@ -234,6 +240,7 @@ class RemoteAgent:
         client = ANPClient(
             did_document_path=self._auth.did_document_path,
             private_key_path=self._auth.private_key_path,
+            authenticated_origins=self._authenticated_origins,
         )
 
         # Use ANPClient's call_jsonrpc method

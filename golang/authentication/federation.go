@@ -4,12 +4,43 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// FederatedHTTPSecurity supplies trusted receiver policy and atomic replay storage.
+// A shared store is required for clustered hosts. Configure scope from the host,
+// not from the incoming document or a peer-supplied original-request description.
+type FederatedHTTPSecurity struct {
+	Policy        HTTPSignaturePolicy
+	Now           int64
+	VerifierScope string
+	ReplayStore   HTTPReplayStore
+}
+
+var federationHTTPReplayStore = NewMemoryHTTPReplayStore()
 
 // VerifyFederatedHTTPRequest verifies a service-signed ANP request on behalf of a sender DID.
 func VerifyFederatedHTTPRequest(ctx context.Context, senderDID string, requestMethod string, requestURL string, headers map[string]string, body []byte, options FederatedVerificationOptions) (FederatedVerificationResult, error) {
+	scope, err := AuthenticationOrigin(requestURL)
+	if err != nil {
+		return FederatedVerificationResult{}, err
+	}
+	return VerifyFederatedHTTPRequestWithSecurity(ctx, senderDID, requestMethod, requestURL, headers, body, options, FederatedHTTPSecurity{Policy: DefaultHTTPSignaturePolicy(), Now: time.Now().Unix(), VerifierScope: scope, ReplayStore: federationHTTPReplayStore})
+}
+
+// VerifyFederatedHTTPRequestWithSecurity enforces signature/time/identity and shared replay.
+func VerifyFederatedHTTPRequestWithSecurity(ctx context.Context, senderDID, requestMethod, requestURL string, headers map[string]string, body []byte, options FederatedVerificationOptions, security FederatedHTTPSecurity) (FederatedVerificationResult, error) {
+	if security.Policy.CryptoOnly || security.ReplayStore == nil {
+		return FederatedVerificationResult{}, fmt.Errorf("full federated authentication requires time and replay protection")
+	}
+	preflight, err := ExtractSignatureMetadata(headers)
+	if err != nil {
+		return FederatedVerificationResult{}, err
+	}
+	if _, err := security.Policy.Validate(preflight.Created, preflight.Expires, security.Now); err != nil {
+		return FederatedVerificationResult{}, err
+	}
 	senderDocument := options.SenderDidDocument
-	var err error
 	if senderDocument == nil {
 		senderDocument, err = ResolveDidDocumentWithOptions(ctx, senderDID, options.VerifySenderDidProof, options.DidResolutionOptions)
 		if err != nil {
@@ -47,9 +78,20 @@ func VerifyFederatedHTTPRequest(ctx context.Context, senderDID string, requestMe
 	if !IsAuthenticationAuthorized(serviceDocument, metadata.KeyID) {
 		return FederatedVerificationResult{}, fmt.Errorf("verification method is not authorized for authentication")
 	}
-	verified, err := VerifyHTTPMessageSignature(serviceDocument, requestMethod, requestURL, headers, body)
+	verified, err := VerifyHTTPMessageSignatureWithPolicy(serviceDocument, requestMethod, requestURL, headers, body, security.Policy, security.Now)
 	if err != nil {
 		return FederatedVerificationResult{}, err
+	}
+	item, err := HTTPReplayContextForSignature(verified, requestMethod, requestURL, headers, security.VerifierScope, security.Policy)
+	if err != nil {
+		return FederatedVerificationResult{}, err
+	}
+	first, err := security.ReplayStore.ConsumeOnce(ctx, item)
+	if err != nil {
+		return FederatedVerificationResult{}, fmt.Errorf("HTTP replay protection unavailable")
+	}
+	if !first {
+		return FederatedVerificationResult{}, fmt.Errorf("HTTP signature replay detected")
 	}
 	return FederatedVerificationResult{SenderDID: senderDID, ServiceDID: serviceDID, ServiceID: stringValue(service["id"]), SignatureMetadata: verified}, nil
 }

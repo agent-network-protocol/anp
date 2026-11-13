@@ -1,14 +1,14 @@
 package wns
 
 import (
+	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/agent-network-protocol/anp/golang/internal/httpsecurity"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // ResolveHandle resolves a handle over HTTPS.
@@ -28,7 +28,19 @@ func ResolveHandleWithOptions(ctx context.Context, handle string, options Resolv
 	if options.BaseURLOverride != "" {
 		resolutionURL = strings.TrimRight(options.BaseURLOverride, "/") + "/.well-known/handle/" + localPart
 	}
-	client := newWNSHTTPClient(options)
+	trusted := options.BaseURLOverride != ""
+	if err := httpsecurity.ValidateURL(resolutionURL, trusted); err != nil {
+		return HandleResolutionDocument{}, err
+	}
+	client, err := httpsecurity.NewClient(options.TimeoutSeconds, options.VerifySSL == nil || *options.VerifySSL, trusted)
+	if err != nil {
+		return HandleResolutionDocument{}, err
+	}
+	defer client.CloseIdleConnections()
+	return resolveHandleResponse(ctx, resolutionURL, normalized, client)
+}
+
+func resolveHandleResponse(ctx context.Context, resolutionURL, normalized string, client *http.Client) (HandleResolutionDocument, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, resolutionURL, nil)
 	if err != nil {
 		return HandleResolutionDocument{}, err
@@ -49,11 +61,14 @@ func ResolveHandleWithOptions(ctx context.Context, handle string, options Resolv
 		return HandleResolutionDocument{}, fmt.Errorf("handle '%s' has been permanently revoked", normalized)
 	}
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return HandleResolutionDocument{}, fmt.Errorf("unexpected status %d resolving '%s': %s", response.StatusCode, normalized, string(body))
+		return HandleResolutionDocument{}, fmt.Errorf("unexpected status %d resolving '%s'", response.StatusCode, normalized)
+	}
+	data, err := httpsecurity.ReadBody(response, httpsecurity.MaxDocumentBytes)
+	if err != nil {
+		return HandleResolutionDocument{}, err
 	}
 	var document HandleResolutionDocument
-	if err := authenticationDecodeJSON(response.Body, &document); err != nil {
+	if err := authenticationDecodeJSON(bytes.NewReader(data), &document); err != nil {
 		return HandleResolutionDocument{}, err
 	}
 	if document.BindingGeneration == "" {
@@ -75,22 +90,16 @@ func ResolveHandleFromURI(ctx context.Context, uri string) (HandleResolutionDocu
 	return ResolveHandle(ctx, parsed.Handle)
 }
 
-func newWNSHTTPClient(options ResolveHandleOptions) *http.Client {
-	timeout := 10 * time.Second
-	if options.TimeoutSeconds > 0 {
-		timeout = time.Duration(options.TimeoutSeconds * float64(time.Second))
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if options.VerifySSL != nil && !*options.VerifySSL {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	return &http.Client{Timeout: timeout, Transport: transport}
-}
-
 func authenticationDecodeJSON(reader io.Reader, target any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return fmt.Errorf("trailing WNS response data")
+	}
+	return nil
 }
 
 func dropInvalidProfileProjection(document *HandleResolutionDocument) {

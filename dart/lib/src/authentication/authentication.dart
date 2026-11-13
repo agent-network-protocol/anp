@@ -1,3 +1,5 @@
+export 'did_resource.dart';
+export 'http_auth_security.dart';
 export 'types.dart';
 export 'verification_methods.dart';
 export 'did_wba.dart';

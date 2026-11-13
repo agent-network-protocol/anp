@@ -111,49 +111,52 @@ async def fetch_did_web_document(
         raise ValueError("Invalid DID Web resolution timeout")
     if not base_url_override and not verify_ssl:
         raise ValueError("DID Web production resolution requires TLS verification")
-    resolver = None if base_url_override else _PublicResolver()
-    if base_url_override:
-        override = urlsplit(base_url_override)
-        if (
-            override.scheme not in {"http", "https"}
-            or not override.hostname
-            or override.username is not None
-            or override.password is not None
-            or override.query
-            or override.fragment
-        ):
-            raise ValueError("Invalid trusted resolution override")
-        url = base_url_override.rstrip("/") + urlsplit(url).path
-    connector = aiohttp.TCPConnector(resolver=resolver)
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout_seconds),
-            connector=connector,
-            auto_decompress=True,
-            trust_env=False,
-        ) as session:
-            async with session.get(
-                url,
-                headers=headers,
-                ssl=verify_ssl,
-                allow_redirects=False,
-            ) as response:
-                if response.status != 200:
-                    raise ValueError("DID Web resolution requires HTTP 200")
-                if (
-                    response.content_length
-                    and response.content_length > MAX_DID_DOCUMENT_BYTES
-                ):
-                    raise ValueError("DID document exceeds resolution size limit")
-                data = bytearray()
-                async for chunk in response.content.iter_chunked(65536):
-                    data.extend(chunk)
-                    if len(data) > MAX_DID_DOCUMENT_BYTES:
+    from .outbound import outbound_request_budget
+
+    with outbound_request_budget():
+        resolver = None if base_url_override else _PublicResolver()
+        if base_url_override:
+            override = urlsplit(base_url_override)
+            if (
+                override.scheme not in {"http", "https"}
+                or not override.hostname
+                or override.username is not None
+                or override.password is not None
+                or override.query
+                or override.fragment
+            ):
+                raise ValueError("Invalid trusted resolution override")
+            url = base_url_override.rstrip("/") + urlsplit(url).path
+        connector = aiohttp.TCPConnector(resolver=resolver)
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                connector=connector,
+                auto_decompress=True,
+                trust_env=False,
+            ) as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    ssl=verify_ssl,
+                    allow_redirects=False,
+                ) as response:
+                    if response.status != 200:
+                        raise ValueError("DID Web resolution requires HTTP 200")
+                    if (
+                        response.content_length
+                        and response.content_length > MAX_DID_DOCUMENT_BYTES
+                    ):
                         raise ValueError("DID document exceeds resolution size limit")
-                document = json.loads(data)
-                if not isinstance(document, dict) or document.get("id") != did:
-                    raise ValueError("DID document ID mismatch")
-                return document
-    finally:
-        if resolver is not None:
-            await resolver.close()
+                    data = bytearray()
+                    async for chunk in response.content.iter_chunked(65536):
+                        data.extend(chunk)
+                        if len(data) > MAX_DID_DOCUMENT_BYTES:
+                            raise ValueError("DID document exceeds resolution size limit")
+                    document = json.loads(data)
+                    if not isinstance(document, dict) or document.get("id") != did:
+                        raise ValueError("DID document ID mismatch")
+                    return document
+        finally:
+            if resolver is not None:
+                await resolver.close()

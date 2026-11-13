@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .did_resolver import resolve_did_document
 from .did_wba import ANP_MESSAGE_SERVICE_TYPE, _is_authentication_authorized_in_document
 from .http_signatures import extract_signature_metadata, verify_http_message_signature
+from .http_auth_security import HttpSignaturePolicy, MemoryReplayStore, consume_http_replay, http_replay_context
+
+_PROCESS_REPLAY_STORE = MemoryReplayStore()
 
 
 class FederatedVerificationError(ValueError):
@@ -37,8 +41,25 @@ async def verify_federated_http_request(
     service_endpoint: Optional[str] = None,
     verify_sender_did_proof: bool = False,
     verify_service_did_proof: bool = False,
+    replay_store: Any = None,
+    verifier_scope: str | None = None,
+    signature_policy: HttpSignaturePolicy | None = None,
+    now: float | None = None,
 ) -> FederatedVerificationResult:
-    """Verify a federated HTTP request using `ANPMessageService.serviceDid`."""
+    """Verify a federated request. Inject a shared replay store for a cluster.
+
+    Supplied documents and request URL must come from a trusted resolution path
+    and actual receiver context, not from an unauthenticated peer's assertions.
+    """
+    policy = signature_policy or HttpSignaturePolicy()
+    if not policy.check_time:
+        raise FederatedVerificationError("Federated authentication requires time validation")
+    try:
+        metadata = extract_signature_metadata(headers)
+        params = metadata["params"]
+        policy.validate(params.get("created"), params.get("expires"), time.time() if now is None else now)
+    except ValueError as exc:
+        raise FederatedVerificationError("Invalid or expired federation signature metadata") from exc
     sender_document = sender_did_document or await resolve_did_document(
         sender_did,
         verify_proof=verify_sender_did_proof,
@@ -55,7 +76,6 @@ async def verify_federated_http_request(
     if not isinstance(service_did, str) or not service_did:
         raise FederatedVerificationError("Selected ANPMessageService is missing serviceDid")
 
-    metadata = extract_signature_metadata(headers)
     keyid = metadata.get("params", {}).get("keyid")
     if not isinstance(keyid, str) or "#" not in keyid:
         raise FederatedVerificationError("Invalid Signature-Input keyid")
@@ -81,9 +101,20 @@ async def verify_federated_http_request(
         request_url=request_url,
         headers=headers,
         body=body,
+        policy=policy,
+        now=now,
     )
     if not is_valid:
         raise FederatedVerificationError(message)
+    try:
+        first_use = await consume_http_replay(
+            replay_store if replay_store is not None else _PROCESS_REPLAY_STORE,
+            http_replay_context(verification_metadata, request_url, scope=verifier_scope),
+        )
+    except Exception as exc:
+        raise FederatedVerificationError("Replay protection unavailable") from exc
+    if not first_use:
+        raise FederatedVerificationError("HTTP signature replay detected")
 
     return FederatedVerificationResult(
         sender_did=sender_did,

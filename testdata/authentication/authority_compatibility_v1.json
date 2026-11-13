@@ -1,0 +1,164 @@
+{
+  "provenance": "Frozen release/1030 legacy source serializers: Python raw netloc; Rust/TypeScript normalized host/port; Go/Dart unbracketed host/port. Not a live cross-client interop result.",
+  "now": 1794556800,
+  "document": {
+    "id": "did:web:identity.example:security-fixture",
+    "verificationMethod": [
+      {
+        "id": "did:web:identity.example:security-fixture#key-1",
+        "type": "JsonWebKey2020",
+        "controller": "did:web:identity.example:security-fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "EMYqSo25T9fDxfLF6MtEKMGctc5udKAVif2oB2ot6uA"
+        }
+      }
+    ],
+    "authentication": [
+      "did:web:identity.example:security-fixture#key-1"
+    ]
+  },
+  "cases": [
+    {
+      "id": "default_port_0",
+      "url": "https://api.example:443/rpc?x=1",
+      "authority": "api.example:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:rHWrJdCjAkd9Pl+jgEYbH2DQBPKosep5nG24Df7cQqddZ0jukwOAEg3BNFm37Qdx/Zc8yGKaIwhBfB5sBKa1DA==:"
+      },
+      "replay_key": "1419baa2af7296e05a6aeeca6a3e3d862c2c354834102d6f5283be71046d32d0"
+    },
+    {
+      "id": "default_port_1",
+      "url": "https://api.example:443/rpc?x=1",
+      "authority": "api.example",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:y/bGPqtRB12rRdiKwkbLydKazcdEbYPXLS9XDtYFW8Nlb8RTCpjKuPS2v6Ee644EBdQVOsG8faxbBEXhI+B3Bg==:"
+      },
+      "replay_key": "1419baa2af7296e05a6aeeca6a3e3d862c2c354834102d6f5283be71046d32d0"
+    },
+    {
+      "id": "ipv6_0",
+      "url": "https://[2001:4860:4860::8888]:443/rpc",
+      "authority": "[2001:4860:4860::8888]:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:qIlH3M5DqLTUQU+6MX71DAyfivOt+3xY3bG0mhxdKCSS3IYGJ+mxUP/6ACR5XhzM5SQuaC7VN8Lljg1kzvv1Aw==:"
+      },
+      "replay_key": "2e2ad2d80db88bba147d0824c54bb70d7b97b0b25f7ac9dfdb19894460ccae2d"
+    },
+    {
+      "id": "ipv6_1",
+      "url": "https://[2001:4860:4860::8888]:443/rpc",
+      "authority": "[2001:4860:4860::8888]",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:dizQKlH2lYOxsEzW7d4oT153KouuiPeiuvnEkEO6FcMFUh52i/TCNNIVKnzHJhiXTbqMHj3lSED/PCgfTwTnDw==:"
+      },
+      "replay_key": "2e2ad2d80db88bba147d0824c54bb70d7b97b0b25f7ac9dfdb19894460ccae2d"
+    },
+    {
+      "id": "ipv6_2",
+      "url": "https://[2001:4860:4860::8888]:443/rpc",
+      "authority": "2001:4860:4860::8888:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:KkL36OWSOF2O2Yxyb8Qr2yOIov1Vbc0T61rqVP6cVyr2aqqxX0birc/ZJ6e6SGaYW0Dktp5ExE3ieAQJBF+zAA==:"
+      },
+      "replay_key": "2e2ad2d80db88bba147d0824c54bb70d7b97b0b25f7ac9dfdb19894460ccae2d"
+    },
+    {
+      "id": "ipv6_3",
+      "url": "https://[2001:4860:4860::8888]:443/rpc",
+      "authority": "2001:4860:4860::8888",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:MZUkdWJX7/fXAzclqaaf+MSw0Ifhjc+x3YCHXk0n/kC4SoGNPLARbVcNOoaNzEvTafPRaQXyfbXs+OLXRJYNDA==:"
+      },
+      "replay_key": "2e2ad2d80db88bba147d0824c54bb70d7b97b0b25f7ac9dfdb19894460ccae2d"
+    },
+    {
+      "id": "expanded_ipv6_0",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "[2001:4860:0000:0000:0000:0000:0000:8888]:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:x6baiWK9fW/KxKG864nH8YEYl4fFStQyZndo9tZJWAmmdp6NRnHQwFjr3YINzfZ9nkRxZB0lxGNk8dJt1QVnAw==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_1",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "2001:4860:0000:0000:0000:0000:0000:8888:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:0nABUxbYNVV9mv3t2rbDTGChDNNbiSzsIAXTcvGZSC6AqRoYLQpCNuIL+nk8t64fKLd9xVYtQJWpt2gY2ouiDg==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_2",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "[2001:4860:0000:0000:0000:0000:0000:8888]",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:0pIL+X+oPuRBW+cMitGNNFukKuu9baYfgUoWjGVW6jCdpo2uyqFYWh2QeJ7IICaNm/BSlrqa9OghM9qUIB9EBg==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_3",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "2001:4860:0000:0000:0000:0000:0000:8888",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:/PrfapVFHDxO9XUqnXPt8ThLnG20Ztf4RFnZHlV2ggr3LVxkpn/l1sOqUj2r40VPGYsCfqoK7jinsIwBKNUACw==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_4",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "[2001:4860::8888]:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:tlqlxYN/ugUNMTYvOw0WDqL9XGVTRsZmfph9CSpU8agfWcDxZMS5mMNWGQVw9WCXYiXcZ5UhVoYDSU32wPOHBw==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_5",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "2001:4860::8888:443",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:HxrhcNXHvfGOxeizLpPegM0K0Yt6bUqIn2rxmv/5lv6WXd0y1Am4a8EKkUDQJ+AgnOUzu56qFEkeYfMinHLtCQ==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_6",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "[2001:4860::8888]",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:btCY9hsXb13C7XBQETha2MuwlsFhRTz9UWbR/xi2MeFOb+zbLmy7thA4kdNFuSauPdmbgoOvf4JgIxqTQNBzAQ==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    },
+    {
+      "id": "expanded_ipv6_7",
+      "url": "https://[2001:4860:0000:0000:0000:0000:0000:8888]:443/rpc",
+      "authority": "2001:4860::8888",
+      "headers": {
+        "Signature-Input": "sig1=(\"@method\" \"@target-uri\" \"@authority\");created=1794556800;keyid=\"did:web:identity.example:security-fixture#key-1\"",
+        "Signature": "sig1=:A8q3npRwsxW47Zn41KAGhNxHnkrQ66tN1ejFYfm3GnuSuYkVD5bxDpce7ZW/BsWyAqKhyFIBgl6hOAB3CCAuAA==:"
+      },
+      "replay_key": "4619709bede8c0180e779a36a70997791ed2f94135332de38516db7270abb123"
+    }
+  ]
+}

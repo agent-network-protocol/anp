@@ -41,6 +41,7 @@ from .did_transition import (
     verify_transition_hop,
 )
 from .did_wba_authenticator import DIDWbaAuthHeader
+from .http_auth_security import HttpSignaturePolicy, MemoryReplayStore, ReplayContext
 from .did_wba_verifier import DidWbaVerifier, DidWbaVerifierConfig, DidWbaVerifierError
 from .device_manifest import (
     DEVICE_MANIFEST_TYPE,
@@ -82,6 +83,9 @@ from .http_signatures import (
 
 # Define what should be exported when using "from anp.authentication import *"
 __all__ = [
+    "HttpSignaturePolicy",
+    "MemoryReplayStore",
+    "ReplayContext",
     "build_web_did_document",
     "add_device_to_web_did_document",
     "remove_device_from_web_did_document",

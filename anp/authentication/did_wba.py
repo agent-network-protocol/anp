@@ -1079,97 +1079,15 @@ async def resolve_did_wba_document(did: str, verify_proof: bool = False) -> Dict
         ValueError: If DID format is invalid
         aiohttp.ClientError: If HTTP request fails
     """
-    logging.info(f"Resolving DID document for: {did}")
-
-    # Validate DID format
     if not did.startswith("did:wba:"):
         raise ValueError("Invalid DID format: must start with 'did:wba:'")
-
-    # Extract domain and path from DID
-    did_parts = did.split(":", 3)
-    if len(did_parts) < 3:
-        raise ValueError("Invalid DID format: missing domain")
-
-    domain = urllib.parse.unquote(did_parts[2])
-    path_segments = did_parts[3].split(":") if len(did_parts) > 3 else []
+    # Import lazily: the generic resolver also uses WBA binding primitives.
+    from .did_resolver import resolve_did_document
 
     try:
-        # Create HTTP client
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = f"https://{domain}"
-            if path_segments:
-                url += "/" + "/".join(path_segments) + "/did.json"
-            else:
-                url += "/.well-known/did.json"
-
-            logging.debug(f"Requesting DID document from URL: {url}")
-
-            # TODO: Add DNS-over-HTTPS support
-            # resolver = aiohttp.AsyncResolver(nameservers=['8.8.8.8'])
-            # connector = aiohttp.TCPConnector(resolver=resolver)
-
-            async with session.get(
-                url,
-                headers={"Accept": "application/json"},
-                ssl=True,
-                # connector=connector
-            ) as response:
-                response.raise_for_status()
-                did_document = await response.json()
-
-                # Verify document ID
-                if did_document.get("id") != did:
-                    raise ValueError(
-                        f"DID document ID mismatch. Expected: {did}, "
-                        f"Got: {did_document.get('id')}"
-                    )
-
-                if not validate_did_document_binding(
-                    did_document,
-                    verify_proof=verify_proof,
-                ):
-                    logging.warning("DID document binding verification failed")
-                    return None
-
-                logging.info(f"Successfully resolved DID document for: {did}")
-
-                # Optionally verify W3C proof if present
-                if verify_proof and "proof" in did_document:
-                    proof = did_document["proof"]
-                    vm_id = proof.get("verificationMethod")
-                    if not vm_id:
-                        logging.warning("Proof missing verificationMethod field")
-                        return None
-
-                    method_dict = _find_verification_method(did_document, vm_id)
-                    if not method_dict:
-                        logging.warning(f"Verification method not found: {vm_id}")
-                        return None
-
-                    try:
-                        public_key = _extract_public_key(method_dict)
-                    except ValueError as e:
-                        logging.warning(f"Failed to extract public key: {e}")
-                        return None
-
-                    if not verify_w3c_proof(did_document, public_key):
-                        logging.warning("DID document proof verification failed")
-                        return None
-
-                    logging.info("DID document proof verified successfully")
-
-                return did_document
-
-    except aiohttp.ClientError as e:
-        logging.error(
-            f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}"
-        )
-        return None
-    except Exception as e:
-        logging.error(
-            f"Failed to resolve DID document: {str(e)}\nStack trace:\n{traceback.format_exc()}"
-        )
+        return await resolve_did_document(did, verify_proof=verify_proof)
+    except (ValueError, OSError, aiohttp.ClientError):
+        logging.warning("DID WBA document resolution failed")
         return None
 
 
@@ -1279,7 +1197,7 @@ def generate_auth_header(
     )
 
     logging.info("Successfully generated DID authentication header.")
-    logging.debug(f"Generated Authorization header: {auth_header}")
+    logging.debug("Generated Legacy authorization header")
 
     return auth_header
 
@@ -1613,43 +1531,29 @@ def extract_auth_header_parts(
     Raises:
         ValueError: If any required field is missing in the auth header
     """
-    logging.debug(f"Extracting auth header parts from: {auth_header}")
-
-    required_fields = {
-        "did": r'(?i)did="([^"]+)"',
-        "nonce": r'(?i)nonce="([^"]+)"',
-        "timestamp": r'(?i)timestamp="([^"]+)"',
-        "verification_method": r'(?i)verification_method="([^"]+)"',
-        "signature": r'(?i)signature="([^"]+)"',
-    }
-
-    # Optional version field (defaults to "1.1")
-    version_pattern = r'(?i)v="([^"]+)"'
-
-    # Verify the header starts with DIDWba
-    if not auth_header.strip().startswith("DIDWba"):
+    if not isinstance(auth_header, str) or len(auth_header) > 16384 or any(ord(char) < 32 or ord(char) == 127 for char in auth_header):
+        raise ValueError("Invalid or excessive Legacy authorization header")
+    header = auth_header.strip()
+    if not header.startswith("DIDWba "):
         raise ValueError("Authorization header must start with 'DIDWba'")
-
+    rest = header[len("DIDWba "):]
+    pattern = re.compile(r'\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"\r\n]+)"\s*(?:,\s*|$)')
     parts = {}
-    for field, pattern in required_fields.items():
-        match = re.search(pattern, auth_header)
-        if not match:
+    if rest.rstrip().endswith(","):
+        raise ValueError("Invalid Legacy authorization syntax")
+    while rest:
+        match = pattern.match(rest)
+        if not match or match[1].lower() in parts or len(parts) >= 32:
+            raise ValueError("Invalid or duplicate Legacy authorization field")
+        parts[match[1].lower()] = match[2]
+        rest = rest[match.end():]
+    for field in ("did", "nonce", "timestamp", "verification_method", "signature"):
+        if field not in parts:
             raise ValueError(f"Missing required field in auth header: {field}")
-        parts[field] = match.group(1)
+    if len(parts["nonce"]) > 1024:
+        raise ValueError("Legacy nonce exceeds size limit")
+    return (parts["did"], parts["nonce"], parts["timestamp"], parts["verification_method"], parts["signature"], parts.get("v", "1.1"))
 
-    # Extract version if present, default to "1.1"
-    version_match = re.search(version_pattern, auth_header)
-    version = version_match.group(1) if version_match else "1.1"
-
-    logging.debug(f"Extracted auth header parts: {parts}, version: {version}")
-    return (
-        parts["did"],
-        parts["nonce"],
-        parts["timestamp"],
-        parts["verification_method"],
-        parts["signature"],
-        version,
-    )
 
 
 def verify_auth_header_signature(

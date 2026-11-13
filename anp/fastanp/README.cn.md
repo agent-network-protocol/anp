@@ -411,7 +411,7 @@ auth_config = DidWbaVerifierConfig(
     jwt_private_key=jwt_private_key,
     jwt_public_key=jwt_public_key,
     jwt_algorithm="RS256",
-    allowed_domains=["example.com", "localhost"]  # 可选：域名白名单
+    allowed_domains=["example.com"]  # 必填：受信接收方 HTTPS authority
 )
 
 # 初始化 FastANP（自动启用认证中间件）
@@ -526,3 +526,7 @@ def search_users(query: str) -> dict:
 ## 许可证
 
 本项目采用 Apache License 2.0 开源。详见 [LICENSE](../../LICENSE) 文件。
+
+## 认证安全配置
+
+受保护中间件必须显式配置 `auth_config.allowed_domains` 接收方 authority，裸 authority 表示 HTTPS。RemoteAgent 的受保护发现/API 调用通过 `authenticated_origins` 显式授权。共享 replay、origin 与兼容收紧见[安全合同](../../docs/authentication-security.md)。

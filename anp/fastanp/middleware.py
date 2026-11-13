@@ -13,6 +13,7 @@ from collections.abc import Callable
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from anp.authentication.http_auth_security import trusted_request_headers
 from anp.authentication.did_wba_verifier import (
     DidWbaVerifier,
     DidWbaVerifierConfig,
@@ -32,18 +33,17 @@ EXEMPT_PATHS = [
 
 
 def _get_and_validate_domain(request: Request, allowed_domains: list[str] | None) -> str:
-    """Extract the domain from the Host header and validate against whitelist."""
-    host = request.headers.get("host", "")
-    domain = host.split(":")[0]
+    """Return a hostname only after validating the configured receiver origin."""
+    return _request_context(request, allowed_domains)[0]
 
-    # Validate domain against whitelist if provided
-    if allowed_domains and domain not in allowed_domains:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Domain {domain} is not in the allowed domains list"
-        )
 
-    return domain
+def _request_context(request: Request, allowed_domains: list[str] | None) -> tuple[str, dict[str, str]]:
+    try:
+        return trusted_request_headers(str(request.url), request.headers.raw, allowed_domains)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid HTTP authentication binding") from exc
 
 
 async def verify_auth_header(
@@ -55,13 +55,13 @@ async def verify_auth_header(
 
     Raises HTTPException if authentication fails.
     """
-    domain = _get_and_validate_domain(request, allowed_domains)
+    domain, headers = _request_context(request, allowed_domains)
     body = await request.body()
     try:
         return await verifier.verify_request(
             method=request.method,
             url=str(request.url),
-            headers=dict(request.headers),
+            headers=headers,
             body=body,
             domain=domain,
         )
@@ -102,6 +102,8 @@ async def auth_middleware(
     allowed_domains: list[str] | None = None
 ) -> Response:
     """Authentication middleware for FastAPI."""
+    request.state.auth_result = None
+    request.state.did = None
     try:
         response_auth = await authenticate_request(request, verifier, allowed_domains)
 
@@ -109,7 +111,7 @@ async def auth_middleware(
         request.state.auth_result = response_auth
         request.state.did = response_auth.get("did") if response_auth else None
 
-        logger.info("Authenticated Response auth: %s", response_auth)
+        logger.debug("Request authentication completed")
 
         response = await call_next(request)
 
@@ -123,14 +125,14 @@ async def auth_middleware(
         return response
 
     except HTTPException as exc:
-        logger.error("Authentication error: %s", exc.detail)
+        logger.warning("Authentication rejected: status=%s", exc.status_code)
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
             headers=exc.headers,
         )
-    except Exception as exc:
-        logger.error("Unexpected error in auth middleware: %s", exc)
+    except Exception:
+        logger.error("Unexpected authentication middleware failure")
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"}

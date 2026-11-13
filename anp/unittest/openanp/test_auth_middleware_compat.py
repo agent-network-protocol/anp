@@ -78,6 +78,7 @@ def test_legacy_k1_request_and_bearer_followup_work_through_openanp_middleware()
             DidWbaVerifierConfig(
                 jwt_private_key=jwt_private_key,
                 jwt_public_key=jwt_public_key,
+                allowed_domains=["http://testserver"],
             ),
             exempt_paths=[],
         )

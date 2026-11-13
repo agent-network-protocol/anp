@@ -29,7 +29,9 @@ class ANPCrawler:
         self,
         did_document_path: str,
         private_key_path: str,
-        cache_enabled: bool = True
+        cache_enabled: bool = True,
+        *,
+        authenticated_origins: Optional[List[str]] = None,
     ):
         """
         Initialize ANP session with DID authentication.
@@ -42,6 +44,7 @@ class ANPCrawler:
         self.did_document_path = did_document_path
         self.private_key_path = private_key_path
         self.cache_enabled = cache_enabled
+        self.authenticated_origins = authenticated_origins
 
         # Initialize components
         self._client = None  # ANPClient instance
@@ -66,7 +69,8 @@ class ANPCrawler:
         # Initialize HTTP client with DID authentication
         self._client = ANPClient(
             did_document_path=self.did_document_path,
-            private_key_path=self.private_key_path
+            private_key_path=self.private_key_path,
+            authenticated_origins=self.authenticated_origins,
         )
 
         # Initialize document parser

@@ -45,7 +45,9 @@ public class EcdsaSecp256k1VerificationKey2019 extends VerificationMethod {
     public boolean verifySignature(byte[] content, String signature) {
         try {
             // Decode base64url signature (R|S format)
+            if (signature == null || signature.length() > 100) return false;
             byte[] signatureBytes = decodeBase64Url(signature);
+            if (signatureBytes.length < 2 || signatureBytes.length > 64 || signatureBytes.length % 2 != 0) return false;
 
             // Convert R|S format to r, s BigIntegers
             int rLength = signatureBytes.length / 2;
@@ -64,7 +66,7 @@ public class EcdsaSecp256k1VerificationKey2019 extends VerificationMethod {
             return signer.verifySignature(hashToVerify, r, s);
 
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Secp256k1 signature verification failed: " + e.getMessage(), e);
+            logger.log(Level.FINE, "Signature verification rejected");
             return false;
         }
     }
@@ -89,9 +91,12 @@ public class EcdsaSecp256k1VerificationKey2019 extends VerificationMethod {
         String xStr = (String) jwk.get("x");
         String yStr = (String) jwk.get("y");
         
+        if (xStr == null || yStr == null || xStr.length() > 44 || yStr.length() > 44) throw new IllegalArgumentException("Invalid JWK coordinate");
         byte[] xBytes = decodeBase64Url(xStr);
         byte[] yBytes = decodeBase64Url(yStr);
         
+        if (xBytes.length == 0 || yBytes.length == 0 || xBytes.length > 33 || yBytes.length > 33
+                || xBytes.length == 33 && xBytes[0] != 0 || yBytes.length == 33 && yBytes[0] != 0) throw new IllegalArgumentException("Invalid JWK coordinate");
         BigInteger x = new BigInteger(1, xBytes);
         BigInteger y = new BigInteger(1, yBytes);
         
@@ -141,9 +146,10 @@ public class EcdsaSecp256k1VerificationKey2019 extends VerificationMethod {
                     sBytes = java.util.Arrays.copyOfRange(sBytes, 1, sBytes.length);
                 }
                 
-                signature = new byte[rBytes.length + sBytes.length];
-                System.arraycopy(rBytes, 0, signature, 0, rBytes.length);
-                System.arraycopy(sBytes, 0, signature, rBytes.length, sBytes.length);
+                if (r.signum() <= 0 || s.signum() <= 0 || rBytes.length > 32 || sBytes.length > 32) throw new IllegalArgumentException("Invalid ECDSA scalar");
+                signature = new byte[64];
+                System.arraycopy(rBytes, 0, signature, 32-rBytes.length, rBytes.length);
+                System.arraycopy(sBytes, 0, signature, 64-sBytes.length, sBytes.length);
                 
             } catch (Exception e) {
                 // If not DER format, assume it's already in R|S format

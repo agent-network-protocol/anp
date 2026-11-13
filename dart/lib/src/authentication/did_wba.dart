@@ -1,11 +1,13 @@
 import 'dart:convert';
 
 import '../codec/base64.dart';
+import '../codec/base58.dart';
 import '../codec/canonical_json.dart';
 import '../errors.dart';
 import '../keys/keys.dart';
 import '../proof/proof.dart';
 import 'types.dart';
+import 'http_auth_security.dart';
 import 'verification_methods.dart';
 
 DidDocumentBundle createDidWbaDocument(
@@ -190,12 +192,72 @@ JsonMap buildGroupMessageService(
 );
 
 bool validateDidDocumentBinding(JsonMap didDocument) {
-  final id = didDocument['id'];
-  final methods = didDocument['verificationMethod'];
-  return id is String &&
-      id.startsWith('did:wba:') &&
-      methods is List &&
-      methods.isNotEmpty;
+  try {
+    final id = didDocument['id'];
+    final methods = didDocument['verificationMethod'];
+    if (id is! String ||
+        !id.startsWith('did:wba:') ||
+        methods is! List ||
+        methods.isEmpty) {
+      return false;
+    }
+    final last = id.split(':').last;
+    final e1 = last.startsWith('e1_'), k1 = last.startsWith('k1_');
+    final bound = e1 || k1;
+    final rawProof = didDocument['proof'];
+    if (rawProof == null) return !bound;
+    if (rawProof is! Map) return false;
+    final proof = Map<String, Object?>.from(rawProof.cast<String, Object?>());
+    final value = proof.remove('proofValue'), vm = proof['verificationMethod'];
+    if (value is! String ||
+        value.isEmpty ||
+        value.length > 256 ||
+        vm is! String ||
+        proof['proofPurpose'] != 'assertionMethod' ||
+        proof['created'] is! String ||
+        !isAssertionMethodAuthorized(didDocument, vm)) {
+      return false;
+    }
+    final method = findVerificationMethod(didDocument, vm);
+    if (method == null || method['controller'] != id) return false;
+    final key = extractPublicKey(method);
+    if (e1 &&
+        (key.type != KeyType.ed25519 ||
+            computeJwkFingerprint(key) != last.substring(3))) {
+      return false;
+    }
+    if (k1 &&
+        (key.type != KeyType.secp256k1 ||
+            computeJwkFingerprint(key) != last.substring(3))) {
+      return false;
+    }
+    if (proof['type'] == proofTypeDataIntegrity) {
+      if (key.type == KeyType.ed25519 &&
+          proof['cryptosuite'] != cryptosuiteEddsaJcs2022) {
+        return false;
+      }
+      if (key.type == KeyType.secp256k1 &&
+          proof['cryptosuite'] != cryptosuiteDidWbaSecp256k12025) {
+        return false;
+      }
+    } else if (e1 ||
+        proof['type'] != proofTypeSecp256k1 ||
+        key.type != KeyType.secp256k1) {
+      return false;
+    }
+    final unsigned = Map<String, Object?>.from(didDocument)..remove('proof');
+    final input = computeW3cProofSigningInput(unsigned, proof);
+    // Read existing Dart base64url proofs and protocol multibase proofs without
+    // confusing a legacy base64url value whose first character happens to be z.
+    if (value.startsWith('z')) {
+      try {
+        if (key.verify(input, decodeBase58(value.substring(1)))) return true;
+      } catch (_) {}
+    }
+    return key.verify(input, decodeBase64Url(value));
+  } catch (_) {
+    return false;
+  }
 }
 
 bool isAuthenticationAuthorized(
@@ -255,36 +317,55 @@ Future<String> generateAuthJson(
 }
 
 ParsedAuthHeader extractAuthHeaderParts(String authHeader) {
-  if (!authHeader.trim().startsWith('DIDWba')) {
+  if (authHeader.length > 16384 ||
+      RegExp(r'[\x00-\x1f\x7f]').hasMatch(authHeader) ||
+      !authHeader.trim().startsWith('DIDWba ')) {
     throw const AnpAuthenticationException(
-      'authentication header must start with DIDWba',
+      'invalid Legacy authorization header',
     );
   }
-  String field(String name) {
-    final match = RegExp(
-      '$name="([^"]+)"',
-      caseSensitive: false,
-    ).firstMatch(authHeader);
-    if (match == null) {
-      throw AnpAuthenticationException(
-        'missing field in authorization header: $name',
+  var rest = authHeader.trim().substring(7);
+  if (rest.trimRight().endsWith(',')) {
+    throw const AnpAuthenticationException(
+      'invalid Legacy authorization syntax',
+    );
+  }
+  final values = <String, String>{};
+  final pattern = RegExp(
+    r'^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"\r\n]+)"\s*(?:,\s*|$)',
+  );
+  while (rest.isNotEmpty) {
+    final match = pattern.firstMatch(rest);
+    if (match == null ||
+        values.containsKey(match.group(1)!.toLowerCase()) ||
+        values.length >= 32) {
+      throw const AnpAuthenticationException(
+        'invalid or duplicate Legacy authorization field',
       );
     }
-    return match.group(1)!;
+    values[match.group(1)!.toLowerCase()] = match.group(2)!;
+    rest = rest.substring(match.end);
+  }
+  String field(String name) {
+    final value = values[name];
+    if (value == null || value.isEmpty) {
+      throw const AnpAuthenticationException(
+        'missing Legacy authorization field',
+      );
+    }
+    return value;
   }
 
+  if (field('nonce').length > 1024) {
+    throw const AnpAuthenticationException('Legacy nonce exceeds limit');
+  }
   return ParsedAuthHeader(
     did: field('did'),
     nonce: field('nonce'),
     timestamp: field('timestamp'),
     verificationMethod: field('verification_method'),
     signature: field('signature'),
-    version:
-        RegExp(
-          'v="([^"]+)"',
-          caseSensitive: false,
-        ).firstMatch(authHeader)?.group(1) ??
-        '1.1',
+    version: values['v'] ?? '1.1',
   );
 }
 
@@ -334,7 +415,7 @@ Future<ParsedAuthHeader> _generateAuthPayload(
     throw const AnpAuthenticationException('invalid DID document');
   }
   final fragment = _selectAuthenticationFragment(didDocument);
-  final actualNonce = nonce ?? encodeBase64Url(_nonceBytes());
+  final actualNonce = nonce ?? encodeBase64Url(secureAuthNonceBytes());
   final actualTimestamp = timestamp ?? _isoSeconds(DateTime.now().toUtc());
   final payload = <String, Object?>{
     'nonce': actualNonce,
@@ -359,7 +440,7 @@ Future<void> _verifyAuthPayload(
   String serviceDomain,
 ) async {
   final did = didDocument['id']?.toString() ?? '';
-  if (did.toLowerCase() != parsed.did.toLowerCase()) {
+  if (did != parsed.did) {
     throw const AnpAuthenticationException('verification failed');
   }
   final payload = <String, Object?>{
@@ -408,11 +489,6 @@ String _domainFieldForVersion(String version) {
 
 String _isoSeconds(DateTime value) =>
     value.toUtc().toIso8601String().replaceFirst(RegExp(r'\.\d+Z$'), 'Z');
-
-List<int> _nonceBytes() => List<int>.generate(
-  16,
-  (index) => DateTime.now().microsecondsSinceEpoch >> (index % 8) & 0xff,
-);
 
 JsonMap _verificationMethod(
   String did,

@@ -23,14 +23,13 @@ import java.util.Map;
  */
 public class DIDWbaAuthHeader {
     private static final Logger logger = LoggerFactory.getLogger(DIDWbaAuthHeader.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper objectMapper = new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION).enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     
     private final String didDocumentPath;
     private final String privateKeyPath;
     
     // State variables
     private Map<String, Object> didDocument;
-    private final Map<String, String> authHeaders = new HashMap<>();
     private final Map<String, String> tokens = new HashMap<>();
     
     /**
@@ -54,8 +53,9 @@ public class DIDWbaAuthHeader {
      */
     private String getDomain(String serverUrl) {
         try {
-            URL url = new URL(serverUrl);
-            return url.getHost();
+            java.net.URI uri=java.net.URI.create(serverUrl);
+            PublicNetworkPolicy.origin(uri);
+            return uri.getHost().toLowerCase(java.util.Locale.ROOT);
         } catch (Exception e) {
             logger.error("Error parsing URL: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to parse URL", e);
@@ -98,7 +98,7 @@ public class DIDWbaAuthHeader {
             
             ECPrivateKey privateKey = CryptoTool.loadPrivateKeyFromPem(privateKeyPem);
             
-            logger.debug("Loaded private key: {}", privateKeyPath);
+
             return privateKey;
         } catch (Exception e) {
             logger.error("Error loading private key: {}", e.getMessage(), e);
@@ -137,7 +137,7 @@ public class DIDWbaAuthHeader {
      * @param domain Domain to authenticate with
      * @return Authentication header
      */
-    public String generateAuthHeader(String domain) {
+    public synchronized String generateAuthHeader(String domain) {
         try {
             Map<String, Object> didDocument = loadDidDocument();
             
@@ -146,8 +146,7 @@ public class DIDWbaAuthHeader {
             
             String authHeader = DIDWBA.generateAuthHeader(didDocument, domain, callback);
 
-            logger.info("Generated authentication header for domain {}: {}...", domain, 
-                    authHeader.substring(0, Math.min(30, authHeader.length())));
+            logger.debug("Generated fresh authentication for approved domain");
             return authHeader;
         } catch (Exception e) {
             logger.error("Error generating authentication header: {}", e.getMessage(), e);
@@ -162,27 +161,12 @@ public class DIDWbaAuthHeader {
      * @param forceNew  Whether to force generate a new DID authentication header
      * @return HTTP header dictionary
      */
-    public Map<String, String> getAuthHeader(String serverUrl, boolean forceNew) {
-        String domain = getDomain(serverUrl);
-        
-        // If there is a token and not forcing a new authentication header, return the token
-        if (tokens.containsKey(domain) && !forceNew) {
-            String token = tokens.get(domain);
-            logger.info("Using existing token for domain {}", domain);
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Authorization", "Bearer " + token);
-            return headers;
-        }
-        
-        // Otherwise, generate or use existing DID authentication header
-        if (!authHeaders.containsKey(domain) || forceNew) {
-            authHeaders.put(domain, generateAuthHeader(domain));
-        }
-        
-        logger.info("Using DID authentication header for domain {}", domain);
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Authorization", authHeaders.get(domain));
-        return headers;
+    public synchronized Map<String, String> getAuthHeader(String serverUrl, boolean forceNew) {
+        String domain=getDomain(serverUrl);
+        String origin=PublicNetworkPolicy.origin(java.net.URI.create(serverUrl));
+        if(!forceNew && tokens.containsKey(origin))return Map.of("Authorization","Bearer "+tokens.get(origin));
+        // Legacy proof headers are one-shot, not a reusable session cache.
+        return Map.of("Authorization",generateAuthHeader(domain));
     }
     
     /**
@@ -191,7 +175,7 @@ public class DIDWbaAuthHeader {
      * @param serverUrl Server URL
      * @return HTTP header dictionary
      */
-    public Map<String, String> getAuthHeader(String serverUrl) {
+    public synchronized Map<String, String> getAuthHeader(String serverUrl) {
         return getAuthHeader(serverUrl, false);
     }
     
@@ -202,20 +186,28 @@ public class DIDWbaAuthHeader {
      * @param headers   Response header dictionary
      * @return Updated token, or null if no valid token is found
      */
-    public String updateToken(String serverUrl, Map<String, String> headers) {
-        String domain = getDomain(serverUrl);
-        String authHeader = headers.get("authorization");
-        
-        if (authHeader != null && authHeader.toLowerCase().startsWith("bearer ")) {
-            String token = authHeader.substring(7); // Remove "Bearer " prefix
-            tokens.put(domain, token);
-            logger.info("Updated token for domain {}: {}...", domain,
-                    token.substring(0, Math.min(30, token.length())));
-            return token;
+    public synchronized String updateToken(String serverUrl, Map<String, String> headers) {
+        String origin=PublicNetworkPolicy.origin(java.net.URI.create(serverUrl));
+        if(!origin.startsWith("https://"))return null;
+        String info=header(headers,"Authentication-Info"), token=null;
+        if(info!=null) {
+            Map<String,String> fields=new HashMap<>();
+            for(String part:info.split(",")) {
+                int equals=part.indexOf('=');if(equals<1)continue;
+                String name=part.substring(0,equals).trim().toLowerCase(java.util.Locale.ROOT);
+                String value=part.substring(equals+1).trim();
+                if(value.startsWith("\"")&&value.endsWith("\""))value=value.substring(1,value.length()-1);
+                if(fields.putIfAbsent(name,value)!=null)return null;
+            }
+            if(!fields.getOrDefault("token_type","Bearer").equalsIgnoreCase("Bearer"))return null;
+            token=fields.get("access_token");
         } else {
-            logger.debug("No valid token found in response headers for domain {}", domain);
-            return null;
+            String authorization=header(headers,"Authorization");
+            if(authorization!=null&&authorization.regionMatches(true,0,"Bearer ",0,7))token=authorization.substring(7);
         }
+        if(token==null||token.length()>16384||!token.matches("[A-Za-z0-9._~+/=-]+"))return null;
+        tokens.put(origin,token);
+        return token;
     }
     
     /**
@@ -223,21 +215,24 @@ public class DIDWbaAuthHeader {
      *
      * @param serverUrl Server URL
      */
-    public void clearToken(String serverUrl) {
-        String domain = getDomain(serverUrl);
-        if (tokens.containsKey(domain)) {
-            tokens.remove(domain);
-            logger.info("Cleared token for domain {}", domain);
-        } else {
-            logger.debug("No stored token for domain {}", domain);
-        }
+    public synchronized void clearToken(String serverUrl) {
+        tokens.remove(PublicNetworkPolicy.origin(java.net.URI.create(serverUrl)));
     }
     
     /**
      * Clear all tokens for all domains.
      */
-    public void clearAllTokens() {
+    public synchronized void clearAllTokens() {
         tokens.clear();
         logger.info("Cleared all tokens for all domains");
     }
+    private static String header(Map<String,String> values,String name) {
+        String result=null;
+        for(var entry:values.entrySet())if(entry.getKey().equalsIgnoreCase(name)) {
+            if(result!=null)throw new IllegalArgumentException("Ambiguous authentication header");
+            result=entry.getValue();
+        }
+        return result;
+    }
+
 }

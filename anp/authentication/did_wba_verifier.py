@@ -28,6 +28,10 @@ from .did_wba import (
 )
 from .http_signatures import extract_signature_metadata, verify_http_message_signature
 from .did_resolver import resolve_did_document, validate_did_document_method
+from .http_auth_security import (
+    HttpSignaturePolicy, MemoryReplayStore, ReplayContext,
+    consume_http_replay, http_replay_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,9 @@ class DidWbaVerifierConfig:
     emit_authentication_info_header: bool = True
     emit_legacy_authorization_header: bool = True
     require_nonce_for_http_signatures: bool = True
+    replay_store: Any = None
+    verifier_scope: str | None = None
+    clock: Callable[[], float] | None = None
 
 
 class DidWbaVerifier:
@@ -74,6 +81,22 @@ class DidWbaVerifier:
     def __init__(self, config: DidWbaVerifierConfig | None = None):
         self.config = config or DidWbaVerifierConfig()
         self._valid_server_nonces: dict[str, datetime] = {}
+        self._replay_store = self.config.replay_store if self.config.replay_store is not None else MemoryReplayStore(clock=self._now)
+
+    def _now(self) -> float:
+        return self.config.clock() if self.config.clock else datetime.now(timezone.utc).timestamp()
+
+    def _http_policy(self) -> HttpSignaturePolicy:
+        return HttpSignaturePolicy(max_age_seconds=self.config.timestamp_expiration_minutes * 60)
+
+    async def _consume_http_replay(self, metadata: dict[str, Any], url: str) -> bool:
+        nonce = metadata.get("nonce")
+        if nonce and self.config.external_nonce_validator is not None:
+            return await self._is_valid_server_nonce(metadata["keyid"].split("#", 1)[0], nonce)
+        try:
+            return await consume_http_replay(self._replay_store, http_replay_context(metadata, url, scope=self.config.verifier_scope))
+        except Exception as exc:
+            raise DidWbaVerifierError("Replay protection unavailable", status_code=503) from exc
 
     @staticmethod
     def _get_header_case_insensitive(
@@ -89,7 +112,12 @@ class DidWbaVerifier:
     def _normalize_headers(headers: Any) -> dict[str, str]:
         if headers is None:
             return {}
-        return {str(key): str(value) for key, value in dict(headers).items()}
+        result = {str(key): str(value) for key, value in dict(headers).items()}
+        if len({key.lower() for key in result}) != len(result):
+            raise DidWbaVerifierError("Ambiguous duplicate HTTP header", status_code=401)
+        if len(result) > 256 or any(len(value) > 16384 or any(ord(char)<32 or ord(char)==127 for char in key+value) for key,value in result.items()):
+            raise DidWbaVerifierError("Invalid or excessive HTTP authentication header", status_code=401)
+        return result
 
     @staticmethod
     def _extract_domain_from_url(url: str) -> str:
@@ -180,7 +208,7 @@ class DidWbaVerifier:
     def _verify_legacy_timestamp(self, timestamp_str: str) -> bool:
         try:
             request_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            current_time = datetime.now(timezone.utc)
+            current_time = datetime.fromtimestamp(self._now(), timezone.utc)
             if request_time - current_time > timedelta(minutes=1):
                 return False
             if (
@@ -196,12 +224,9 @@ class DidWbaVerifier:
     def _verify_http_signature_time_window(
         self, created: int, expires: Optional[int]
     ) -> bool:
-        current_timestamp = int(datetime.now(timezone.utc).timestamp())
-        if created > current_timestamp + 60:
-            return False
-        if current_timestamp - created > self.config.timestamp_expiration_minutes * 60:
-            return False
-        if expires is not None and expires < current_timestamp:
+        try:
+            self._http_policy().validate(created, expires, self._now())
+        except ValueError:
             return False
         return True
 
@@ -212,28 +237,19 @@ class DidWbaVerifier:
                 result = validator(did, nonce)
                 if inspect.isawaitable(result):
                     result = await result
-                return bool(result)
+                return type(result) is bool and result
             except Exception as exc:
-                logger.error("External nonce validator error: %s", exc)
-                return False
+                raise DidWbaVerifierError("Replay protection unavailable", status_code=503) from exc
 
-        current_time = datetime.now(timezone.utc)
-        expired = [
-            key
-            for key, issued_at in self._valid_server_nonces.items()
-            if current_time - issued_at
-            > timedelta(minutes=self.config.nonce_expiration_minutes)
-        ]
-        for key in expired:
-            del self._valid_server_nonces[key]
-
-        cache_key = f"{did}:{nonce}"
-        if cache_key in self._valid_server_nonces:
-            logger.warning("Nonce already used for DID %s", did)
-            return False
-
-        self._valid_server_nonces[cache_key] = current_time
-        return True
+        # Legacy callback compatibility. Called only after signature verification.
+        import hashlib
+        scope = self.config.verifier_scope or "legacy"
+        replay_key = hashlib.sha256(("anp.legacy-auth.replay.v1\x00" + scope + "\x00" + did + "\x00" + nonce).encode()).hexdigest()
+        deadline = int(self._now()) + max(self.config.nonce_expiration_minutes, self.config.timestamp_expiration_minutes) * 60 + 60
+        try:
+            return await consume_http_replay(self._replay_store, ReplayContext(did, self.config.verifier_scope or "legacy", replay_key, deadline))
+        except Exception as exc:
+            raise DidWbaVerifierError("Replay protection unavailable", status_code=503) from exc
 
     async def verify_request(
         self,
@@ -324,6 +340,7 @@ class DidWbaVerifier:
                     ),
                 )
             did = keyid.split("#", 1)[0]
+            self._http_policy().validate(params.get("created"), params.get("expires"), self._now())
         except DidWbaVerifierError:
             raise
         except Exception as exc:
@@ -376,6 +393,8 @@ class DidWbaVerifier:
             request_url=url,
             headers=headers,
             body=body,
+            policy=self._http_policy(),
+            now=self._now(),
         )
         if not is_valid:
             raise DidWbaVerifierError(
@@ -411,7 +430,7 @@ class DidWbaVerifier:
                     "HTTP signature nonce is required.",
                 ),
             )
-        if nonce and not await self._is_valid_server_nonce(did, nonce):
+        if not await self._consume_http_replay(verification_result, url):
             raise DidWbaVerifierError(
                 "Invalid or expired nonce",
                 status_code=401,
@@ -458,17 +477,6 @@ class DidWbaVerifier:
                     "Legacy DIDWba timestamp is expired or invalid.",
                 ),
             )
-        if not await self._is_valid_server_nonce(did, nonce):
-            raise DidWbaVerifierError(
-                "Invalid or expired nonce",
-                status_code=401,
-                headers=self._build_challenge_headers(
-                    domain,
-                    "invalid_nonce",
-                    "Legacy DIDWba nonce has already been used or expired.",
-                ),
-            )
-
         did_document = await resolve_did_wba_document(did)
         if not did_document:
             raise DidWbaVerifierError(
@@ -516,6 +524,8 @@ class DidWbaVerifier:
                 ),
             )
 
+        if not await self._is_valid_server_nonce(did, nonce):
+            raise DidWbaVerifierError("Invalid or expired nonce", status_code=401)
         access_token = self._create_access_token({"sub": did})
         return self._build_success_result(
             did=did,

@@ -1,3 +1,4 @@
+import { authenticationOrigin } from './http-auth-security.js';
 import { readFile } from 'node:fs/promises';
 
 import { generateAuthHeader } from './did-wba.js';
@@ -23,8 +24,9 @@ export class DIDWbaAuthHeader {
     body?: Uint8Array | string
   ): Promise<Record<string, string>> {
     const domain = extractDomain(serverUrl);
+    const origin = authenticationOrigin(serverUrl);
     if (!forceNew) {
-      const token = this.tokens.get(domain);
+      const token = this.tokens.get(origin);
       if (token) {
         return { Authorization: `Bearer ${token}` };
       }
@@ -62,28 +64,31 @@ export class DIDWbaAuthHeader {
   }
 
   updateToken(serverUrl: string, headers: Record<string, string>): string | undefined {
-    const domain = extractDomain(serverUrl);
+    // The caller owns actual authenticated exchange provenance; not discovery.
+    const origin = authenticationOrigin(serverUrl);
+    if (!origin.startsWith('https://')) return undefined;
     const authenticationInfo = getHeaderCaseInsensitive(headers, 'Authentication-Info');
     if (authenticationInfo) {
       const parsed = parseAuthenticationInfo(authenticationInfo);
       const accessToken = parsed.access_token;
       const tokenType = parsed.token_type ?? 'Bearer';
-      if (accessToken && tokenType.toLowerCase() === 'bearer') {
-        this.tokens.set(domain, accessToken);
+      if (validBearerToken(accessToken) && tokenType.toLowerCase() === 'bearer') {
+        this.tokens.set(origin, accessToken!);
         return accessToken;
       }
     }
     const authorization = getHeaderCaseInsensitive(headers, 'Authorization');
     if (authorization?.startsWith('Bearer ')) {
       const token = authorization.slice(7);
-      this.tokens.set(domain, token);
+      if (!validBearerToken(token)) return undefined;
+      this.tokens.set(origin, token);
       return token;
     }
     return undefined;
   }
 
   clearToken(serverUrl: string): void {
-    this.tokens.delete(extractDomain(serverUrl));
+    this.tokens.delete(authenticationOrigin(serverUrl));
   }
 
   clearAllTokens(): void {
@@ -189,18 +194,29 @@ function getHeaderCaseInsensitive(
   return Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
 }
 
+function validBearerToken(token: string | undefined): token is string {
+  return (
+    typeof token === 'string' &&
+    token.length > 0 &&
+    token.length <= 16384 &&
+    /^[A-Za-z0-9._~+/=-]+$/.test(token)
+  );
+}
+
 function parseAuthenticationInfo(value: string): Record<string, string> {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .reduce<Record<string, string>>((result, item) => {
-      const [key, rawValue] = item.split('=', 2);
-      if (key && rawValue) {
-        result[key.trim()] = rawValue.trim().replace(/^"|"$/g, '');
-      }
-      return result;
-    }, {});
+  const result: Record<string, string> = Object.create(null) as Record<string, string>;
+  if (value.length > 16384) return result;
+  for (const item of value.split(',')) {
+    const index = item.indexOf('=');
+    if (index < 1) continue;
+    const key = item.slice(0, index).trim().toLowerCase();
+    if (Object.hasOwn(result, key)) return Object.create(null) as Record<string, string>;
+    result[key] = item
+      .slice(index + 1)
+      .trim()
+      .replace(/^"|"$/g, '');
+  }
+  return result;
 }
 
 function parseWwwAuthenticate(value: string): Record<string, string> {
@@ -234,7 +250,7 @@ function normalizeCoveredComponents(
       (body instanceof Uint8Array && body.byteLength === 0)
     );
 
-  return coveredComponents.filter((component) => {
+  const result = coveredComponents.filter((component) => {
     const normalized = component.toLowerCase();
     if (normalized === 'content-digest' && !bodyPresent) {
       return false;
@@ -259,4 +275,8 @@ function normalizeCoveredComponents(
     }
     return true;
   });
+  for (const required of ['@method', '@target-uri'])
+    if (!result.includes(required)) result.push(required);
+  if (bodyPresent && !result.includes('content-digest')) result.push('content-digest');
+  return result;
 }

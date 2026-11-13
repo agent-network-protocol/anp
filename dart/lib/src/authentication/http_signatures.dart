@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:async';
+import 'http_auth_security.dart';
 import 'dart:typed_data';
 
 import '../codec/base64.dart';
@@ -21,6 +24,27 @@ Future<Map<String, String>> generateHttpSignatureHeaders({
   List<int> body = const <int>[],
   HttpSignatureOptions options = const HttpSignatureOptions(),
 }) async {
+  return generateHttpSignatureHeadersWithSigner(
+    didDocument: didDocument,
+    requestUrl: requestUrl,
+    requestMethod: requestMethod,
+    sign: (bytes) => privateKey.sign(bytes),
+    headers: headers,
+    body: body,
+    options: options,
+  );
+}
+
+/// Signs with an opaque host callback; no private-key downcast is required.
+Future<Map<String, String>> generateHttpSignatureHeadersWithSigner({
+  required JsonMap didDocument,
+  required String requestUrl,
+  required String requestMethod,
+  required FutureOr<Uint8List> Function(List<int>) sign,
+  Map<String, String> headers = const <String, String>{},
+  List<int> body = const <int>[],
+  HttpSignatureOptions options = const HttpSignatureOptions(),
+}) async {
   final keyId = options.keyId ?? _selectDefaultKeyId(didDocument);
   var covered = options.coveredComponents.isEmpty
       ? <String>['@method', '@target-uri', '@authority']
@@ -33,11 +57,22 @@ Future<Map<String, String>> generateHttpSignatureHeaders({
       covered = [...covered, 'content-digest'];
     }
   }
+  if (!covered.contains('@method') || !covered.contains('@target-uri')) {
+    throw const AnpAuthenticationException('missing required signed component');
+  }
   final created =
       options.createdSeconds ??
       DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
   final expires = options.expiresSeconds ?? created + 300;
-  final nonce = options.nonce ?? encodeBase64Url(_nonceBytes());
+  final nonce = options.nonce ?? encodeBase64Url(secureAuthNonceBytes());
+  const HttpSignaturePolicy(
+    cryptoOnly: true,
+  ).validate(created, expires, created);
+  if (nonce.isEmpty ||
+      nonce.length > 1024 ||
+      RegExp(r'[^\x20-\x7e]').hasMatch(nonce)) {
+    throw const AnpAuthenticationException('invalid nonce parameter');
+  }
   final signatureBase = _buildSignatureBase(
     covered,
     requestMethod,
@@ -48,7 +83,7 @@ Future<Map<String, String>> generateHttpSignatureHeaders({
     nonce,
     keyId,
   );
-  final signature = privateKey.sign(signatureBase.codeUnits);
+  final signature = await sign(utf8.encode(signatureBase));
   final result = <String, String>{
     'Signature-Input':
         'sig1=${_serializeSignatureParams(covered, created, expires, nonce, keyId)}',
@@ -92,6 +127,8 @@ Future<SignatureMetadata> verifyHttpMessageSignature({
   required String requestUrl,
   required Map<String, String> headers,
   required List<int> body,
+  HttpSignaturePolicy policy = const HttpSignaturePolicy(),
+  int? now,
 }) async {
   final signatureInput = _header(headers, 'Signature-Input');
   final signatureHeader = _header(headers, 'Signature');
@@ -109,6 +146,28 @@ Future<SignatureMetadata> verifyHttpMessageSignature({
   final created = int.tryParse(parsedInput.params['created'] ?? '');
   if (keyId == null || keyId.isEmpty || created == null) {
     throw const AnpAuthenticationException('invalid signature input');
+  }
+  if (!keyId.startsWith('did:') ||
+      keyId.split('#').length != 2 ||
+      keyId.endsWith('#') ||
+      keyId.split('#').first != didDocument['id']) {
+    throw const AnpAuthenticationException('signature keyid DID mismatch');
+  }
+  final expires = parsedInput.params['expires'] == null
+      ? null
+      : int.tryParse(parsedInput.params['expires']!);
+  if (parsedInput.params.containsKey('expires') && expires == null) {
+    throw const AnpAuthenticationException('invalid expires parameter');
+  }
+  policy.validate(created, expires, now ?? defaultAuthClock());
+  final nonce = parsedInput.params['nonce'];
+  if (nonce != null && (nonce.isEmpty || nonce.length > 1024)) {
+    throw const AnpAuthenticationException('invalid nonce parameter');
+  }
+  if (!parsedInput.components.contains('@method') ||
+      !parsedInput.components.contains('@target-uri') ||
+      body.isNotEmpty && !parsedInput.components.contains('content-digest')) {
+    throw const AnpAuthenticationException('missing required signed component');
   }
   if (body.isNotEmpty ||
       parsedInput.components.any(
@@ -129,20 +188,24 @@ Future<SignatureMetadata> verifyHttpMessageSignature({
     throw const AnpAuthenticationException('verification method not found');
   }
   final publicKey = extractPublicKey(method);
-  final expires = parsedInput.params['expires'] == null
-      ? null
-      : int.parse(parsedInput.params['expires']!);
-  final signatureBase = _buildSignatureBase(
+  final signatureBase = _signatureBaseWithParams(
     parsedInput.components,
     requestMethod,
     requestUrl,
     headers,
-    created,
-    expires,
-    parsedInput.params['nonce'] ?? '',
-    keyId,
+    parsedInput.serialized,
   );
-  if (!publicKey.verify(signatureBase.codeUnits, parsedSignature.signature)) {
+  final authorities = _authorityCandidates(requestUrl);
+  final bases = [
+    signatureBase,
+    if (parsedInput.components.contains('@authority'))
+      ...authorities.map(
+        (authority) => _replaceAuthority(signatureBase, authority),
+      ),
+  ];
+  if (!bases.any(
+    (base) => publicKey.verify(utf8.encode(base), parsedSignature.signature),
+  )) {
     throw const AnpAuthenticationException('signature verification failed');
   }
   return SignatureMetadata(
@@ -156,6 +219,67 @@ Future<SignatureMetadata> verifyHttpMessageSignature({
     signature: Uint8List.fromList(parsedSignature.signature),
   );
 }
+
+/// Derive replay state only after signature/identity/receiver checks succeed.
+HttpReplayContext httpSignatureReplayContext(
+  SignatureMetadata metadata,
+  String method,
+  String url,
+  Map<String, String> headers, {
+  String? verifierScope,
+  HttpSignaturePolicy policy = const HttpSignaturePolicy(),
+}) {
+  final input = _header(headers, 'Signature-Input');
+  if (input == null) {
+    throw const AnpAuthenticationException('missing signature input');
+  }
+  final parsed = _parseSignatureInput(input);
+  final base = _signatureBaseWithParams(
+    parsed.components,
+    method,
+    url,
+    headers,
+    parsed.serialized,
+  );
+  final digest = sha256Bytes(
+    utf8.encode(
+      _replaceAuthority(base, authenticationOrigin(url).split("://")[1]),
+    ),
+  ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  final signer = metadata.keyId.split('#').first;
+  final scope = verifierScope ?? authenticationOrigin(url);
+  final material = metadata.nonce == null
+      ? 'base:$digest'
+      : 'nonce:${metadata.nonce}';
+  final deadline = policy.validate(
+    metadata.created,
+    metadata.expires,
+    metadata.created,
+  );
+  return HttpReplayContext(
+    signerDid: signer,
+    verifierScope: scope,
+    replayKey: replayDigest([
+      'anp.http-auth.replay.v1',
+      scope,
+      signer,
+      material,
+    ]),
+    validUntil: deadline + policy.futureSkewSeconds,
+  );
+}
+
+String _signatureBaseWithParams(
+  List<String> components,
+  String method,
+  String url,
+  Map<String, String> headers,
+  String params,
+) => [
+  for (final component in components)
+    '"$component": ${_componentValue(component, method, url, headers)}',
+  '"@signature-params": $params',
+].join('\n');
 
 String _buildSignatureBase(
   List<String> components,
@@ -177,6 +301,34 @@ String _buildSignatureBase(
     '"@signature-params": ${_serializeSignatureParams(components, created, expires, nonce, keyId)}',
   );
   return lines.join('\n');
+}
+
+String _replaceAuthority(String base, String authority) => base
+    .split('\n')
+    .map(
+      (line) =>
+          line.startsWith('"@authority": ') ? '"@authority": $authority' : line,
+    )
+    .join('\n');
+List<String> _authorityCandidates(String url) {
+  final origin = authenticationOrigin(url),
+      suffix = url.startsWith('https://') ? ':443' : ':80';
+  final values = <String>{};
+  for (final authority in [
+    url.split('://')[1].split(RegExp(r'[/?]')).first,
+    origin.split('://')[1],
+  ]) {
+    for (final value in [
+      authority,
+      authority.endsWith(suffix)
+          ? authority.substring(0, authority.length - suffix.length)
+          : authority,
+    ]) {
+      values.add(value);
+      values.add(value.replaceAll(RegExp(r'[\[\]]'), ''));
+    }
+  }
+  return values.toList();
 }
 
 String _componentValue(
@@ -212,47 +364,72 @@ String _serializeSignatureParams(
   final quoted = components.map((component) => '"$component"').join(' ');
   final parts = <String>['created=$created'];
   if (expires != null) parts.add('expires=$expires');
-  if (nonce.isNotEmpty) parts.add('nonce="$nonce"');
-  parts.add('keyid="$keyId"');
+  if (nonce.isNotEmpty) parts.add('nonce=${jsonEncode(nonce)}');
+  parts.add('keyid=${jsonEncode(keyId)}');
   return '($quoted);${parts.join(';')}';
 }
 
-({String label, List<String> components, Map<String, String> params})
+({
+  String label,
+  List<String> components,
+  Map<String, String> params,
+  String serialized,
+})
 _parseSignatureInput(String value) {
-  final separator = value.indexOf('=');
-  if (separator < 0) {
-    throw const AnpAuthenticationException('invalid signature input');
+  const invalid = AnpAuthenticationException(
+    'invalid or ambiguous signature input',
+  );
+  if (value.length > 16384) throw invalid;
+  final match = RegExp(
+    r'^([A-Za-z0-9_-]+)=\(([^)]*)\)(.*)$',
+  ).firstMatch(value.trim());
+  if (match == null ||
+      !RegExp(
+        r'''^"[a-z0-9@!#$%&'*+.^_`|~-]+"(?: +"[a-z0-9@!#$%&'*+.^_`|~-]+")*$''',
+      ).hasMatch(match[2]!)) {
+    throw invalid;
   }
-  final label = value.substring(0, separator);
-  final remainder = value.substring(separator + 1);
-  final open = remainder.indexOf('(');
-  final close = remainder.indexOf(')');
-  if (open < 0 || close <= open) {
-    throw const AnpAuthenticationException('invalid signature input');
-  }
-  final components = remainder
-      .substring(open + 1, close)
-      .split(RegExp(r'\s+'))
-      .where((token) => token.isNotEmpty)
-      .map((token) => token.replaceAll('"', ''))
+  final components = match[2]!
+      .split(RegExp(r' +'))
+      .map((token) => token.substring(1, token.length - 1))
       .toList();
-  if (components.isEmpty) {
-    throw const AnpAuthenticationException('invalid signature input');
+  if (components.length > 32 ||
+      components.toSet().length != components.length) {
+    throw invalid;
   }
   final params = <String, String>{};
-  for (final part
-      in remainder
-          .substring(close + 1)
-          .replaceFirst(RegExp(r'^;'), '')
-          .split(';')) {
-    final index = part.indexOf('=');
-    if (index > 0) {
-      params[part.substring(0, index).toLowerCase()] = part
-          .substring(index + 1)
-          .replaceAll('"', '');
+  var rest = match[3]!,
+      serialized = '(${components.map(jsonEncode).join(' ')})';
+  final parameter = RegExp(
+    r'''^;([a-z*][a-z0-9_.*-]*)(?:=("(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\["\\])*"|-?[0-9]{1,15}|\?[01]|[A-Za-z*][A-Za-z0-9!#$%&'*+.^_`|~:/-]*))?''',
+  );
+  while (rest.isNotEmpty) {
+    final part = parameter.firstMatch(rest);
+    if (part == null || params.containsKey(part[1]!) || params.length >= 32) {
+      throw invalid;
     }
+    final name = part[1]!, raw = part[2];
+    if (const ['created', 'expires'].contains(name) &&
+        (raw == null || !RegExp(r'^-?[0-9]{1,15}$').hasMatch(raw))) {
+      throw invalid;
+    }
+    if (const ['keyid', 'nonce'].contains(name) &&
+        (raw == null || !raw.startsWith('"'))) {
+      throw invalid;
+    }
+    params[name] = raw != null && raw.startsWith('"')
+        ? jsonDecode(raw) as String
+        : raw ?? 'true';
+    serialized += ';$name';
+    if (raw != null && raw != '?1') serialized += '=$raw';
+    rest = rest.substring(part.end);
   }
-  return (label: label, components: components, params: params);
+  return (
+    label: match[1]!,
+    components: components,
+    params: params,
+    serialized: serialized,
+  );
 }
 
 ({String label, List<int> signature}) _parseSignatureHeader(String value) {
@@ -283,13 +460,18 @@ String _selectDefaultKeyId(JsonMap didDocument) {
 }
 
 String? _header(Map<String, String> headers, String name) {
-  for (final entry in headers.entries) {
-    if (entry.key.toLowerCase() == name.toLowerCase()) return entry.value;
+  final found = headers.entries
+      .where((entry) => entry.key.toLowerCase() == name.toLowerCase())
+      .toList();
+  if (found.length > 1) {
+    throw const AnpAuthenticationException('ambiguous duplicate HTTP header');
   }
-  return null;
+  final value = found.isEmpty ? null : found.single.value;
+  if (value != null &&
+      (value.length > 16384 || RegExp(r'[\r\n\x00\x7f]').hasMatch(value))) {
+    throw const AnpAuthenticationException(
+      'invalid or excessive HTTP authentication header',
+    );
+  }
+  return value;
 }
-
-List<int> _nonceBytes() => List<int>.generate(
-  16,
-  (index) => DateTime.now().microsecondsSinceEpoch >> (index % 8) & 0xff,
-);

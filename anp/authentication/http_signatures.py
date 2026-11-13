@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 
 from .verification_methods import create_verification_method
+from .http_auth_security import HttpSignaturePolicy, authentication_origin
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,17 @@ def verify_content_digest(body: bytes, content_digest: str) -> bool:
 
 def _get_header_case_insensitive(headers: Dict[str, str], name: str) -> Optional[str]:
     lower_name = name.lower()
-    for key, value in headers.items():
-        if key.lower() == lower_name:
-            return value
-    return None
+    values = [value for key, value in headers.items() if key.lower() == lower_name]
+    if len(values) > 1:
+        raise ValueError("Ambiguous duplicate HTTP header")
+    value = values[0] if values else None
+    if value is not None and (not isinstance(value, str) or len(value) > 16384 or any(char in value for char in "\r\n\0\x7f")):
+        raise ValueError("Invalid or excessive HTTP authentication header")
+    return value
 
 
 def _quote_component(component: str) -> str:
-    return f'"{component}"'
+    return '"' + component.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _serialize_signature_params(
@@ -76,8 +80,8 @@ def _serialize_signature_params(
     if expires is not None:
         params.append(f"expires={expires}")
     if nonce is not None:
-        params.append(f'nonce="{nonce}"')
-    params.append(f'keyid="{keyid}"')
+        params.append(f'nonce={_quote_component(nonce)}')
+    params.append(f'keyid={_quote_component(keyid)}')
     return f"({quoted_components});" + ";".join(params)
 
 
@@ -110,9 +114,10 @@ def _build_signature_base(
     expires: Optional[int],
     nonce: Optional[str],
     keyid: str,
+    signature_params: Optional[str] = None,
 ) -> bytes:
     components = list(components)
-    signature_params = _serialize_signature_params(
+    signature_params = signature_params or _serialize_signature_params(
         components=components,
         created=created,
         expires=expires,
@@ -129,7 +134,35 @@ def _build_signature_base(
     return "\n".join(lines).encode("utf-8")
 
 
+class _SignatureParameters(dict):
+    """Parsed parameters retaining the full canonical signed serialization."""
+
+    serialized: str
+
+
+def _replace_authority(base: bytes, authority: str) -> bytes:
+    return b"\n".join(
+        b'"@authority": ' + authority.encode() if line.startswith(b'"@authority": ') else line
+        for line in base.split(b"\n")
+    )
+
+
+def _authority_candidates(url: str) -> list[str]:
+    # Frozen legacy SDK serializers disagree on default ports / IPv6 brackets.
+    # Only this redundant component varies: exact @target-uri remains signed.
+    origin = authentication_origin(url)
+    default = ":443" if url.startswith("https://") else ":80"
+    values = []
+    for authority in (urlparse(url).netloc, origin.split("://", 1)[1]):
+        for value in (authority, authority.removesuffix(default)):
+            values.extend((value, value.replace("[", "").replace("]", "")))
+    return list(dict.fromkeys(values))
+
+
+
 def _parse_signature_input(signature_input: str) -> Tuple[str, list[str], dict[str, Any]]:
+    if len(signature_input) > 16384:
+        raise ValueError("Signature-Input exceeds size limit")
     match = _SIGNATURE_INPUT_RE.match(signature_input.strip())
     if not match:
         raise ValueError("Invalid Signature-Input header format")
@@ -138,28 +171,39 @@ def _parse_signature_input(signature_input: str) -> Tuple[str, list[str], dict[s
     components_raw = match.group("components").strip()
     params_raw = match.group("params")
 
-    components = re.findall(r'"([^"]+)"', components_raw)
-    if not components:
+    components = re.findall(r'"([a-z0-9@!#$%&\'*+.^_`|~-]+)"', components_raw)
+    if not components or len(components) > 32 or len(set(components)) != len(components):
         raise ValueError("Signature-Input must include covered components")
+    if not re.fullmatch(r'"[a-z0-9@!#$%&\'*+.^_`|~-]+"(?: +"[a-z0-9@!#$%&\'*+.^_`|~-]+")*', components_raw):
+        raise ValueError("Invalid covered components")
 
-    params: dict[str, Any] = {}
-    for raw_param in params_raw.split(";"):
-        raw_param = raw_param.strip()
-        if not raw_param:
-            continue
-        if "=" not in raw_param:
-            params[raw_param] = True
-            continue
-        name, raw_value = raw_param.split("=", 1)
-        name = name.strip()
-        raw_value = raw_value.strip()
-        if raw_value.startswith('"') and raw_value.endswith('"'):
-            params[name] = raw_value[1:-1]
+    params = _SignatureParameters()
+    serialized = "(" + " ".join(_quote_component(c) for c in components) + ")"
+    parameter_re = re.compile(r';([a-z*][a-z0-9_.*-]*)(?:=("(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\["\\])*"|-?\d{1,15}|\?[01]|[A-Za-z*][A-Za-z0-9!#$%&\'*+.^_`|~:/-]*))?')
+    position = 0
+    while position < len(params_raw):
+        part = parameter_re.match(params_raw, position)
+        if part is None:
+            raise ValueError("Invalid signature parameter syntax")
+        name, raw_value = part.groups()
+        if name in params or len(params) >= 32:
+            raise ValueError("Duplicate or excessive signature parameters")
+        if raw_value is None or raw_value == "?1":
+            value = True
+        elif raw_value == "?0":
+            value = False
+        elif raw_value.startswith('"'):
+            value = re.sub(r'\\(["\\])', r'\1', raw_value[1:-1])
+        elif re.fullmatch(r'-?\d+', raw_value):
+            value = int(raw_value)
         else:
-            try:
-                params[name] = int(raw_value)
-            except ValueError:
-                params[name] = raw_value
+            value = raw_value
+        params[name] = value
+        serialized += ";" + name
+        if raw_value is not None and raw_value != "?1":
+            serialized += "=" + raw_value
+        position = part.end()
+    params.serialized = serialized
 
     return label, components, params
 
@@ -186,7 +230,7 @@ def _parse_signature_header(signature_header: str) -> Tuple[str, bytes]:
     if not match:
         raise ValueError("Invalid Signature header format")
     label = match.group("label")
-    signature = base64.b64decode(match.group("value"))
+    signature = base64.b64decode(match.group("value"), validate=True)
     return label, signature
 
 
@@ -288,9 +332,12 @@ def generate_http_signature_headers(
             components.append("content-digest")
         headers_to_sign.setdefault("Content-Length", str(len(body_bytes)))
 
-    created_ts = created or int(datetime.now(timezone.utc).timestamp())
-    expires_ts = expires or (created_ts + 300)
-    nonce_value = nonce or secrets.token_hex(16)
+    if not {"@method", "@target-uri"}.issubset(components):
+        raise ValueError("HTTP signature must cover @method and @target-uri")
+    created_ts = int(datetime.now(timezone.utc).timestamp()) if created is None else created
+    expires_ts = created_ts + 300 if expires is None else expires
+    nonce_value = secrets.token_hex(16) if nonce is None else nonce
+    HttpSignaturePolicy(check_time=False).validate(created_ts, expires_ts, created_ts)
     signature_base = _build_signature_base(
         components=components,
         method=request_method,
@@ -327,8 +374,17 @@ def verify_http_message_signature(
     request_url: str,
     headers: Dict[str, str],
     body: Any = None,
+    *,
+    policy: Optional[HttpSignaturePolicy] = None,
+    now: Optional[float] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
-    """Verify an RFC 9421-style HTTP Message Signature for DID-WBA."""
+    """Verify a real-time HTTP signature, coverage and time, without replay I/O.
+
+    A successful result is not complete authentication: the caller still owns
+    trusted DID resolution, authentication-key authorization, target policy and
+    atomic replay consumption. Offline crypto checks must explicitly pass a
+    policy with check_time=False; normal callers must not use that mode.
+    """
     try:
         signature_input = _get_header_case_insensitive(headers, "Signature-Input")
         signature_header = _get_header_case_insensitive(headers, "Signature")
@@ -339,16 +395,22 @@ def verify_http_message_signature(
         label_signature, signature_bytes = _parse_signature_header(signature_header)
         if label_input != label_signature:
             return False, "Signature label mismatch", {}
+        if not {"@method", "@target-uri"}.issubset(components):
+            return False, "HTTP signature must cover @method and @target-uri", {}
 
         keyid = params.get("keyid")
-        if not isinstance(keyid, str) or not keyid:
+        if not isinstance(keyid, str) or not keyid.startswith("did:") or keyid.count("#") != 1 or not keyid.split("#")[1]:
             return False, "Signature-Input missing keyid", {}
+        if keyid.split("#", 1)[0] != did_document.get("id"):
+            return False, "Signature keyid DID does not match document", {}
 
         method_dict = _find_verification_method(did_document, keyid)
         if method_dict is None:
             return False, "Verification method not found", {}
 
         body_bytes = _ensure_body_bytes(body)
+        if body_bytes and "content-digest" not in components:
+            return False, "HTTP signature must cover content-digest for a body", {}
         if body_bytes or "content-digest" in [component.lower() for component in components]:
             content_digest = _get_header_case_insensitive(headers, "Content-Digest")
             if not content_digest:
@@ -359,10 +421,14 @@ def verify_http_message_signature(
         created = params.get("created")
         expires = params.get("expires")
         nonce = params.get("nonce")
-        if not isinstance(created, int):
+        if type(created) is not int:
             return False, "Signature-Input missing created parameter", {}
-        if expires is not None and not isinstance(expires, int):
+        if expires is not None and type(expires) is not int:
             return False, "Invalid expires parameter", {}
+        if nonce is not None and (not isinstance(nonce, str) or not nonce or len(nonce) > 1024):
+            return False, "Invalid nonce parameter", {}
+        selected_policy = policy or HttpSignaturePolicy()
+        valid_until = selected_policy.validate(created, expires, datetime.now(timezone.utc).timestamp() if now is None else now)
 
         signature_base = _build_signature_base(
             components=components,
@@ -373,14 +439,30 @@ def verify_http_message_signature(
             expires=expires,
             nonce=nonce,
             keyid=keyid,
+            signature_params=params.serialized,
         )
-        _verify_signature_bytes(method_dict, signature_base, signature_bytes)
+        candidates = _authority_candidates(request_url)
+        bases = [signature_base]
+        if "@authority" in components:
+            bases.extend(_replace_authority(signature_base, authority) for authority in candidates)
+        for candidate in dict.fromkeys(bases):
+            try:
+                _verify_signature_bytes(method_dict, candidate, signature_bytes)
+                break
+            except Exception:
+                continue
+        else:
+            raise ValueError("Signature verification failed")
+        replay_base = _replace_authority(signature_base, authentication_origin(request_url).split("://", 1)[1])
         return True, "Verification successful", {
             "keyid": keyid,
             "nonce": nonce,
             "created": created,
             "expires": expires,
             "components": components,
+            "valid_until": valid_until,
+            "clock_skew_seconds": selected_policy.future_skew_seconds,
+            "signature_base_digest": hashlib.sha256(replay_base).hexdigest(),
         }
     except Exception as exc:
         logger.error("HTTP message signature verification failed: %s", exc)

@@ -6,14 +6,13 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
-	_ "crypto/sha256"
+	"crypto/sha256"
 	_ "crypto/sha512"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	anp "github.com/agent-network-protocol/anp/golang"
@@ -21,18 +20,76 @@ import (
 
 // DidWbaVerifier verifies inbound ANP HTTP requests.
 type DidWbaVerifier struct {
-	config     DidWbaVerifierConfig
-	usedNonces map[string]time.Time
-	mu         sync.Mutex
+	config        DidWbaVerifierConfig
+	replayStore   HTTPReplayStore
+	verifierScope string
+	sharedReplay  bool
+	clock         func() time.Time
 }
 
 // NewDidWbaVerifier creates a request verifier with defaults.
 func NewDidWbaVerifier(config DidWbaVerifierConfig) *DidWbaVerifier {
-	return &DidWbaVerifier{config: withVerifierDefaults(config), usedNonces: map[string]time.Time{}}
+	v := &DidWbaVerifier{config: withVerifierDefaults(config), clock: time.Now}
+	local := NewMemoryHTTPReplayStore()
+	local.clock = func() time.Time { return v.clock() }
+	v.replayStore = local
+	return v
+}
+
+// WithReplayStore configures an atomic shared store before concurrent use.
+// All replicas use the same host-trusted verifier scope. Nil stores fail closed.
+func (v *DidWbaVerifier) WithReplayStore(store HTTPReplayStore, scope string) *DidWbaVerifier {
+	v.replayStore, v.verifierScope, v.sharedReplay = store, scope, true
+	return v
+}
+
+// WithClock injects a host clock, usually for deterministic unit tests.
+func (v *DidWbaVerifier) WithClock(clock func() time.Time) *DidWbaVerifier {
+	if clock != nil {
+		v.clock = clock
+	}
+	return v
+}
+
+func (v *DidWbaVerifier) httpPolicy() HTTPSignaturePolicy {
+	policy := DefaultHTTPSignaturePolicy()
+	minutes := int64(v.config.TimestampExpirationMinutes)
+	if minutes < 1 || minutes > 1440 {
+		policy.MaxAgeSeconds = 0
+	} else {
+		policy.MaxAgeSeconds = minutes * 60
+	}
+	return policy
+}
+
+func rejectDuplicateAuthHeaders(headers map[string]string) error {
+	seen := map[string]bool{}
+	for key := range headers {
+		lower := strings.ToLower(key)
+		if seen[lower] {
+			return &DidWbaVerifierError{Message: "Ambiguous duplicate HTTP header", StatusCode: 401, Headers: map[string]string{}}
+		}
+		seen[lower] = true
+	}
+	return nil
+}
+
+func (v *DidWbaVerifier) consumeReplay(ctx context.Context, item HTTPReplayContext) (bool, error) {
+	if v.replayStore == nil {
+		return false, &DidWbaVerifierError{Message: "Replay protection unavailable", StatusCode: 503, Headers: map[string]string{}}
+	}
+	first, err := v.replayStore.ConsumeOnce(ctx, item)
+	if err != nil {
+		return false, &DidWbaVerifierError{Message: "Replay protection unavailable", StatusCode: 503, Headers: map[string]string{}}
+	}
+	return first, nil
 }
 
 // VerifyRequest resolves the sender DID and verifies the request.
 func (v *DidWbaVerifier) VerifyRequest(ctx context.Context, method string, requestURL string, headers map[string]string, body []byte, domain string) (VerificationSuccess, error) {
+	if err := rejectDuplicateAuthHeaders(headers); err != nil {
+		return VerificationSuccess{}, err
+	}
 	requestDomain := domain
 	if requestDomain == "" {
 		requestDomain = extractDomain(requestURL)
@@ -51,12 +108,15 @@ func (v *DidWbaVerifier) VerifyRequest(ctx context.Context, method string, reque
 		if err != nil {
 			return VerificationSuccess{}, v.challengeError("Invalid signature metadata", 401, requestDomain, "invalid_request")
 		}
+		if !v.verifyHTTPSignatureTimeWindow(metadata.Created, metadata.Expires) {
+			return VerificationSuccess{}, v.challengeError("HTTP signature timestamp is expired or invalid", 401, requestDomain, "invalid_timestamp")
+		}
 		did := strings.Split(metadata.KeyID, "#")[0]
 		document, err := ResolveDidDocumentWithOptions(ctx, did, false, v.config.DidResolutionOptions)
 		if err != nil {
 			return VerificationSuccess{}, v.challengeError("Failed to resolve DID document", 401, requestDomain, "invalid_did")
 		}
-		return v.VerifyRequestWithDidDocument(method, requestURL, headers, body, requestDomain, document)
+		return v.VerifyRequestWithDidDocumentContext(ctx, method, requestURL, headers, body, requestDomain, document)
 	}
 	if authorization, ok := getHeaderCaseInsensitive(headers, "Authorization"); ok {
 		if !boolValue(v.config.AllowLegacyDidWba, true) {
@@ -66,17 +126,29 @@ func (v *DidWbaVerifier) VerifyRequest(ctx context.Context, method string, reque
 		if err != nil {
 			return VerificationSuccess{}, v.challengeError("Invalid authorization header format", 401, requestDomain, "invalid_request")
 		}
+		if !v.verifyLegacyTimestamp(parsed.Timestamp) {
+			return VerificationSuccess{}, v.challengeError("Legacy DIDWba timestamp is expired or invalid", 401, requestDomain, "invalid_timestamp")
+		}
 		document, err := ResolveDidWBADocumentWithOptions(ctx, parsed.DID, false, v.config.DidResolutionOptions)
 		if err != nil {
 			return VerificationSuccess{}, v.challengeError("Failed to resolve DID document", 401, requestDomain, "invalid_did")
 		}
-		return v.VerifyRequestWithDidDocument(method, requestURL, headers, body, requestDomain, document)
+		return v.VerifyRequestWithDidDocumentContext(ctx, method, requestURL, headers, body, requestDomain, document)
 	}
 	return VerificationSuccess{}, &DidWbaVerifierError{Message: "missing authentication headers", StatusCode: 401, Headers: map[string]string{}}
 }
 
 // VerifyRequestWithDidDocument verifies a request against an already resolved DID document.
 func (v *DidWbaVerifier) VerifyRequestWithDidDocument(method string, requestURL string, headers map[string]string, body []byte, domain string, didDocument map[string]any) (VerificationSuccess, error) {
+	return v.VerifyRequestWithDidDocumentContext(context.Background(), method, requestURL, headers, body, domain, didDocument)
+}
+
+// VerifyRequestWithDidDocumentContext preserves cancellation for shared-store I/O.
+// The Document and receiver URL must come from trusted host context.
+func (v *DidWbaVerifier) VerifyRequestWithDidDocumentContext(ctx context.Context, method string, requestURL string, headers map[string]string, body []byte, domain string, didDocument map[string]any) (VerificationSuccess, error) {
+	if err := rejectDuplicateAuthHeaders(headers); err != nil {
+		return VerificationSuccess{}, err
+	}
 	requestDomain := domain
 	if requestDomain == "" {
 		requestDomain = extractDomain(requestURL)
@@ -88,15 +160,15 @@ func (v *DidWbaVerifier) VerifyRequestWithDidDocument(method string, requestURL 
 		return v.handleBearerAuth(strings.TrimPrefix(authorization, "Bearer "))
 	}
 	if _, ok := getHeaderCaseInsensitive(headers, "Signature-Input"); ok {
-		return v.handleHTTPSignatureAuth(method, requestURL, headers, body, requestDomain, didDocument)
+		return v.handleHTTPSignatureAuth(ctx, method, requestURL, headers, body, requestDomain, didDocument)
 	}
 	if authorization, ok := getHeaderCaseInsensitive(headers, "Authorization"); ok {
-		return v.handleLegacyAuth(authorization, requestDomain, didDocument)
+		return v.handleLegacyAuth(ctx, authorization, requestDomain, didDocument)
 	}
 	return VerificationSuccess{}, &DidWbaVerifierError{Message: "missing authentication headers", StatusCode: 401, Headers: map[string]string{}}
 }
 
-func (v *DidWbaVerifier) handleHTTPSignatureAuth(method string, requestURL string, headers map[string]string, body []byte, domain string, didDocument map[string]any) (VerificationSuccess, error) {
+func (v *DidWbaVerifier) handleHTTPSignatureAuth(ctx context.Context, method string, requestURL string, headers map[string]string, body []byte, domain string, didDocument map[string]any) (VerificationSuccess, error) {
 	metadata, err := ExtractSignatureMetadata(headers)
 	if err != nil {
 		return VerificationSuccess{}, v.challengeError("Invalid signature metadata", 401, domain, "invalid_request")
@@ -108,7 +180,7 @@ func (v *DidWbaVerifier) handleHTTPSignatureAuth(method string, requestURL strin
 	if !IsAuthenticationAuthorized(didDocument, metadata.KeyID) {
 		return VerificationSuccess{}, &DidWbaVerifierError{Message: "Verification method is not authorized for authentication", StatusCode: 403, Headers: map[string]string{}}
 	}
-	verified, err := VerifyHTTPMessageSignature(didDocument, method, requestURL, headers, body)
+	verified, err := VerifyHTTPMessageSignatureWithPolicy(didDocument, method, requestURL, headers, body, v.httpPolicy(), v.clock().Unix())
 	if err != nil {
 		return VerificationSuccess{}, v.challengeError("Invalid signature", 401, domain, "invalid_signature")
 	}
@@ -118,7 +190,27 @@ func (v *DidWbaVerifier) handleHTTPSignatureAuth(method string, requestURL strin
 	if boolValue(v.config.RequireNonceForHTTPSignatures, true) && verified.Nonce == "" {
 		return VerificationSuccess{}, v.challengeError("HTTP signature nonce is required", 401, domain, "invalid_nonce")
 	}
-	if verified.Nonce != "" && !v.isValidNonce(did, verified.Nonce) {
+	var first bool
+	if !v.sharedReplay && v.config.ExternalNonceValidator != nil && verified.Nonce != "" {
+		first = v.config.ExternalNonceValidator(did, verified.Nonce)
+	} else {
+		scope := v.verifierScope
+		if scope == "" {
+			scope, err = AuthenticationOrigin(requestURL)
+			if err != nil {
+				return VerificationSuccess{}, v.challengeError("Invalid receiver URL", 401, domain, "invalid_request")
+			}
+		}
+		item, err := HTTPReplayContextForSignature(verified, method, requestURL, headers, scope, v.httpPolicy())
+		if err != nil {
+			return VerificationSuccess{}, v.challengeError("Invalid replay context", 401, domain, "invalid_request")
+		}
+		first, err = v.consumeReplay(ctx, item)
+		if err != nil {
+			return VerificationSuccess{}, err
+		}
+	}
+	if !first {
 		return VerificationSuccess{}, v.challengeError("Nonce has already been used or expired", 401, domain, "invalid_nonce")
 	}
 	accessToken, err := v.createAccessToken(did)
@@ -128,16 +220,13 @@ func (v *DidWbaVerifier) handleHTTPSignatureAuth(method string, requestURL strin
 	return v.buildSuccessResult(did, "http_signatures", accessToken), nil
 }
 
-func (v *DidWbaVerifier) handleLegacyAuth(authorization string, domain string, didDocument map[string]any) (VerificationSuccess, error) {
+func (v *DidWbaVerifier) handleLegacyAuth(ctx context.Context, authorization string, domain string, didDocument map[string]any) (VerificationSuccess, error) {
 	parsed, err := ExtractAuthHeaderParts(authorization)
 	if err != nil {
 		return VerificationSuccess{}, v.challengeError("Invalid authorization header format", 401, domain, "invalid_request")
 	}
 	if !v.verifyLegacyTimestamp(parsed.Timestamp) {
 		return VerificationSuccess{}, v.challengeError("Legacy DIDWba timestamp is expired or invalid", 401, domain, "invalid_timestamp")
-	}
-	if !v.isValidNonce(parsed.DID, parsed.Nonce) {
-		return VerificationSuccess{}, v.challengeError("Legacy DIDWba nonce has already been used or expired", 401, domain, "invalid_nonce")
 	}
 	if !ValidateDIDDocumentBinding(didDocument, false) {
 		return VerificationSuccess{}, &DidWbaVerifierError{Message: "DID binding verification failed", StatusCode: 401, Headers: map[string]string{}}
@@ -148,6 +237,29 @@ func (v *DidWbaVerifier) handleLegacyAuth(authorization string, domain string, d
 	}
 	if err := VerifyAuthHeaderSignature(authorization, didDocument, domain); err != nil {
 		return VerificationSuccess{}, v.challengeError("Legacy DIDWba signature verification failed", 401, domain, "invalid_signature")
+	}
+	var first bool
+	if !v.sharedReplay && v.config.ExternalNonceValidator != nil {
+		first = v.config.ExternalNonceValidator(parsed.DID, parsed.Nonce)
+	} else {
+		scope := v.verifierScope
+		if scope == "" {
+			scope = "legacy:" + domain
+		}
+		material := strings.Join([]string{"anp.legacy-auth.replay.v1", scope, parsed.DID, parsed.Nonce}, "\x00")
+		timestamp, err := time.Parse(time.RFC3339, parsed.Timestamp)
+		if err != nil {
+			return VerificationSuccess{}, v.challengeError("Invalid timestamp", 401, domain, "invalid_timestamp")
+		}
+		retention := max(v.config.NonceExpirationMinutes, v.config.TimestampExpirationMinutes)
+		item := HTTPReplayContext{SignerDID: parsed.DID, VerifierScope: scope, ReplayKey: fmt.Sprintf("%x", sha256.Sum256([]byte(material))), ValidUntil: timestamp.Unix() + int64(retention)*60 + 60}
+		first, err = v.consumeReplay(ctx, item)
+		if err != nil {
+			return VerificationSuccess{}, err
+		}
+	}
+	if !first {
+		return VerificationSuccess{}, v.challengeError("Legacy DIDWba nonce has already been used or expired", 401, domain, "invalid_nonce")
 	}
 	accessToken, err := v.createAccessToken(parsed.DID)
 	if err != nil {
@@ -202,7 +314,10 @@ func (v *DidWbaVerifier) verifyLegacyTimestamp(timestamp string) bool {
 	if err != nil {
 		return false
 	}
-	now := time.Now().UTC()
+	if v.config.TimestampExpirationMinutes < 1 || v.config.TimestampExpirationMinutes > 1440 {
+		return false
+	}
+	now := v.clock().UTC()
 	if parsed.After(now.Add(time.Minute)) {
 		return false
 	}
@@ -210,38 +325,8 @@ func (v *DidWbaVerifier) verifyLegacyTimestamp(timestamp string) bool {
 }
 
 func (v *DidWbaVerifier) verifyHTTPSignatureTimeWindow(created int64, expires *int64) bool {
-	now := time.Now().Unix()
-	if created > now+60 {
-		return false
-	}
-	if now-created > int64(v.config.TimestampExpirationMinutes*60) {
-		return false
-	}
-	if expires != nil && *expires < now {
-		return false
-	}
-	return true
-}
-
-func (v *DidWbaVerifier) isValidNonce(did string, nonce string) bool {
-	if v.config.ExternalNonceValidator != nil {
-		return v.config.ExternalNonceValidator(did, nonce)
-	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	now := time.Now().UTC()
-	expiration := time.Duration(v.config.NonceExpirationMinutes) * time.Minute
-	for key, issuedAt := range v.usedNonces {
-		if now.Sub(issuedAt) > expiration {
-			delete(v.usedNonces, key)
-		}
-	}
-	cacheKey := did + ":" + nonce
-	if _, exists := v.usedNonces[cacheKey]; exists {
-		return false
-	}
-	v.usedNonces[cacheKey] = now
-	return true
+	_, err := v.httpPolicy().Validate(created, expires, v.clock().Unix())
+	return err == nil
 }
 
 func (v *DidWbaVerifier) createAccessToken(did string) (string, error) {

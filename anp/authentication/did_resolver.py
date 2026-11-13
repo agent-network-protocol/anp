@@ -7,9 +7,10 @@ import logging
 import urllib.parse
 from typing import Any, Dict, Optional
 
-import aiohttp
 
 from .did_web import build_did_web_resolution_url, fetch_did_web_document
+from .http_auth_security import authentication_origin
+from .outbound import fetch_public_json
 
 from anp.proof import verify_w3c_proof
 
@@ -62,12 +63,19 @@ def build_did_resolution_url(did: str, base_url_override: Optional[str] = None) 
         return url
 
     domain = urllib.parse.unquote(parts[2])
-    path_segments = parts[3:]
+    authority_url = urllib.parse.urlsplit("https://" + domain)
+    authentication_origin("https://" + domain)
+    if authority_url.netloc != domain or authority_url.path or authority_url.query:
+        raise ValueError("Invalid DID WBA authority")
+    path_segments = []
+    for raw in parts[3:]:
+        segment = urllib.parse.unquote(raw, errors="strict")
+        if not segment or segment in {".", ".."} or any(c in "/\\?#%" or ord(c) < 32 or ord(c) == 127 for c in segment):
+            raise ValueError("Unsafe DID WBA path component")
+        path_segments.append(urllib.parse.quote(segment, safe="-._~"))
     base_url = (base_url_override or f"https://{domain}").rstrip("/")
     if path_segments:
-        encoded_path = "/".join(
-            urllib.parse.unquote(segment) for segment in path_segments
-        )
+        encoded_path = "/".join(path_segments)
         return f"{base_url}/{encoded_path}/did.json"
     return f"{base_url}/.well-known/did.json"
 
@@ -86,7 +94,6 @@ async def resolve_did_document(
         raise ValueError("Invalid DID format")
 
     url = build_did_resolution_url(did, base_url_override=base_url_override)
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     request_headers = {"Accept": "application/json", **(headers or {})}
 
     if did.startswith("did:web:"):
@@ -98,12 +105,10 @@ async def resolve_did_document(
             headers=request_headers,
         )
     else:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
-                url, headers=request_headers, ssl=verify_ssl
-            ) as response:
-                response.raise_for_status()
-                did_document = await response.json()
+        did_document = await fetch_public_json(
+            url, timeout_seconds=timeout_seconds, headers=request_headers,
+            verify_ssl=verify_ssl, trusted_override=base_url_override is not None,
+        )
 
     if did_document.get("id") != did:
         raise ValueError(
