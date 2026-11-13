@@ -38,7 +38,7 @@ import static com.agentconnect.authentication.EcdsaSecp256k1VerificationKey2019.
  */
 public class DIDWBA {
     private static final Logger logger = LoggerFactory.getLogger(DIDWBA.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper objectMapper = new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION).enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -378,7 +378,7 @@ public class DIDWBA {
         // 使用JCS进行JSON规范化
         JsonCanonicalizer canonicalizer = new JsonCanonicalizer(jsonString);
         String canonicalJson = canonicalizer.getEncodedString();
-        logger.debug("generate_auth_header Canonical JSON: {}", canonicalJson);
+
 
         // 计算SHA-256哈希
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -406,36 +406,7 @@ public class DIDWBA {
      * @throws IllegalArgumentException If any required field is missing in the auth header
      */
     public static Map<String, String> extractAuthHeaderParts(String authHeader) {
-        logger.debug("Extracting auth header parts from: {}", authHeader);
-
-        if (authHeader == null || !authHeader.trim().startsWith("DIDWba")) {
-            throw new IllegalArgumentException("Authorization header must start with 'DIDWba'");
-        }
-
-        Map<String, Pattern> requiredFields = new LinkedHashMap<>();
-        requiredFields.put("did", Pattern.compile("(?i)did=\"([^\"]+)\""));
-        requiredFields.put("nonce", Pattern.compile("(?i)nonce=\"([^\"]+)\""));
-        requiredFields.put("timestamp", Pattern.compile("(?i)timestamp=\"([^\"]+)\""));
-        requiredFields.put("verification_method", Pattern.compile("(?i)verification_method=\"([^\"]+)\""));
-        requiredFields.put("signature", Pattern.compile("(?i)signature=\"([^\"]+)\""));
-
-        Pattern versionPattern = Pattern.compile("(?i)v=\"([^\"]+)\"");
-
-        Map<String, String> parts = new HashMap<>();
-        for (Map.Entry<String, Pattern> entry : requiredFields.entrySet()) {
-            Matcher matcher = entry.getValue().matcher(authHeader);
-            if (!matcher.find()) {
-                throw new IllegalArgumentException("Missing required field in auth header: " + entry.getKey());
-            }
-            parts.put(entry.getKey(), matcher.group(1));
-        }
-
-        Matcher versionMatcher = versionPattern.matcher(authHeader);
-        String version = versionMatcher.find() ? versionMatcher.group(1) : "1.0";
-        parts.put("version", version);
-
-        logger.debug("Extracted auth header parts: {}, version: {}", parts, version);
-        return parts;
+        return LegacyAuthSecurity.parseHeader(authHeader);
     }
 
     /**
@@ -451,6 +422,12 @@ public class DIDWBA {
             String authHeader,
             Map<String, Object> didDocument,
             String serviceDomain) {
+        return verifyAuthHeaderSignature(authHeader, didDocument, serviceDomain, LegacyAuthSecurity.Policy.realtime());
+    }
+
+    /** Stateless real-time policy; explicit checkTime=false is offline crypto only. */
+    public static Object[] verifyAuthHeaderSignature(String authHeader, Map<String,Object> didDocument,
+            String serviceDomain, LegacyAuthSecurity.Policy policy) {
         logger.info("Starting DID authentication header verification");
 
         try {
@@ -462,8 +439,9 @@ public class DIDWBA {
             String signature = parts.get("signature");
             String version = parts.get("version");
 
+            policy.validateTimestamp(timestampStr);
             String documentId = (String) didDocument.get("id");
-            if (documentId == null || !documentId.equalsIgnoreCase(clientDid)) {
+            if (documentId == null || !documentId.equals(clientDid)) {
                 return new Object[]{false, "DID mismatch"};
             }
 
@@ -486,13 +464,14 @@ public class DIDWBA {
             String jsonString = objectMapper.writeValueAsString(dataToVerify);
             JsonCanonicalizer canonicalizer = new JsonCanonicalizer(jsonString);
             String canonicalJson = canonicalizer.getEncodedString();
-            logger.debug("verify_auth_header_signature Canonical JSON: {}", canonicalJson);
+
 
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] contentHash = digest.digest(canonicalJson.getBytes(StandardCharsets.UTF_8));
 
             String verificationMethodId = clientDid + "#" + verificationMethod;
-            Map<String, Object> methodDict = findVerificationMethod(didDocument, verificationMethodId);
+            if (!WbaDocumentBinding.authorized(didDocument,"authentication",verificationMethodId)) return new Object[]{false,"Verification method not authorized for authentication"};
+            Map<String, Object> methodDict = WbaDocumentBinding.method(didDocument, verificationMethodId);
             if (methodDict == null) {
                 return new Object[]{false, "Verification method not found"};
             }
@@ -518,4 +497,29 @@ public class DIDWBA {
             return new Object[]{false, "Verification process error: " + e.getMessage()};
         }
     }
+    /** Complete Legacy authentication; clustered hosts supply a shared atomic store. */
+    public static java.util.concurrent.CompletableFuture<Map<String,Object>> authenticateAsync(
+            String authorization, Map<String,Object> document, String serviceDomain,
+            String verifierScope, LegacyAuthSecurity.Policy policy, LegacyAuthSecurity.ReplayStore store) {
+        try {
+            if (!policy.checkTime() || store == null || !WbaDocumentBinding.validate(document)) throw new SecurityException("Invalid authentication configuration or document");
+            Map<String,String> parts = extractAuthHeaderParts(authorization);
+            Object[] verified = verifyAuthHeaderSignature(authorization,document,serviceDomain,policy);
+            if (!Boolean.TRUE.equals(verified[0])) throw new SecurityException("DID authentication failed");
+            LegacyAuthSecurity.ReplayContext context = LegacyAuthSecurity.replayContext(parts,verifierScope,policy);
+            java.util.concurrent.CompletionStage<Boolean> consumed;
+            try { consumed=store.consumeOnce(context); }
+            catch (RuntimeException unavailable) { throw new LegacyAuthSecurity.ReplayUnavailable(unavailable); }
+            return consumed.handle((first,error)->{
+                if (error!=null || first==null) throw new LegacyAuthSecurity.ReplayUnavailable(error);
+                if (!first) throw new SecurityException("Authentication replay detected");
+                Map<String,Object> result=new HashMap<>();
+                result.put("did",parts.get("did"));result.put("verified",true);
+                result.put("timestamp",parts.get("timestamp"));result.put("nonce",parts.get("nonce"));
+                result.put("verification_method",parts.get("verification_method"));
+                return result;
+            }).toCompletableFuture();
+        } catch (Exception failed) { return java.util.concurrent.CompletableFuture.failedFuture(failed); }
+    }
+
 } 

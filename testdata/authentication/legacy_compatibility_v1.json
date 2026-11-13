@@ -1,0 +1,24 @@
+{
+  "provenance": "release/1030 unchanged Legacy generator, public Ed25519 fixture, fixed timestamp/nonce; verification-only, no private material",
+  "now": 1794556800,
+  "document": {
+    "id": "did:wba:identity.example:security-fixture",
+    "verificationMethod": [
+      {
+        "id": "did:wba:identity.example:security-fixture#key-1",
+        "type": "JsonWebKey2020",
+        "controller": "did:wba:identity.example:security-fixture",
+        "publicKeyJwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "EMYqSo25T9fDxfLF6MtEKMGctc5udKAVif2oB2ot6uA"
+        }
+      }
+    ],
+    "authentication": [
+      "did:wba:identity.example:security-fixture#key-1"
+    ]
+  },
+  "header": "DIDWba v=\"1.1\", did=\"did:wba:identity.example:security-fixture\", nonce=\"public-legacy-fixture\", timestamp=\"2026-11-13T08:00:00Z\", verification_method=\"key-1\", signature=\"H2GE_ZLzt5DRFlzJ_-YVlHAgD_tfxvwiOYDnOoykyu3UbR5G60nn5yhjtkoEzEeP-6v9oA4h3mnX_tRdQPzjCA\"",
+  "domain": "receiver.example"
+}

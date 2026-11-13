@@ -157,7 +157,7 @@ pub(crate) fn is_public_address(ip: std::net::IpAddr) -> bool {
 mod tests;
 
 #[cfg(feature = "network")]
-fn check_resolution_addresses(
+pub(crate) fn check_resolution_addresses(
     addresses: &[std::net::SocketAddr],
     address_policy: super::did_resolver::DidResolutionAddressPolicy,
 ) -> Result<(), AuthenticationError> {
@@ -171,22 +171,102 @@ fn check_resolution_addresses(
 }
 
 #[cfg(feature = "network")]
+pub(crate) async fn checked_resolution_addresses(
+    url: &url::Url,
+    policy: super::did_resolver::DidResolutionAddressPolicy,
+    timeout: std::time::Duration,
+) -> Result<Vec<std::net::SocketAddr>, AuthenticationError> {
+    use std::net::SocketAddr;
+    let port = url
+        .port_or_known_default()
+        .ok_or(AuthenticationError::InvalidDid)?;
+    let addresses = match url.host().ok_or(AuthenticationError::InvalidDid)? {
+        url::Host::Ipv4(ip) => vec![SocketAddr::new(ip.into(), port)],
+        url::Host::Ipv6(ip) => vec![SocketAddr::new(ip.into(), port)],
+        url::Host::Domain(host) => {
+            tokio::time::timeout(timeout, tokio::net::lookup_host((host, port)))
+                .await
+                .map_err(|_| AuthenticationError::NetworkFailure)?
+                .map_err(|_| AuthenticationError::NetworkFailure)?
+                .collect()
+        }
+    };
+    check_resolution_addresses(&addresses, policy)?;
+    Ok(addresses)
+}
+
+#[cfg(feature = "network")]
+pub(crate) fn append_bounded_chunk(
+    data: &mut Vec<u8>,
+    chunk: &[u8],
+    limit: usize,
+) -> Result<(), AuthenticationError> {
+    if data
+        .len()
+        .checked_add(chunk.len())
+        .is_none_or(|length| length > limit)
+    {
+        return Err(AuthenticationError::NetworkFailure);
+    }
+    data.extend_from_slice(chunk);
+    Ok(())
+}
+
+#[cfg(feature = "network")]
 pub(crate) async fn fetch_document(
     did: &str,
     options: &super::did_wba::DidResolutionOptions,
     address_policy: super::did_resolver::DidResolutionAddressPolicy,
 ) -> Result<serde_json::Value, AuthenticationError> {
+    let resource = build_did_web_resolution_url(did)?;
+    let document = fetch_public_json(&resource, options, address_policy).await?;
+    if document.get("id").and_then(serde_json::Value::as_str) != Some(did) {
+        return Err(AuthenticationError::InvalidDidDocument);
+    }
+    Ok(document)
+}
+
+#[cfg(feature = "network")]
+static PUBLIC_OUTBOUND_REQUESTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "network")]
+pub(crate) struct PublicOutboundPermit(());
+#[cfg(feature = "network")]
+impl Drop for PublicOutboundPermit {
+    fn drop(&mut self) {
+        PUBLIC_OUTBOUND_REQUESTS.fetch_sub(1, std::sync::atomic::Ordering::Release);
+    }
+}
+#[cfg(feature = "network")]
+pub(crate) fn public_outbound_permit() -> Result<PublicOutboundPermit, AuthenticationError> {
+    use std::sync::atomic::Ordering;
+    PUBLIC_OUTBOUND_REQUESTS
+        .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |active| {
+            (active < 32).then_some(active + 1)
+        })
+        .map(|_| PublicOutboundPermit(()))
+        .map_err(|_| AuthenticationError::NetworkFailure)
+}
+
+#[cfg(feature = "network")]
+pub(crate) async fn fetch_public_json(
+    resource: &str,
+    options: &super::did_wba::DidResolutionOptions,
+    address_policy: super::did_resolver::DidResolutionAddressPolicy,
+) -> Result<serde_json::Value, AuthenticationError> {
     use serde_json::Value;
-    use std::{net::SocketAddr, time::Duration};
+    use std::time::Duration;
+    let _permit = public_outbound_permit()?;
     const MAX_BYTES: usize = 1024 * 1024;
     if !options.timeout_seconds.is_finite() || options.timeout_seconds <= 0.0 {
         return Err(AuthenticationError::NetworkFailure);
     }
     let timeout = Duration::try_from_secs_f64(options.timeout_seconds)
         .map_err(|_| AuthenticationError::NetworkFailure)?;
-    let resource = build_did_web_resolution_url(did)?;
     tokio::time::timeout(timeout, async {
-        let mut url = url::Url::parse(&resource).map_err(|_| AuthenticationError::InvalidDid)?;
+        let mut url = url::Url::parse(resource).map_err(|_| AuthenticationError::InvalidDid)?;
+        super::http_auth_security::authentication_origin(resource)
+            .map_err(|_| AuthenticationError::InvalidDid)?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -206,16 +286,11 @@ pub(crate) async fn fetch_document(
                 .map_err(|_| AuthenticationError::InvalidDid)?;
             builder = builder.danger_accept_invalid_certs(!options.verify_ssl);
         } else {
-            if !options.verify_ssl {
+            if !options.verify_ssl || url.scheme() != "https" {
                 return Err(AuthenticationError::NetworkFailure);
             }
             let host = url.host_str().ok_or(AuthenticationError::InvalidDid)?;
-            let addresses: Vec<SocketAddr> =
-                tokio::net::lookup_host((host, url.port_or_known_default().unwrap_or(443)))
-                    .await
-                    .map_err(|_| AuthenticationError::NetworkFailure)?
-                    .collect();
-            check_resolution_addresses(&addresses, address_policy)?;
+            let addresses = checked_resolution_addresses(&url, address_policy, timeout).await?;
             // Pin this DNS result even when the host allows TUN/Fake-IP mappings.
             builder = builder.resolve_to_addrs(host, &addresses);
         }
@@ -243,14 +318,11 @@ pub(crate) async fn fetch_document(
             .await
             .map_err(|_| AuthenticationError::NetworkFailure)?
         {
-            if data.len() + chunk.len() > MAX_BYTES {
-                return Err(AuthenticationError::NetworkFailure);
-            }
-            data.extend_from_slice(&chunk);
+            append_bounded_chunk(&mut data, &chunk, MAX_BYTES)?;
         }
         let document: Value =
             serde_json::from_slice(&data).map_err(|_| AuthenticationError::JsonFailure)?;
-        if document.get("id").and_then(Value::as_str) != Some(did) {
+        if !document.is_object() {
             return Err(AuthenticationError::InvalidDidDocument);
         }
         Ok(document)

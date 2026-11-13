@@ -88,7 +88,7 @@ auth = DIDWbaAuthHeader(
 )
 
 # 从 ad.json 发现智能体
-agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
+agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth, authenticated_origins=["https://hotel.example.com"])
 
 # 查看可用方法
 print(f"Agent: {agent.name}")
@@ -496,3 +496,7 @@ uv run python examples/python/openanp_examples/minimal_client.py
 ## 许可证
 
 Apache License 2.0。详见 [LICENSE](../../LICENSE)。
+
+## 认证安全配置
+
+受保护中间件必须显式配置 `auth_config.allowed_domains` 接收方 authority，裸 authority 表示 HTTPS。RemoteAgent 的受保护发现/API 调用通过 `authenticated_origins` 显式授权。共享 replay、origin 与兼容收紧见[安全合同](../../docs/authentication-security.md)。

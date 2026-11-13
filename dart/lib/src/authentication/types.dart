@@ -220,8 +220,10 @@ class FederatedVerificationResult {
     required this.verified,
     this.did,
     this.reason,
+    this.serviceDid,
   });
   final bool verified;
   final String? did;
   final String? reason;
+  final String? serviceDid;
 }

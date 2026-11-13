@@ -1,3 +1,4 @@
+export * from './http-auth-security.js';
 export * from './types.js';
 export * from './verification-methods.js';
 export * from './did-wba.js';

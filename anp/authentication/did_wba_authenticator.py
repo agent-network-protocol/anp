@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from .did_wba import generate_auth_header
 from .http_signatures import generate_http_signature_headers
+from .http_auth_security import authentication_origin
 
 
 class DIDWbaAuthHeader:
@@ -47,8 +48,7 @@ class DIDWbaAuthHeader:
 
     def _get_domain(self, server_url: str) -> str:
         """Extract domain from URL."""
-        parsed_url = urlparse(server_url)
-        return parsed_url.netloc.split(":")[0]
+        return authentication_origin(server_url)
 
     @staticmethod
     def _get_header_case_insensitive(
@@ -171,7 +171,7 @@ class DIDWbaAuthHeader:
                 body=body,
             )
         if normalized_mode == "legacy_didwba":
-            return self._generate_legacy_auth_header(domain)
+            return self._generate_legacy_auth_header(urlparse(server_url).hostname or "")
         raise ValueError(
             "auth_mode must be one of: http_signatures, legacy_didwba, auto"
         )
@@ -243,6 +243,11 @@ class DIDWbaAuthHeader:
             ):
                 continue
             normalized_components.append(component)
+        for required in ("@method", "@target-uri"):
+            if required not in normalized_components:
+                normalized_components.append(required)
+        if body_present and "content-digest" not in normalized_components:
+            normalized_components.append("content-digest")
         return normalized_components
 
     def should_retry_after_401(self, response_headers: Dict[str, str]) -> bool:
@@ -319,7 +324,7 @@ class DIDWbaAuthHeader:
             did_document = self._load_did_document()
             auth_header = generate_auth_header(
                 did_document,
-                self._get_domain(server_url),
+                urlparse(server_url).hostname or "",
                 self._sign_callback,
                 nonce=nonce,
             )
@@ -334,8 +339,14 @@ class DIDWbaAuthHeader:
         )
 
     def update_token(self, server_url: str, headers: Dict[str, str]) -> Optional[str]:
-        """Update the cached token from response headers."""
+        """Accept a token for an explicitly authenticated HTTPS exchange.
+
+        Direct callers must supply the actual authenticated response origin; do
+        not call this method for untrusted discovery or cross-origin redirects.
+        """
         domain = self._get_domain(server_url)
+        if not domain.startswith("https://"):
+            raise ValueError("Token exchange requires HTTPS")
 
         authentication_info = self._get_header_case_insensitive(
             headers, "Authentication-Info"

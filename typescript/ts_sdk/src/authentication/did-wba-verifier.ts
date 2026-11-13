@@ -2,12 +2,27 @@ import { SignJWT, importPKCS8, importSPKI, jwtVerify } from 'jose';
 import {
   extractAuthHeaderParts,
   isAuthenticationAuthorized,
-  resolveDidWbaDocument,
   validateDidDocumentBinding,
   verifyAuthHeaderSignature,
 } from './did-wba.js';
-import { extractSignatureMetadata, verifyHttpMessageSignature } from './http-signatures.js';
+import {
+  extractSignatureMetadata,
+  verifyHttpMessageSignature,
+  httpSignatureReplayContext,
+} from './http-signatures.js';
 import type { DidDocument, DidResolutionOptions, DidResolver } from './types.js';
+import { resolveDidDocument, validateDidDocumentMethod } from './did-resolver.js';
+import {
+  consumeHttpReplay,
+  MemoryHttpReplayStore,
+  replayDigest,
+  defaultAuthClock,
+  validateHttpSignatureTime,
+  type HttpReplayStore,
+  type HttpReplayConsumer,
+  type HttpReplayContext,
+  type HttpSignaturePolicy,
+} from './http-auth-security.js';
 
 export interface DidWbaVerifierConfig {
   jwtPrivateKey?: string;
@@ -25,6 +40,10 @@ export interface DidWbaVerifierConfig {
   didResolutionOptions?: DidResolutionOptions;
   didResolver?: DidResolver;
   externalNonceValidator?: (did: string, nonce: string) => boolean | Promise<boolean>;
+  replayStore?: HttpReplayStore | HttpReplayConsumer;
+  verifierScope?: string;
+  /** Epoch seconds. Configure before processing concurrent requests. */
+  clock?: () => number;
 }
 
 export interface VerificationSuccess {
@@ -55,6 +74,9 @@ const DEFAULT_CONFIG: Required<
     | 'externalNonceValidator'
     | 'didResolutionOptions'
     | 'didResolver'
+    | 'replayStore'
+    | 'verifierScope'
+    | 'clock'
   >
 > = {
   jwtAlgorithm: 'RS256',
@@ -71,13 +93,37 @@ const DEFAULT_CONFIG: Required<
 export class DidWbaVerifier {
   private readonly config: DidWbaVerifierConfig;
 
-  private readonly usedNonces = new Map<string, Date>();
+  private readonly replayStore: HttpReplayStore | HttpReplayConsumer;
 
   constructor(config: DidWbaVerifierConfig = {}) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
     };
+    this.replayStore = config.replayStore ?? new MemoryHttpReplayStore(10000, () => this.now());
+  }
+
+  private now(): number {
+    return this.config.clock === undefined ? defaultAuthClock() : this.config.clock();
+  }
+  private httpPolicy(): HttpSignaturePolicy {
+    return { maxAgeSeconds: (this.config.timestampExpirationMinutes ?? 5) * 60 };
+  }
+  private async consumeReplay(context: HttpReplayContext, nonce?: string): Promise<boolean> {
+    try {
+      if (
+        this.config.replayStore === undefined &&
+        this.config.externalNonceValidator &&
+        nonce !== undefined
+      ) {
+        const result = await this.config.externalNonceValidator(context.signerDid, nonce);
+        if (typeof result !== 'boolean') throw new Error('Invalid callback result');
+        return result;
+      }
+      return await consumeHttpReplay(this.replayStore, context);
+    } catch {
+      throw new DidWbaVerifierError('Replay protection unavailable', 503);
+    }
   }
 
   async verifyRequest(
@@ -116,6 +162,11 @@ export class DidWbaVerifier {
     domain?: string,
     didDocument?: DidDocument
   ): Promise<VerificationSuccess> {
+    if (
+      new Set(Object.keys(headers).map((key) => key.toLowerCase())).size !==
+      Object.keys(headers).length
+    )
+      throw new DidWbaVerifierError('Ambiguous duplicate HTTP header', 401);
     const requestDomain = domain ?? extractDomainFromUrl(url);
     this.validateAllowedDomain(requestDomain);
     const authHeader = getHeaderCaseInsensitive(headers, 'Authorization');
@@ -187,10 +238,22 @@ export class DidWbaVerifier {
       );
     }
 
+    if (!this.verifyHttpSignatureTimeWindow(metadata.created, metadata.expires))
+      throw this.challengeError(
+        'HTTP signature timestamp is expired or invalid',
+        401,
+        domain,
+        'invalid_timestamp'
+      );
     const did = metadata.keyid.split('#', 1)[0];
     const didDocument = providedDidDocument ?? (await this.resolveDidDocument(did, domain));
 
-    if (!validateDidDocumentBinding(didDocument, true)) {
+    if (
+      didDocument.id !== did ||
+      (did.startsWith('did:wba:')
+        ? !validateDidDocumentBinding(didDocument, true)
+        : !validateDidDocumentMethod(didDocument))
+    ) {
       throw this.challengeError('DID binding verification failed', 401, domain, 'invalid_did');
     }
     if (!isAuthenticationAuthorized(didDocument, metadata.keyid)) {
@@ -207,7 +270,8 @@ export class DidWbaVerifier {
         method,
         url,
         headers,
-        body ?? undefined
+        body ?? undefined,
+        { policy: this.httpPolicy(), now: this.now() }
       );
     } catch (error) {
       throw this.challengeError((error as Error).message, 401, domain, 'invalid_signature');
@@ -223,7 +287,15 @@ export class DidWbaVerifier {
     if (this.config.requireNonceForHttpSignatures && !verification.nonce) {
       throw this.challengeError('HTTP signature nonce is required', 401, domain, 'invalid_nonce');
     }
-    if (verification.nonce && !(await this.isValidServerNonce(did, verification.nonce))) {
+    const replay = httpSignatureReplayContext(
+      verification,
+      method,
+      url,
+      headers,
+      this.config.verifierScope,
+      this.httpPolicy()
+    );
+    if (!(await this.consumeReplay(replay, verification.nonce))) {
       throw this.challengeError('Invalid or expired nonce', 401, domain, 'invalid_nonce');
     }
 
@@ -250,13 +322,9 @@ export class DidWbaVerifier {
     if (!this.verifyLegacyTimestamp(parsed.timestamp)) {
       throw this.challengeError('Timestamp expired or invalid', 401, domain, 'invalid_timestamp');
     }
-    if (!(await this.isValidServerNonce(parsed.did, parsed.nonce))) {
-      throw this.challengeError('Invalid or expired nonce', 401, domain, 'invalid_nonce');
-    }
-
     const didDocument = providedDidDocument ?? (await this.resolveDidDocument(parsed.did, domain));
 
-    if (!validateDidDocumentBinding(didDocument, true)) {
+    if (didDocument.id !== parsed.did || !validateDidDocumentBinding(didDocument, true)) {
       throw this.challengeError('DID binding verification failed', 401, domain, 'invalid_did');
     }
 
@@ -279,6 +347,22 @@ export class DidWbaVerifier {
       );
     }
 
+    const scope = this.config.verifierScope ?? `legacy:${domain}`;
+    const context: HttpReplayContext = {
+      signerDid: parsed.did,
+      verifierScope: scope,
+      replayKey: replayDigest(['anp.legacy-auth.replay.v1', scope, parsed.did, parsed.nonce]),
+      validUntil:
+        Math.floor(new Date(parsed.timestamp).getTime() / 1000) +
+        Math.max(
+          this.config.nonceExpirationMinutes ?? 6,
+          this.config.timestampExpirationMinutes ?? 5
+        ) *
+          60 +
+        60,
+    };
+    if (!(await this.consumeReplay(context, parsed.nonce)))
+      throw this.challengeError('Invalid or expired nonce', 401, domain, 'invalid_nonce');
     const accessToken = await this.createAccessToken(parsed.did);
     return this.buildSuccessResult(parsed.did, 'legacy_didwba', accessToken);
   }
@@ -300,7 +384,7 @@ export class DidWbaVerifier {
     });
 
     const did = result.payload.sub;
-    if (!did || !did.startsWith('did:wba:')) {
+    if (!did || !(did.startsWith('did:wba:') || did.startsWith('did:web:'))) {
       throw new DidWbaVerifierError('Invalid DID format', 401);
     }
 
@@ -359,7 +443,8 @@ export class DidWbaVerifier {
     if (Number.isNaN(requestTime.getTime())) {
       return false;
     }
-    const now = Date.now();
+    const now = this.now() * 1000;
+    if (!Number.isSafeInteger(now) || now < 0) return false;
     if (requestTime.getTime() - now > 60_000) {
       return false;
     }
@@ -367,42 +452,19 @@ export class DidWbaVerifier {
   }
 
   private verifyHttpSignatureTimeWindow(created: number, expires?: number): boolean {
-    const now = Math.floor(Date.now() / 1000);
-    if (created > now + 60) {
+    try {
+      validateHttpSignatureTime(created, expires, this.httpPolicy(), this.now());
+      return true;
+    } catch {
       return false;
     }
-    if (now - created > (this.config.timestampExpirationMinutes ?? 5) * 60) {
-      return false;
-    }
-    return expires === undefined || expires >= now;
-  }
-
-  private async isValidServerNonce(did: string, nonce: string): Promise<boolean> {
-    if (this.config.externalNonceValidator) {
-      return Boolean(await this.config.externalNonceValidator(did, nonce));
-    }
-
-    const expirationMs = (this.config.nonceExpirationMinutes ?? 6) * 60_000;
-    const now = Date.now();
-    for (const [key, createdAt] of this.usedNonces.entries()) {
-      if (now - createdAt.getTime() > expirationMs) {
-        this.usedNonces.delete(key);
-      }
-    }
-
-    const cacheKey = `${did}:${nonce}`;
-    if (this.usedNonces.has(cacheKey)) {
-      return false;
-    }
-    this.usedNonces.set(cacheKey, new Date(now));
-    return true;
   }
 
   private async resolveDidDocument(did: string, domain: string): Promise<DidDocument> {
     try {
       const resolved = this.config.didResolver
         ? await this.config.didResolver(did)
-        : await resolveDidWbaDocument(did, false, this.config.didResolutionOptions);
+        : await resolveDidDocument(did, false, this.config.didResolutionOptions);
       if (!resolved) {
         throw this.challengeError('Failed to resolve DID document', 401, domain, 'invalid_did');
       }

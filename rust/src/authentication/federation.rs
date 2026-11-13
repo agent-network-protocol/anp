@@ -1,4 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+use super::http_auth_security::{
+    authentication_origin, HttpReplayStore, HttpSignaturePolicy, MemoryHttpReplayStore,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,8 +14,8 @@ use super::did_wba::{
     is_authentication_authorized, DidResolutionOptions, ANP_MESSAGE_SERVICE_TYPE,
 };
 use super::http_signatures::{
-    extract_signature_metadata, verify_http_message_signature, HttpSignatureError,
-    SignatureMetadata,
+    extract_signature_metadata, http_signature_replay_context,
+    verify_http_message_signature_with_policy, HttpSignatureError, SignatureMetadata,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +79,23 @@ pub enum FederatedVerificationError {
     DidResolution(String),
 }
 
+impl FederatedVerificationError {
+    /// Distinguish replay-store outages without changing the public error enum.
+    /// Hosts must reject these requests, not fall back to weaker authentication.
+    pub fn is_replay_store_unavailable(&self) -> bool {
+        matches!(self, Self::DidResolution(message) if message == "HTTP replay protection unavailable")
+    }
+}
+
+/// Explicit dependencies for full federated authentication.
+/// The receiver scope and supplied documents must be host-trusted, not peer assertions.
+pub struct FederatedHttpSecurity<'a> {
+    pub policy: HttpSignaturePolicy,
+    pub now: i64,
+    pub verifier_scope: &'a str,
+    pub replay_store: &'a dyn HttpReplayStore,
+}
+
 pub async fn verify_federated_http_request(
     sender_did: &str,
     request_method: &str,
@@ -82,6 +104,44 @@ pub async fn verify_federated_http_request(
     body: Option<&[u8]>,
     options: FederatedVerificationOptions,
 ) -> Result<FederatedVerificationResult, FederatedVerificationError> {
+    static REPLAY_STORE: LazyLock<MemoryHttpReplayStore> =
+        LazyLock::new(MemoryHttpReplayStore::default);
+    let scope = authentication_origin(request_url)?;
+    verify_federated_http_request_with_security(
+        sender_did,
+        request_method,
+        request_url,
+        headers,
+        body,
+        options,
+        FederatedHttpSecurity {
+            policy: HttpSignaturePolicy::default(),
+            now: chrono::Utc::now().timestamp(),
+            verifier_scope: &scope,
+            replay_store: &*REPLAY_STORE,
+        },
+    )
+    .await
+}
+
+/// Verify identity, signature, time and atomic replay state.
+/// Clustered hosts must supply their shared store, never the default memory store.
+pub async fn verify_federated_http_request_with_security(
+    sender_did: &str,
+    request_method: &str,
+    request_url: &str,
+    headers: &BTreeMap<String, String>,
+    body: Option<&[u8]>,
+    options: FederatedVerificationOptions,
+    security: FederatedHttpSecurity<'_>,
+) -> Result<FederatedVerificationResult, FederatedVerificationError> {
+    if !security.policy.check_time {
+        return Err(HttpSignatureError::InvalidSignatureInput.into());
+    }
+    let metadata = extract_signature_metadata(headers)?;
+    security
+        .policy
+        .validate(metadata.created, metadata.expires, security.now)?;
     let sender_document = if let Some(document) = options.sender_did_document.clone() {
         document
     } else {
@@ -108,7 +168,6 @@ pub async fn verify_federated_http_request(
         .ok_or(FederatedVerificationError::MissingServiceDid)?
         .to_string();
 
-    let metadata = extract_signature_metadata(headers)?;
     let keyid_did = metadata.keyid.split('#').next().unwrap_or_default();
     if keyid_did != service_did {
         return Err(FederatedVerificationError::KeyidDidMismatch);
@@ -132,13 +191,33 @@ pub async fn verify_federated_http_request(
         return Err(FederatedVerificationError::UnauthorizedVerificationMethod);
     }
 
-    let verified_metadata = verify_http_message_signature(
+    let verified_metadata = verify_http_message_signature_with_policy(
         &service_document,
         request_method,
         request_url,
         headers,
         body,
+        security.policy,
+        security.now,
     )?;
+    let context = http_signature_replay_context(
+        &verified_metadata,
+        request_method,
+        request_url,
+        headers,
+        security.verifier_scope,
+        security.policy,
+    )?;
+    let first_use = security
+        .replay_store
+        .consume_once(&context)
+        .await
+        .map_err(|_| {
+            FederatedVerificationError::DidResolution("HTTP replay protection unavailable".into())
+        })?;
+    if !first_use {
+        return Err(HttpSignatureError::InvalidSignatureInput.into());
+    }
 
     Ok(FederatedVerificationResult {
         sender_did: sender_did.to_string(),

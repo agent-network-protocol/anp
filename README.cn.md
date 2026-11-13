@@ -14,6 +14,8 @@ Python 包名是 `anp`；本仓库同时包含 Go、Rust、Dart、TypeScript 和
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+认证安全升级与兼容边界：[安全合同](docs/authentication-security.md)。
+
 ## ANP 是什么？
 
 ANP 是面向开放智能体网络的协议栈。它主要回答这些问题：

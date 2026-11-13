@@ -53,7 +53,7 @@ auth = DIDWbaAuthHeader(
 )
 
 # Discover agent from ad.json (fetches interface.json automatically)
-agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
+agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth, authenticated_origins=["https://hotel.example.com"])
 
 # Inspect available methods
 print(f"Agent: {agent.name}")
@@ -635,3 +635,7 @@ uvicorn examples.python.openanp_examples.advanced_server:app_custom --port 8000
 ## License
 
 Apache License 2.0. See [LICENSE](../../LICENSE).
+
+## Authentication security configuration
+
+Protected middleware requires explicit receiver authorities in `auth_config.allowed_domains`; bare authorities mean HTTPS. RemoteAgent protected discovery/API calls accept an explicit `authenticated_origins` policy. See the [security contract](../../docs/authentication-security.md) for shared stores, approved origins, and compatibility changes.

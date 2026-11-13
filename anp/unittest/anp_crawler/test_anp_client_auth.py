@@ -78,6 +78,12 @@ class _FakeResponse:
         self.reason = "OK"
         self.headers = {"Content-Type": "application/json"}
         self.charset = "utf-8"
+        self.content_length = 2
+        self.url = "https://example.com/"
+        self.content = self
+
+    async def iter_chunked(self, _size):
+        yield b"{}"
 
     async def __aenter__(self):
         return self
@@ -106,15 +112,15 @@ class _FakeClientSession:
 
     def get(self, **kwargs):
         type(self).calls.append(("GET", kwargs))
-        if type(self).response_queue:
-            return type(self).response_queue.pop(0)
-        return _FakeResponse()
+        response = type(self).response_queue.pop(0) if type(self).response_queue else _FakeResponse()
+        response.url = kwargs["url"]
+        return response
 
     def post(self, **kwargs):
         type(self).calls.append(("POST", kwargs))
-        if type(self).response_queue:
-            return type(self).response_queue.pop(0)
-        return _FakeResponse()
+        response = type(self).response_queue.pop(0) if type(self).response_queue else _FakeResponse()
+        response.url = kwargs["url"]
+        return response
 
 
 class TestANPClientSigning(unittest.IsolatedAsyncioTestCase):
@@ -130,12 +136,13 @@ class TestANPClientSigning(unittest.IsolatedAsyncioTestCase):
             "anp.anp_crawler.anp_client.DIDWbaAuthHeader",
             return_value=auth_client,
         ), patch(
-            "anp.anp_crawler.anp_client.aiohttp.ClientSession",
+            "anp.anp_crawler.anp_client.public_client_session",
             _FakeClientSession,
         ):
             client = ANPClient(
                 did_document_path="did.json",
                 private_key_path="key.pem",
+                authenticated_origins=["https://example.com"],
             )
             result = await client.fetch_url(
                 url="https://example.com/search",
@@ -163,12 +170,13 @@ class TestANPClientSigning(unittest.IsolatedAsyncioTestCase):
             "anp.anp_crawler.anp_client.DIDWbaAuthHeader",
             return_value=auth_client,
         ), patch(
-            "anp.anp_crawler.anp_client.aiohttp.ClientSession",
+            "anp.anp_crawler.anp_client.public_client_session",
             _FakeClientSession,
         ):
             client = ANPClient(
                 did_document_path="did.json",
                 private_key_path="key.pem",
+                authenticated_origins=["https://example.com"],
             )
             result = await client.fetch_url(
                 url="https://example.com/orders",
@@ -214,12 +222,13 @@ class TestANPClientSigning(unittest.IsolatedAsyncioTestCase):
             "anp.anp_crawler.anp_client.DIDWbaAuthHeader",
             return_value=auth_client,
         ), patch(
-            "anp.anp_crawler.anp_client.aiohttp.ClientSession",
+            "anp.anp_crawler.anp_client.public_client_session",
             _FakeClientSession,
         ):
             client = ANPClient(
                 did_document_path="did.json",
                 private_key_path="key.pem",
+                authenticated_origins=["https://example.com"],
             )
             result = await client.fetch_url(
                 url="https://example.com/orders",

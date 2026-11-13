@@ -60,6 +60,8 @@ state.
 
 ## Persistent Rust operation facade
 
+Normal operation locks retain their existing five-second bound and retry only native lock contention. Windows lock violation is recognized by the platform code supplied by `fs2`, since Rust does not classify error 33 as `WouldBlock`. Explicit nonblocking receive scopes continue to yield immediately; unrelated I/O errors are not retried.
+
 The v2 facade uses `GroupMlsStore` and `ImCoreSqliteGroupMlsStore` so every
 local DID/device pair has independent OpenMLS signer, KeyPackage private
 material, Leaf state and epoch secrets. It provides typed operations for:

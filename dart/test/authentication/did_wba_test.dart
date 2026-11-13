@@ -38,6 +38,7 @@ void main() {
       requestUrl: 'https://example.com/rpc',
       headers: headers,
       body: body,
+      now: 1, // This fixture tests historical cryptographic compatibility.
     );
     expect(metadata.keyId, '${bundle.did}#key-1');
   });

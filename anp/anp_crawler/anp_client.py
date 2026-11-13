@@ -11,7 +11,6 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
 
 import aiohttp
 from yarl import URL
@@ -20,6 +19,8 @@ from yarl import URL
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ..authentication import DIDWbaAuthHeader
+from ..authentication.http_auth_security import authentication_origin
+from ..authentication.outbound import public_client_session, read_bounded_response, validate_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,10 @@ class ANPClient:
     def __init__(
         self,
         did_document_path: str,
-        private_key_path: str
+        private_key_path: str,
+        *,
+        authenticated_origins: Optional[List[str]] = None,
+        max_response_bytes: int = 1024 * 1024,
     ):
         """
         Initialize ANP client with DID authentication.
@@ -76,6 +80,10 @@ class ANPClient:
         self.did_document_path = did_document_path
         self.private_key_path = private_key_path
         self.auth_client = None
+        self.authenticated_origins = frozenset(authentication_origin(url) for url in (authenticated_origins or []))
+        if max_response_bytes <= 0:
+            raise ValueError("Response size limit must be positive")
+        self.max_response_bytes = max_response_bytes
 
         # Initialize DID authentication client
         self._initialize_auth_client()
@@ -133,12 +141,16 @@ class ANPClient:
                 "url": str            # Final URL (after redirects)
             }
         """
-        if headers is None:
-            headers = {}
+        headers = dict(headers or {})
+        _remove_auth_headers(headers)
         if params is None:
             params = {}
 
         request_url = _build_request_url(url, params)
+        validate_public_url(request_url)
+        authenticate = authentication_origin(request_url) in self.authenticated_origins
+        if authenticate and self.auth_client is None:
+            raise ValueError("Authenticated ANP origin requires a usable credential provider")
         logger.info(f"ANP request: {method} {request_url}")
 
         # Add basic request headers
@@ -154,7 +166,7 @@ class ANPClient:
             ).encode("utf-8")
 
         # Add DID authentication
-        if self.auth_client:
+        if self.auth_client and authenticate:
             try:
                 _remove_auth_headers(headers)
                 auth_headers = self.auth_client.get_auth_header(
@@ -165,15 +177,16 @@ class ANPClient:
                 )
                 headers.update(auth_headers)
             except Exception as e:
-                logger.error(f"Failed to get authentication header: {str(e)}")
+                raise ValueError("DID authentication could not be generated") from e
 
         # Set reasonable timeout for requests
         timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with public_client_session(timeout) as session:
             # Prepare request parameters
             request_kwargs = {
                 "url": request_url,
                 "headers": headers,
+                "allow_redirects": False,
             }
 
             # If there is a request body and the method supports it, add the request body
@@ -188,7 +201,7 @@ class ANPClient:
                     logger.info(f"ANP response: status code {response.status}")
 
                     # Check response status
-                    if response.status == 401 and self.auth_client:
+                    if response.status == 401 and self.auth_client and authenticate:
                         response_headers = dict(response.headers)
                         authorization = _get_header_case_insensitive(
                             headers,
@@ -258,23 +271,16 @@ class ANPClient:
 
     async def _process_response(self, response, url):
         """Process HTTP response and return standardized result."""
-        # If authentication is successful, update the token
-        if response.status == 200 and self.auth_client:
-            try:
-                self.auth_client.update_token(url, dict(response.headers))
-            except Exception as e:
-                logger.error(f"Failed to update token: {str(e)}")
-
-        # Get response content type
         content_type = response.headers.get("Content-Type", "").lower()
-
-        # Get response text
-        text = await response.text()
-
-        # Determine encoding
-        encoding = "utf-8"
-        if response.charset:
-            encoding = response.charset
+        data = await read_bounded_response(response, self.max_response_bytes)
+        encoding = response.charset or "utf-8"
+        text = data.decode(encoding)
+        # Discovery responses have no permission to change credentials. A host
+        # explicitly opts a TLS origin into authenticated request/token exchange.
+        if (response.status == 200 and self.auth_client
+                and authentication_origin(url) in self.authenticated_origins
+                and authentication_origin(str(response.url)) == authentication_origin(url)):
+            self.auth_client.update_token(url, dict(response.headers))
 
         # Build result
         result = {
@@ -304,10 +310,11 @@ class ANPClient:
             Dictionary containing content metadata
         """
         try:
+            validate_public_url(url)
             # Set reasonable timeout for requests
             timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.head(url) as response:
+            async with public_client_session(timeout) as session:
+                async with session.head(url, allow_redirects=False) as response:
                     content_type = response.headers.get("Content-Type", "")
                     content_length = response.headers.get("Content-Length", "0")
 

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
@@ -12,7 +12,15 @@ use super::did_wba::{
     extract_auth_header_parts, is_authentication_authorized, resolve_did_wba_document_with_options,
     validate_did_document_binding, verify_auth_header_signature, DidResolutionOptions,
 };
-use super::http_signatures::{extract_signature_metadata, verify_http_message_signature};
+use super::http_auth_security::{
+    authentication_origin, HttpReplayContext, HttpReplayStore, HttpSignaturePolicy,
+    MemoryHttpReplayStore,
+};
+use super::http_signatures::{
+    extract_signature_metadata, http_signature_replay_context,
+    verify_http_message_signature_with_policy,
+};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
 pub struct DidWbaVerifierConfig {
@@ -72,7 +80,10 @@ pub struct DidWbaVerifierError {
 
 pub struct DidWbaVerifier {
     config: DidWbaVerifierConfig,
-    used_nonces: HashMap<String, chrono::DateTime<Utc>>,
+    replay_store: Option<Arc<dyn HttpReplayStore>>,
+    local_replay_store: MemoryHttpReplayStore,
+    verifier_scope: Option<String>,
+    clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,8 +97,58 @@ impl DidWbaVerifier {
     pub fn new(config: DidWbaVerifierConfig) -> Self {
         Self {
             config,
-            used_nonces: HashMap::new(),
+            replay_store: None,
+            local_replay_store: MemoryHttpReplayStore::default(),
+            verifier_scope: None,
+            clock: None,
         }
+    }
+
+    /// Use a shared, atomic, non-blocking store for all replicas of a receiver.
+    /// This builder preserves existing public config struct literals.
+    pub fn with_replay_store(
+        mut self,
+        store: Arc<dyn HttpReplayStore>,
+        scope: impl Into<String>,
+    ) -> Self {
+        self.replay_store = Some(store);
+        self.verifier_scope = Some(scope.into());
+        self
+    }
+
+    /// Override the host clock, primarily for deterministic unit verification.
+    pub fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    fn now(&self) -> i64 {
+        self.clock
+            .as_ref()
+            .map(|clock| clock())
+            .unwrap_or_else(|| Utc::now().timestamp())
+    }
+
+    fn http_policy(&self) -> HttpSignaturePolicy {
+        HttpSignaturePolicy {
+            max_age_seconds: self.config.timestamp_expiration_minutes.saturating_mul(60),
+            ..Default::default()
+        }
+    }
+
+    async fn consume_replay(
+        &self,
+        context: &HttpReplayContext,
+    ) -> Result<bool, DidWbaVerifierError> {
+        let result = match &self.replay_store {
+            Some(store) => store.consume_once(context).await,
+            None => self.local_replay_store.consume_once_at(context, self.now()),
+        };
+        result.map_err(|_| DidWbaVerifierError {
+            message: "Replay protection unavailable".into(),
+            status_code: 503,
+            headers: BTreeMap::new(),
+        })
     }
 
     pub async fn verify_request(
@@ -98,6 +159,17 @@ impl DidWbaVerifier {
         body: Option<&[u8]>,
         domain: Option<&str>,
     ) -> Result<VerificationSuccess, DidWbaVerifierError> {
+        let unique = headers
+            .keys()
+            .map(|key| key.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique.len() != headers.len() {
+            return Err(DidWbaVerifierError {
+                message: "Ambiguous duplicate HTTP header".into(),
+                status_code: 401,
+                headers: BTreeMap::new(),
+            });
+        }
         let request_domain = domain
             .map(|value| value.to_string())
             .unwrap_or_else(|| extract_domain(url));
@@ -153,6 +225,17 @@ impl DidWbaVerifier {
         domain: Option<&str>,
         did_document: &serde_json::Value,
     ) -> Result<VerificationSuccess, DidWbaVerifierError> {
+        let unique = headers
+            .keys()
+            .map(|key| key.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique.len() != headers.len() {
+            return Err(DidWbaVerifierError {
+                message: "Ambiguous duplicate HTTP header".into(),
+                status_code: 401,
+                headers: BTreeMap::new(),
+            });
+        }
         let request_domain = domain
             .map(|value| value.to_string())
             .unwrap_or_else(|| extract_domain(url));
@@ -173,14 +256,16 @@ impl DidWbaVerifier {
                     "invalid_request",
                 ));
             }
-            return self.handle_http_signature_auth_with_document(
-                method,
-                url,
-                headers,
-                body,
-                &request_domain,
-                did_document,
-            );
+            return self
+                .handle_http_signature_auth_with_document(
+                    method,
+                    url,
+                    headers,
+                    body,
+                    &request_domain,
+                    did_document,
+                )
+                .await;
         }
 
         if let Some(auth_header) = get_header_case_insensitive(headers, "Authorization") {
@@ -192,11 +277,9 @@ impl DidWbaVerifier {
                     "invalid_request",
                 ));
             }
-            return self.handle_legacy_did_auth_with_document(
-                auth_header,
-                &request_domain,
-                did_document,
-            );
+            return self
+                .handle_legacy_did_auth_with_document(auth_header, &request_domain, did_document)
+                .await;
         }
 
         Err(DidWbaVerifierError {
@@ -223,6 +306,14 @@ impl DidWbaVerifier {
             .next()
             .unwrap_or_default()
             .to_string();
+        if !self.verify_http_signature_time_window(metadata.created, metadata.expires) {
+            return Err(self.challenge_error(
+                "HTTP signature timestamp is expired or invalid",
+                401,
+                domain,
+                "invalid_timestamp",
+            ));
+        }
         let did_document = super::did_resolver::resolve_did_document_with_options(
             &did,
             false,
@@ -240,9 +331,10 @@ impl DidWbaVerifier {
             domain,
             &did_document,
         )
+        .await
     }
 
-    fn handle_http_signature_auth_with_document(
+    async fn handle_http_signature_auth_with_document(
         &mut self,
         method: &str,
         url: &str,
@@ -279,10 +371,16 @@ impl DidWbaVerifier {
                 headers: BTreeMap::new(),
             });
         }
-        let verification = verify_http_message_signature(did_document, method, url, headers, body)
-            .map_err(|_| {
-                self.challenge_error("Invalid signature", 401, domain, "invalid_signature")
-            })?;
+        let verification = verify_http_message_signature_with_policy(
+            did_document,
+            method,
+            url,
+            headers,
+            body,
+            self.http_policy(),
+            self.now(),
+        )
+        .map_err(|_| self.challenge_error("Invalid signature", 401, domain, "invalid_signature"))?;
         if !self.verify_http_signature_time_window(verification.created, verification.expires) {
             return Err(self.challenge_error(
                 "HTTP signature timestamp is expired or invalid",
@@ -299,15 +397,44 @@ impl DidWbaVerifier {
                 "invalid_nonce",
             ));
         }
-        if let Some(nonce) = verification.nonce.as_deref() {
-            if !self.is_valid_nonce(&did, nonce) {
-                return Err(self.challenge_error(
-                    "Nonce has already been used or expired",
-                    401,
-                    domain,
-                    "invalid_nonce",
-                ));
-            }
+        let first_use = if self.replay_store.is_none()
+            && self.config.external_nonce_validator.is_some()
+            && verification.nonce.is_some()
+        {
+            self.config
+                .external_nonce_validator
+                .as_ref()
+                .expect("checked callback")(
+                &did,
+                verification.nonce.as_deref().expect("checked nonce"),
+            )
+        } else {
+            let scope = self
+                .verifier_scope
+                .clone()
+                .unwrap_or(authentication_origin(url).map_err(|_| {
+                    self.challenge_error("Invalid receiver URL", 401, domain, "invalid_request")
+                })?);
+            let context = http_signature_replay_context(
+                &verification,
+                method,
+                url,
+                headers,
+                &scope,
+                self.http_policy(),
+            )
+            .map_err(|_| {
+                self.challenge_error("Invalid replay context", 401, domain, "invalid_request")
+            })?;
+            self.consume_replay(&context).await?
+        };
+        if !first_use {
+            return Err(self.challenge_error(
+                "Nonce has already been used or expired",
+                401,
+                domain,
+                "invalid_nonce",
+            ));
         }
         let access_token = self.create_access_token(&did)?;
         Ok(self.build_success_result(&did, "http_signatures", Some(access_token)))
@@ -326,6 +453,14 @@ impl DidWbaVerifier {
                 "invalid_request",
             )
         })?;
+        if !self.verify_legacy_timestamp(&parsed.timestamp) {
+            return Err(self.challenge_error(
+                "Legacy DIDWba timestamp is expired or invalid",
+                401,
+                domain,
+                "invalid_timestamp",
+            ));
+        }
         let did_document = resolve_did_wba_document_with_options(
             &parsed.did,
             false,
@@ -336,9 +471,10 @@ impl DidWbaVerifier {
             self.challenge_error("Failed to resolve DID document", 401, domain, "invalid_did")
         })?;
         self.handle_legacy_did_auth_with_document(authorization, domain, &did_document)
+            .await
     }
 
-    fn handle_legacy_did_auth_with_document(
+    async fn handle_legacy_did_auth_with_document(
         &mut self,
         authorization: &str,
         domain: &str,
@@ -361,14 +497,6 @@ impl DidWbaVerifier {
             ));
         }
         self.validate_document_id_matches(did_document, &parsed.did, domain)?;
-        if !self.is_valid_nonce(&parsed.did, &parsed.nonce) {
-            return Err(self.challenge_error(
-                "Legacy DIDWba nonce has already been used or expired",
-                401,
-                domain,
-                "invalid_nonce",
-            ));
-        }
         self.validate_did_binding(did_document)?;
         let keyid = format!("{}#{}", parsed.did, parsed.verification_method);
         if !is_authentication_authorized(did_document, &keyid) {
@@ -386,6 +514,45 @@ impl DidWbaVerifier {
                 "invalid_signature",
             )
         })?;
+        let first_use =
+            if self.replay_store.is_none() && self.config.external_nonce_validator.is_some() {
+                self.config
+                    .external_nonce_validator
+                    .as_ref()
+                    .expect("checked callback")(&parsed.did, &parsed.nonce)
+            } else {
+                let scope = self
+                    .verifier_scope
+                    .clone()
+                    .unwrap_or_else(|| format!("legacy:{domain}"));
+                let material = format!(
+                    "anp.legacy-auth.replay.v1\0{scope}\0{}\0{}",
+                    parsed.did, parsed.nonce
+                );
+                let context = HttpReplayContext {
+                    signer_did: parsed.did.clone(),
+                    verifier_scope: scope,
+                    replay_key: format!("{:x}", Sha256::digest(material.as_bytes())),
+                    valid_until: self
+                        .now()
+                        .saturating_add(
+                            self.config
+                                .nonce_expiration_minutes
+                                .max(self.config.timestamp_expiration_minutes)
+                                .saturating_mul(60),
+                        )
+                        .saturating_add(60),
+                };
+                self.consume_replay(&context).await?
+            };
+        if !first_use {
+            return Err(self.challenge_error(
+                "Legacy DIDWba nonce has already been used or expired",
+                401,
+                domain,
+                "invalid_nonce",
+            ));
+        }
         let access_token = self.create_access_token(&parsed.did)?;
         Ok(self.build_success_result(&parsed.did, "legacy_didwba", Some(access_token)))
     }
@@ -492,7 +659,9 @@ impl DidWbaVerifier {
     fn verify_legacy_timestamp(&self, timestamp: &str) -> bool {
         let parsed = chrono::DateTime::parse_from_rfc3339(&timestamp.replace('Z', "+00:00"));
         if let Ok(value) = parsed {
-            let current = Utc::now();
+            let Some(current) = chrono::DateTime::from_timestamp(self.now(), 0) else {
+                return false;
+            };
             let request = value.with_timezone(&Utc);
             if request > current + Duration::minutes(1) {
                 return false;
@@ -504,36 +673,9 @@ impl DidWbaVerifier {
     }
 
     fn verify_http_signature_time_window(&self, created: i64, expires: Option<i64>) -> bool {
-        let current = Utc::now().timestamp();
-        if created > current + 60 {
-            return false;
-        }
-        if current - created > self.config.timestamp_expiration_minutes * 60 {
-            return false;
-        }
-        if let Some(value) = expires {
-            if value < current {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn is_valid_nonce(&mut self, did: &str, nonce: &str) -> bool {
-        if let Some(validator) = self.config.external_nonce_validator.as_ref() {
-            return validator(did, nonce);
-        }
-        let current = Utc::now();
-        self.used_nonces.retain(|_, issued_at| {
-            current.signed_duration_since(*issued_at)
-                <= Duration::minutes(self.config.nonce_expiration_minutes)
-        });
-        let cache_key = format!("{}:{}", did, nonce);
-        if self.used_nonces.contains_key(&cache_key) {
-            return false;
-        }
-        self.used_nonces.insert(cache_key, current);
-        true
+        self.http_policy()
+            .validate(created, expires, self.now())
+            .is_ok()
     }
 
     fn create_access_token(&self, did: &str) -> Result<String, DidWbaVerifierError> {

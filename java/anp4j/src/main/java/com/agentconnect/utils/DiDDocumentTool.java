@@ -7,8 +7,9 @@ package com.agentconnect.utils;
 
 import com.agentconnect.authentication.DIDWBA;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.asynchttpclient.AsyncHttpClient;
-import org.asynchttpclient.DefaultAsyncHttpClient;
+import com.agentconnect.authentication.PublicHttpTransport;
+import com.agentconnect.authentication.PublicNetworkPolicy;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +25,7 @@ import java.util.concurrent.CompletableFuture;
  * @Date 2025/6/1 14:00
  */
 public class DiDDocumentTool {
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper objectMapper = new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION).enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Logger logger = LoggerFactory.getLogger(DiDDocumentTool.class);
 
     /**
@@ -151,72 +152,18 @@ public class DiDDocumentTool {
      * @return a CompletableFuture that will complete with the resolved DID document
      */
     public static CompletableFuture<Map<String, Object>> resolveDIDWBADocument(String did) {
-        logger.info("Resolving DID document for: {}", did);
-
-        // Validate DID format
-        if (!did.startsWith("did:wba:")) {
-            return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("Invalid DID format: must start with 'did:wba:'"));
-        }
-
-        // Extract domain and path from DID
-        String[] didParts = did.split(":", 4);
-        if (didParts.length < 3) {
-            return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("Invalid DID format: missing domain"));
-        }
-
-        try {
-            String domain = java.net.URLDecoder.decode(didParts[2], StandardCharsets.UTF_8);
-            String[] pathSegments = new String[0];
-            if (didParts.length > 3) {
-                pathSegments = didParts[3].split(":");
-            }
-
-            // Create HTTP client
-            AsyncHttpClient client = new DefaultAsyncHttpClient();
-
-            // Create URL
-            StringBuilder url = new StringBuilder();
-            url.append("https://").append(domain);
-
-            if (pathSegments.length > 0) {
-                for (String segment : pathSegments) {
-                    url.append('/').append(segment);
-                }
-                url.append("/did.json");
-            } else {
-                url.append("/.well-known/did.json");
-            }
-
-            logger.debug("Requesting DID document from URL: {}", url);
-
-            // Send request
-            return client.prepareGet(url.toString())
-                    .execute()
-                    .toCompletableFuture()
-                    .thenApply(response -> {
-                        try {
-                            if (response.getStatusCode() == 200) {
-                                String body = response.getResponseBody();
-                                return objectMapper.readValue(body, Map.class);
-                            } else {
-                                throw new RuntimeException("Failed to resolve DID document: " +
-                                        response.getStatusCode() + " " + response.getResponseBody());
-                            }
-                        } catch (Exception e) {
-                            throw new RuntimeException("Failed to parse DID document", e);
-                        } finally {
-                            try {
-                                client.close();
-                            } catch (Exception e) {
-                                logger.warn("Failed to close HTTP client", e);
-                            }
-                        }
-                    });
-        } catch (Exception e) {
-            return CompletableFuture.failedFuture(e);
-        }
+        final java.net.URI resource;
+        try { resource = PublicNetworkPolicy.didResource(did); PublicNetworkPolicy.validate(resource,null); }
+        catch (RuntimeException invalid) { return CompletableFuture.failedFuture(invalid); }
+        return PublicHttpTransport.async(() -> {
+            try {
+                PublicHttpTransport.Response response = new PublicHttpTransport().request(resource,"GET",Map.of(),new byte[0]);
+                if (response.status()!=200) throw new SecurityException("DID resolution requires HTTP 200");
+                @SuppressWarnings("unchecked")
+                Map<String,Object> document=objectMapper.readValue(response.body(),Map.class);
+                if (!did.equals(document.get("id"))) throw new SecurityException("DID document ID mismatch");
+                return document;
+            } catch (Exception failed) { throw new java.util.concurrent.CompletionException("DID resolution rejected",failed); }
+        },java.time.Duration.ofSeconds(10));
     }
-
 }

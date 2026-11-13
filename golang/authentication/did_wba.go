@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,11 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	anp "github.com/agent-network-protocol/anp/golang"
 	"github.com/agent-network-protocol/anp/golang/internal/base58util"
 	"github.com/agent-network-protocol/anp/golang/internal/cjson"
 	"github.com/agent-network-protocol/anp/golang/internal/diddoc"
+	"github.com/agent-network-protocol/anp/golang/internal/httpsecurity"
 	"github.com/agent-network-protocol/anp/golang/proof"
 )
 
@@ -324,26 +325,46 @@ func ResolveDidWBADocument(ctx context.Context, did string, verifyProof bool) (m
 	return ResolveDidWBADocumentWithOptions(ctx, did, verifyProof, DidResolutionOptions{})
 }
 
+func buildWBAResolutionURL(did string) (string, error) {
+	parts := strings.Split(did, ":")
+	if len(parts) < 3 || parts[0] != "did" || parts[1] != "wba" {
+		return "", fmt.Errorf("invalid DID format")
+	}
+	domain, err := url.PathUnescape(parts[2])
+	if err != nil || domain == "" || !utf8.ValidString(domain) || strings.ContainsAny(domain, "/\\?#%@") {
+		return "", fmt.Errorf("invalid DID authority")
+	}
+	base := "https://" + domain
+	if _, err := AuthenticationOrigin(base); err != nil {
+		return "", err
+	}
+	if len(parts) == 3 {
+		return base + "/.well-known/did.json", nil
+	}
+	segments := make([]string, 0, len(parts)-3)
+	for _, raw := range parts[3:] {
+		segment, err := url.PathUnescape(raw)
+		if err != nil || segment == "" || !utf8.ValidString(segment) || segment == "." || segment == ".." || strings.ContainsAny(segment, "/\\?#%") {
+			return "", fmt.Errorf("unsafe DID path segment")
+		}
+		for _, c := range segment {
+			if c < 32 || c == 127 {
+				return "", fmt.Errorf("unsafe DID path segment")
+			}
+		}
+		segments = append(segments, url.PathEscape(segment))
+	}
+	return base + "/" + strings.Join(segments, "/") + "/did.json", nil
+}
+
 // ResolveDidWBADocumentWithOptions resolves a did:wba document with explicit options.
 func ResolveDidWBADocumentWithOptions(ctx context.Context, did string, verifyProof bool, options DidResolutionOptions) (map[string]any, error) {
 	if !strings.HasPrefix(did, "did:wba:") {
 		return nil, fmt.Errorf("invalid DID format")
 	}
-	parts := strings.Split(did, ":")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid DID format")
-	}
-	domain, err := url.PathUnescape(parts[2])
+	resourceURL, err := buildWBAResolutionURL(did)
 	if err != nil {
 		return nil, err
-	}
-	baseURL := options.BaseURLOverride
-	if baseURL == "" {
-		baseURL = "https://" + domain
-	}
-	resourceURL := strings.TrimRight(baseURL, "/") + "/.well-known/did.json"
-	if len(parts) > 3 {
-		resourceURL = strings.TrimRight(baseURL, "/") + "/" + strings.Join(parts[3:], "/") + "/did.json"
 	}
 	document, err := fetchJSONDocument(ctx, resourceURL, options)
 	if err != nil {
@@ -408,22 +429,44 @@ func generateAuthHeaderWithOverrides(didDocument map[string]any, serviceDomain s
 
 // ExtractAuthHeaderParts parses a legacy DIDWba Authorization header.
 func ExtractAuthHeaderParts(authHeader string) (ParsedAuthHeader, error) {
-	if !strings.HasPrefix(strings.TrimSpace(authHeader), "DIDWba") {
-		return ParsedAuthHeader{}, fmt.Errorf("authentication header must start with DIDWba")
+	if len(authHeader) > 16384 || strings.ContainsFunc(authHeader, func(c rune) bool { return c < 32 || c == 127 }) {
+		return ParsedAuthHeader{}, fmt.Errorf("invalid or excessive Legacy authorization header")
 	}
+	header := strings.TrimSpace(authHeader)
+	if !strings.HasPrefix(header, "DIDWba ") {
+		return ParsedAuthHeader{}, fmt.Errorf("invalid Legacy authorization scheme")
+	}
+	rest := strings.TrimPrefix(header, "DIDWba ")
+	if strings.HasSuffix(strings.TrimSpace(rest), ",") {
+		return ParsedAuthHeader{}, fmt.Errorf("invalid Legacy authorization syntax")
+	}
+	pattern := regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"\r\n]+)"\s*(?:,\s*|$)`)
 	values := map[string]string{}
+	for len(rest) > 0 {
+		matches := pattern.FindStringSubmatch(rest)
+		if len(matches) != 3 {
+			return ParsedAuthHeader{}, fmt.Errorf("invalid Legacy authorization field")
+		}
+		name := strings.ToLower(matches[1])
+		if _, exists := values[name]; exists || len(values) >= 32 {
+			return ParsedAuthHeader{}, fmt.Errorf("duplicate Legacy authorization field")
+		}
+		values[name] = matches[2]
+		rest = rest[len(matches[0]):]
+	}
 	for _, field := range []string{"did", "nonce", "timestamp", "verification_method", "signature"} {
-		pattern := regexp.MustCompile(`(?i)` + field + `="([^"]+)"`)
-		matches := pattern.FindStringSubmatch(authHeader)
-		if len(matches) != 2 {
+		if values[field] == "" {
 			return ParsedAuthHeader{}, fmt.Errorf("missing field in authorization header: %s", field)
 		}
-		values[field] = matches[1]
 	}
-	version := "1.1"
-	if matches := regexp.MustCompile(`(?i)v="([^"]+)"`).FindStringSubmatch(authHeader); len(matches) == 2 {
-		version = matches[1]
+	if len(values["nonce"]) > 1024 {
+		return ParsedAuthHeader{}, fmt.Errorf("Legacy nonce exceeds limit")
 	}
+	version := values["v"]
+	if version == "" {
+		version = "1.1"
+	}
+
 	return ParsedAuthHeader{DID: values["did"], Nonce: values["nonce"], Timestamp: values["timestamp"], VerificationMethod: values["verification_method"], Signature: values["signature"], Version: version}, nil
 }
 
@@ -459,7 +502,11 @@ func generateAuthPayload(didDocument map[string]any, serviceDomain string, priva
 		return ParsedAuthHeader{}, err
 	}
 	if nonce == "" {
-		nonce = anp.EncodeBase64URL(randomBytes(16))
+		nonceBytes, err := randomBytes(16)
+		if err != nil {
+			return ParsedAuthHeader{}, err
+		}
+		nonce = anp.EncodeBase64URL(nonceBytes)
 	}
 	if timestamp == "" {
 		timestamp = time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -675,44 +722,62 @@ func domainFieldForVersion(version string) string {
 }
 
 func fetchJSONDocument(ctx context.Context, resourceURL string, options DidResolutionOptions) (map[string]any, error) {
+	trusted := options.BaseURLOverride != ""
+	if trusted {
+		base, err := url.Parse(options.BaseURLOverride)
+		if err != nil || base.User != nil || base.RawQuery != "" || strings.Contains(options.BaseURLOverride, "#") {
+			return nil, fmt.Errorf("invalid trusted resolution override")
+		}
+		original, err := url.Parse(resourceURL)
+		if err != nil {
+			return nil, err
+		}
+		resourceURL = strings.TrimRight(options.BaseURLOverride, "/") + original.EscapedPath()
+	}
+	if err := httpsecurity.ValidateURL(resourceURL, trusted); err != nil {
+		return nil, err
+	}
+	verifySSL := options.VerifySSL == nil || *options.VerifySSL
+	client, err := httpsecurity.NewClient(options.TimeoutSeconds, verifySSL, trusted)
+	if err != nil {
+		return nil, err
+	}
+	defer client.CloseIdleConnections()
+	return fetchJSONResponse(ctx, resourceURL, options.Headers, client)
+}
+
+// Keep the wire/response handling separately injectable for offline unit tests.
+func fetchJSONResponse(ctx context.Context, resourceURL string, headers map[string]string, client *http.Client) (map[string]any, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/json")
-	for key, value := range options.Headers {
+	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
-	client := newHTTPClient(options)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("network failure")
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ANP document resolution requires HTTP 200")
 	}
-	data, err := io.ReadAll(response.Body)
+	data, err := httpsecurity.ReadBody(response, httpsecurity.MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
 	var document map[string]any
-	if err := decodeJSON(bytes.NewReader(data), &document); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&document); err != nil {
 		return nil, err
 	}
+	if err := decoder.Decode(new(any)); err != io.EOF || document == nil {
+		return nil, fmt.Errorf("invalid or trailing DID document data")
+	}
 	return document, nil
-}
-
-func newHTTPClient(options DidResolutionOptions) *http.Client {
-	timeout := 10 * time.Second
-	if options.TimeoutSeconds > 0 {
-		timeout = time.Duration(options.TimeoutSeconds * float64(time.Second))
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if options.VerifySSL != nil && !*options.VerifySSL {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 func decodeJSON(reader io.Reader, target any) error {
@@ -769,10 +834,12 @@ func parseAuthParams(value string) map[string]string {
 	return result
 }
 
-func randomBytes(size int) []byte {
+func randomBytes(size int) ([]byte, error) {
 	buffer := make([]byte, size)
-	_, _ = rand.Read(buffer)
-	return buffer
+	if _, err := rand.Read(buffer); err != nil {
+		return nil, fmt.Errorf("secure nonce generation unavailable")
+	}
+	return buffer, nil
 }
 
 func stringSliceToAny(values []string) []any {

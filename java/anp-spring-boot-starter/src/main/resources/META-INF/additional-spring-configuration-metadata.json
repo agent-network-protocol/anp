@@ -41,7 +41,7 @@
     {
       "name": "anp.auth.allowed-domains",
       "type": "java.util.List<java.lang.String>",
-      "description": "Allowed domains for DID verification"
+      "description": "Trusted receiver HTTPS authorities (host[:port]), required for protected authentication; not a signer DID allowlist"
     }
   ]
 }

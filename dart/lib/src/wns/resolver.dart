@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../errors.dart';
 import 'types.dart';
 import 'validator.dart';
+import '../authentication/outbound.dart';
 
 Future<HandleResolutionDocument> resolveHandle(
   String handle, {
@@ -16,12 +17,14 @@ Future<HandleResolutionDocument> resolveHandle(
   final url = options.baseUrlOverride == null
       ? buildResolutionUrl(parsed.localPart, parsed.domain)
       : '${options.baseUrlOverride!.replaceFirst(RegExp(r'/+$'), '')}/.well-known/handle/${parsed.localPart}';
-  final owned = client == null;
-  final httpClient = client ?? http.Client();
+
   try {
-    final response = await httpClient
-        .get(Uri.parse(url), headers: const {'Accept': 'application/json'})
-        .timeout(options.timeout);
+    final response = await publicDocumentGet(
+      url,
+      timeout: options.timeout,
+      baseUrlOverride: options.baseUrlOverride,
+      client: client,
+    );
     switch (response.statusCode) {
       case 200:
         break;
@@ -35,7 +38,7 @@ Future<HandleResolutionDocument> resolveHandle(
         );
       default:
         throw AnpWnsException(
-          "unexpected status ${response.statusCode} resolving '$normalized': ${response.body}",
+          "unexpected status ${response.statusCode} resolving '$normalized' ",
         );
     }
     final decoded = jsonDecode(response.body);
@@ -80,8 +83,8 @@ Future<HandleResolutionDocument> resolveHandle(
             )
           : null,
     );
-  } finally {
-    if (owned) httpClient.close();
+  } on AnpNetworkException {
+    throw const AnpWnsException('WNS transport rejected the request');
   }
 }
 

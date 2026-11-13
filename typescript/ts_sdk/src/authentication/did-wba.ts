@@ -1,3 +1,5 @@
+import { buildDidResolutionUrl } from './did-resource.js';
+import { publicDocumentRequest } from '../internal/http-security.js';
 import { isIP } from 'node:net';
 
 import { AuthenticationError, NetworkError } from '../errors/index.js';
@@ -54,18 +56,8 @@ export async function resolveDidWbaDocument(
     throw new AuthenticationError('Invalid DID format');
   }
 
-  void options.verifySsl;
   const url = buildDidResolutionUrl(did, options.baseUrlOverride);
-  const timeoutMs = Math.round((options.timeoutSeconds ?? 10) * 1000);
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      ...(options.headers ?? {}),
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-  }).catch((error) => {
-    throw new NetworkError('Network failure during DID resolution', undefined, error as Error);
-  });
+  const response = await publicDocumentRequest(url, options);
 
   if (!response.ok) {
     throw new NetworkError('Network failure during DID resolution', response.status);
@@ -139,7 +131,11 @@ export function buildAgentMessageService(
   options: AnpMessageServiceOptions = {}
 ): ServiceRecord {
   return buildAnpMessageService(didOrServiceRef, serviceEndpoint, {
-    profiles: options.profiles ?? ['anp.core.binding.v1', 'anp.direct.base.v1', 'anp.direct.e2ee.v1'],
+    profiles: options.profiles ?? [
+      'anp.core.binding.v1',
+      'anp.direct.base.v1',
+      'anp.direct.e2ee.v1',
+    ],
     securityProfiles: options.securityProfiles ?? ['transport-protected', 'direct-e2ee'],
     ...options,
   });
@@ -178,9 +174,7 @@ export function createDidWbaDocument(
   const keyAgreement: string[] = [];
   const keys: DidDocumentBundle['keys'] = {};
 
-  const authKey = generateKeyPairPem(
-    didProfile === DidProfileEnum.E1 ? 'ed25519' : 'secp256k1'
-  );
+  const authKey = generateKeyPairPem(didProfile === DidProfileEnum.E1 ? 'ed25519' : 'secp256k1');
   const authPublicKey = authKey.publicKey;
 
   let did = didBase;
@@ -193,7 +187,12 @@ export function createDidWbaDocument(
   did = joinDid(didBase, pathSegments);
 
   const authVerificationMethodId = `${did}#${VM_KEY_AUTH}`;
-  const authVerificationMethod = buildAuthVerificationMethod(did, didProfile, authPublicKey, contexts);
+  const authVerificationMethod = buildAuthVerificationMethod(
+    did,
+    didProfile,
+    authPublicKey,
+    contexts
+  );
   verificationMethods.push(authVerificationMethod);
   authentication.push(authVerificationMethodId);
   if (didProfile === DidProfileEnum.E1 || didProfile === DidProfileEnum.K1) {
@@ -302,10 +301,14 @@ export function verifyDidKeyBinding(
   const lastSegment = did.split(':').at(-1) ?? '';
   const publicKey = toPublicKeyMaterial(bindingMaterial);
   if (lastSegment.startsWith('k1_')) {
-    return publicKey.type === 'secp256k1' && computeJwkFingerprint(publicKey) === lastSegment.slice(3);
+    return (
+      publicKey.type === 'secp256k1' && computeJwkFingerprint(publicKey) === lastSegment.slice(3)
+    );
   }
   if (lastSegment.startsWith('e1_')) {
-    return publicKey.type === 'ed25519' && computeMultikeyFingerprint(publicKey) === lastSegment.slice(3);
+    return (
+      publicKey.type === 'ed25519' && computeMultikeyFingerprint(publicKey) === lastSegment.slice(3)
+    );
   }
   return true;
 }
@@ -320,7 +323,9 @@ export function validateDidDocumentBinding(didDocument: DidDocument, verifyProof
       return validateK1Binding(didDocument, lastSegment.slice(3));
     }
     return didDocument.verificationMethod.some(
-      (method) => isAuthenticationAuthorized(didDocument, method.id) && verifyDidKeyBinding(didDocument.id, method)
+      (method) =>
+        isAuthenticationAuthorized(didDocument, method.id) &&
+        verifyDidKeyBinding(didDocument.id, method)
     );
   }
   return true;
@@ -368,18 +373,36 @@ export function generateAuthJson(
 }
 
 export function extractAuthHeaderParts(authHeader: string): ParsedAuthHeader {
-  if (!authHeader.trimStart().startsWith('DIDWba')) {
-    throw new AuthenticationError('Authentication header must start with DIDWba');
+  if (
+    authHeader.length > 16384 ||
+    /[\x00-\x1f\x7f]/.test(authHeader) ||
+    !authHeader.trim().startsWith('DIDWba ')
+  )
+    throw new AuthenticationError('Invalid Legacy authorization header');
+  let rest = authHeader.trim().slice(7);
+  if (rest.trimEnd().endsWith(','))
+    throw new AuthenticationError('Invalid Legacy authorization syntax');
+  const values = new Map<string, string>();
+  while (rest.length) {
+    const match = /^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"\r\n]+)"\s*(?:,\s*|$)/.exec(rest);
+    if (!match || values.has(match[1].toLowerCase()) || values.size >= 32)
+      throw new AuthenticationError('Invalid or duplicate Legacy authorization field');
+    values.set(match[1].toLowerCase(), match[2]);
+    rest = rest.slice(match[0].length);
   }
-
-  const versionMatch = authHeader.match(/\bv="([^"]+)"/i);
+  const field = (name: string) => {
+    const value = values.get(name);
+    if (!value) throw new AuthenticationError('Missing Legacy authorization field');
+    return value;
+  };
+  if (field('nonce').length > 1024) throw new AuthenticationError('Legacy nonce exceeds limit');
   return {
-    did: requiredHeaderField(authHeader, 'did'),
-    nonce: requiredHeaderField(authHeader, 'nonce'),
-    timestamp: requiredHeaderField(authHeader, 'timestamp'),
-    verificationMethod: requiredHeaderField(authHeader, 'verification_method'),
-    signature: requiredHeaderField(authHeader, 'signature'),
-    version: versionMatch?.[1] ?? '1.1',
+    did: field('did'),
+    nonce: field('nonce'),
+    timestamp: field('timestamp'),
+    verificationMethod: field('verification_method'),
+    signature: field('signature'),
+    version: values.get('v') ?? '1.1',
   };
 }
 
@@ -455,7 +478,10 @@ function validateE1Binding(didDocument: DidDocument, expectedFingerprint: string
   if (!proof) {
     return false;
   }
-  if (proof.type !== PROOF_TYPE_DATA_INTEGRITY || proof.cryptosuite !== CRYPTOSUITE_EDDSA_JCS_2022) {
+  if (
+    proof.type !== PROOF_TYPE_DATA_INTEGRITY ||
+    proof.cryptosuite !== CRYPTOSUITE_EDDSA_JCS_2022
+  ) {
     return false;
   }
   if (!isAssertionMethodAuthorized(didDocument, proof.verificationMethod)) {
@@ -550,9 +576,7 @@ function verifyAuthPayload(
   }
 }
 
-function selectAuthenticationMethod(
-  didDocument: DidDocument
-): [VerificationMethodRecord, string] {
+function selectAuthenticationMethod(didDocument: DidDocument): [VerificationMethodRecord, string] {
   const first = didDocument.authentication[0];
   if (!first) {
     throw new AuthenticationError('Invalid DID document');
@@ -628,30 +652,8 @@ function joinDid(base: string, pathSegments: string[]): string {
   return pathSegments.length === 0 ? base : `${base}:${pathSegments.join(':')}`;
 }
 
-function buildDidResolutionUrl(did: string, baseUrlOverride?: string): string {
-  const parts = did.split(':');
-  if (parts.length < 3) {
-    throw new AuthenticationError('Invalid DID format');
-  }
-  const domain = decodeURIComponent(parts[2]);
-  const pathSegments = parts.slice(3);
-  const baseUrl = (baseUrlOverride ?? `https://${domain}`).replace(/\/$/, '');
-  if (pathSegments.length === 0) {
-    return `${baseUrl}/.well-known/did.json`;
-  }
-  return `${baseUrl}/${pathSegments.join('/')}/did.json`;
-}
-
 function domainFieldForVersion(version: string): 'aud' | 'service' {
   return Number.parseFloat(version) >= 1.1 ? 'aud' : 'service';
-}
-
-function requiredHeaderField(authHeader: string, field: string): string {
-  const match = authHeader.match(new RegExp(`${field}="([^"]+)"`, 'i'));
-  if (!match?.[1]) {
-    throw new AuthenticationError(`Missing field in authorization header: ${field}`);
-  }
-  return match[1];
 }
 
 function toPublicKeyMaterial(

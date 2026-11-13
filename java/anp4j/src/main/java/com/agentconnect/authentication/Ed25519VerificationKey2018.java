@@ -33,11 +33,12 @@ public class Ed25519VerificationKey2018 extends VerificationMethod {
 
             Ed25519Signer signer = new Ed25519Signer();
             signer.init(false, publicKey);
-            signer.update(signatureBytes, 0, signatureBytes.length);
-            return signer.verifySignature(content);
+            if (signatureBytes.length != 64) return false;
+            signer.update(content, 0, content.length);
+            return signer.verifySignature(signatureBytes);
             
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Ed25519 signature verification failed: " + e.getMessage(), e);
+            logger.log(Level.FINE, "Signature verification rejected");
             return false;
         }
     }
@@ -64,6 +65,7 @@ public class Ed25519VerificationKey2018 extends VerificationMethod {
         
         String xStr = (String) jwk.get("x");
         byte[] keyBytes = decodeBase64Url(xStr);
+        if (keyBytes.length != 32) throw new IllegalArgumentException("Invalid Ed25519 key length");
         return new Ed25519PublicKeyParameters(keyBytes, 0);
     }
     
@@ -72,11 +74,14 @@ public class Ed25519VerificationKey2018 extends VerificationMethod {
             throw new IllegalArgumentException("Unsupported multibase encoding");
         }
         byte[] keyBytes = Base58.base58Decode(multibase.substring(1));
+        if (keyBytes.length == 34 && keyBytes[0] == (byte) 0xed && keyBytes[1] == 1) keyBytes = java.util.Arrays.copyOfRange(keyBytes, 2, 34);
+        if (keyBytes.length != 32) throw new IllegalArgumentException("Invalid Ed25519 key length");
         return new Ed25519PublicKeyParameters(keyBytes, 0);
     }
     
     private static Ed25519PublicKeyParameters extractPublicKeyFromBase58(String base58Key) {
         byte[] keyBytes = Base58.base58Decode(base58Key);
+        if (keyBytes.length != 32) throw new IllegalArgumentException("Invalid Ed25519 key length");
         return new Ed25519PublicKeyParameters(keyBytes, 0);
     }
     

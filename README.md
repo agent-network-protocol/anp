@@ -14,6 +14,8 @@ The Python package name is `anp`; this repository also contains Go, Rust, Dart, 
   <img src="/images/agentic-web.png" width="50%" alt="Agentic Web"/>
 </p>
 
+Authentication hardening and compatibility boundaries: [Security contract](docs/authentication-security.md).
+
 ## What is ANP?
 
 ANP is a protocol stack for an open network of interoperable agents. In practice, it answers these questions:

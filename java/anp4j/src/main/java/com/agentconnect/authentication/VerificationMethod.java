@@ -36,6 +36,16 @@ public abstract class VerificationMethod {
                 return EcdsaSecp256k1VerificationKey2019.fromDict(methodDict);
             case "EcdsaSecp256r1VerificationKey2019":
                 return EcdsaSecp256r1VerificationKey2019.fromDict(methodDict);
+            case "JsonWebKey2020": {
+                Object raw = methodDict.get("publicKeyJwk");
+                if (!(raw instanceof Map<?, ?> jwk)) throw new IllegalArgumentException("Missing public JWK");
+                if ("OKP".equals(jwk.get("kty")) && "Ed25519".equals(jwk.get("crv"))) return Ed25519VerificationKey2018.fromDict(methodDict);
+                if ("EC".equals(jwk.get("kty")) && "secp256k1".equals(jwk.get("crv"))) return EcdsaSecp256k1VerificationKey2019.fromDict(methodDict);
+                if ("EC".equals(jwk.get("kty")) && "P-256".equals(jwk.get("crv"))) return EcdsaSecp256r1VerificationKey2019.fromDict(methodDict);
+                throw new IllegalArgumentException("Unsupported public JWK algorithm");
+            }
+            case "Multikey":
+            case "Ed25519VerificationKey2020":
             case "Ed25519VerificationKey2018":
                 return Ed25519VerificationKey2018.fromDict(methodDict);
             default:

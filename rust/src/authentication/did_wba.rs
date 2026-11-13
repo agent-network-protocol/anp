@@ -4,8 +4,6 @@ use chrono::Utc;
 use percent_encoding::percent_decode_str;
 use rand::rngs::OsRng;
 use regex::Regex;
-#[cfg(feature = "network")]
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -969,70 +967,86 @@ pub async fn resolve_did_wba_document(
     resolve_did_wba_document_with_options(did, verify_proof, &DidResolutionOptions::default()).await
 }
 
+/// Construct an unambiguous WBA resource before any network activity.
+pub(crate) fn build_did_wba_resolution_url(did: &str) -> Result<String, AuthenticationError> {
+    if !did.starts_with("did:wba:") {
+        return Err(AuthenticationError::InvalidDid);
+    }
+    let parts: Vec<_> = did.split(':').collect();
+    let domain = percent_decode_str(parts.get(2).ok_or(AuthenticationError::InvalidDid)?)
+        .decode_utf8()
+        .map_err(|_| AuthenticationError::InvalidDid)?;
+    if domain
+        .chars()
+        .any(|c| "/\\?#%@".contains(c) || c.is_ascii_control())
+    {
+        return Err(AuthenticationError::InvalidDid);
+    }
+    let base = format!("https://{domain}");
+    super::http_auth_security::authentication_origin(&base)
+        .map_err(|_| AuthenticationError::InvalidDid)?;
+    let mut segments = Vec::new();
+    for raw in &parts[3..] {
+        let decoded = percent_decode_str(raw)
+            .decode_utf8()
+            .map_err(|_| AuthenticationError::InvalidDid)?;
+        if decoded.is_empty()
+            || matches!(decoded.as_ref(), "." | "..")
+            || decoded
+                .chars()
+                .any(|c| "/\\?#%".contains(c) || c.is_ascii_control())
+        {
+            return Err(AuthenticationError::InvalidDid);
+        }
+        const SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+            .remove(b'-')
+            .remove(b'_')
+            .remove(b'.')
+            .remove(b'~');
+        segments.push(percent_encoding::utf8_percent_encode(&decoded, SEGMENT).to_string());
+    }
+    let path = if segments.is_empty() {
+        ".well-known/did.json".into()
+    } else {
+        format!("{}/did.json", segments.join("/"))
+    };
+    Ok(format!("{base}/{path}"))
+}
+
 pub async fn resolve_did_wba_document_with_options(
     did: &str,
     verify_proof: bool,
     options: &DidResolutionOptions,
 ) -> Result<Value, AuthenticationError> {
+    resolve_did_wba_document_with_address_policy(
+        did,
+        verify_proof,
+        options,
+        super::did_resolver::DidResolutionAddressPolicy::PublicOnly,
+    )
+    .await
+}
+
+pub(crate) async fn resolve_did_wba_document_with_address_policy(
+    did: &str,
+    verify_proof: bool,
+    options: &DidResolutionOptions,
+    address_policy: super::did_resolver::DidResolutionAddressPolicy,
+) -> Result<Value, AuthenticationError> {
     if !did.starts_with("did:wba:") {
         return Err(AuthenticationError::InvalidDid);
     }
-    let parts: Vec<&str> = did.split(':').collect();
-    if parts.len() < 3 {
-        return Err(AuthenticationError::InvalidDid);
-    }
-    let encoded_domain = parts[2];
-    let domain = percent_decode_str(encoded_domain)
-        .decode_utf8_lossy()
-        .to_string();
-    let path_segments = if parts.len() > 3 {
-        &parts[3..]
-    } else {
-        &[][..]
-    };
-
-    let base_url = options
-        .base_url_override
-        .clone()
-        .unwrap_or_else(|| format!("https://{domain}"));
-    let url = if path_segments.is_empty() {
-        format!("{}/.well-known/did.json", base_url.trim_end_matches('/'))
-    } else {
-        format!(
-            "{}/{}/did.json",
-            base_url.trim_end_matches('/'),
-            path_segments.join("/")
-        )
-    };
+    let url = build_did_wba_resolution_url(did)?;
 
     #[cfg(not(feature = "network"))]
     {
-        let _ = (url, verify_proof);
+        let _ = (url, verify_proof, options, address_policy);
         return Err(AuthenticationError::NetworkFailure);
     }
 
     #[cfg(feature = "network")]
     {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(!options.verify_ssl)
-            .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
-            .build()
-            .map_err(|_| AuthenticationError::NetworkFailure)?;
-
-        let mut request = client.get(url).header("Accept", "application/json");
-        for (key, value) in &options.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|_| AuthenticationError::NetworkFailure)?
-            .error_for_status()
-            .map_err(|_| AuthenticationError::NetworkFailure)?;
-        let document: Value = response
-            .json()
-            .await
-            .map_err(|_| AuthenticationError::JsonFailure)?;
+        let document = super::did_web::fetch_public_json(&url, options, address_policy).await?;
 
         if document.get("id").and_then(Value::as_str) != Some(did) {
             return Err(AuthenticationError::InvalidDidDocument);
@@ -1170,36 +1184,50 @@ pub(crate) fn generate_auth_header_with_overrides(
 pub fn extract_auth_header_parts(
     auth_header: &str,
 ) -> Result<ParsedAuthHeader, AuthenticationError> {
-    if !auth_header.trim_start().starts_with("DIDWba") {
+    if auth_header.len() > 16384 || auth_header.bytes().any(|b| b < 32 || b == 127) {
         return Err(AuthenticationError::InvalidAuthorizationHeader);
     }
-
-    let required_fields = [
+    let mut rest = auth_header
+        .trim()
+        .strip_prefix("DIDWba ")
+        .ok_or(AuthenticationError::InvalidAuthorizationHeader)?;
+    if rest.trim_end().ends_with(',') {
+        return Err(AuthenticationError::InvalidAuthorizationHeader);
+    }
+    let regex = Regex::new(r#"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"\r\n]+)"\s*(?:,\s*|$)"#)
+        .map_err(|_| AuthenticationError::RegexFailure)?;
+    let mut values = BTreeMap::new();
+    while !rest.is_empty() {
+        let caps = regex
+            .captures(rest)
+            .ok_or(AuthenticationError::InvalidAuthorizationHeader)?;
+        let name = caps[1].to_ascii_lowercase();
+        if values.contains_key(&name) || values.len() >= 32 {
+            return Err(AuthenticationError::InvalidAuthorizationHeader);
+        }
+        values.insert(name, caps[2].to_owned());
+        rest = &rest[caps
+            .get(0)
+            .ok_or(AuthenticationError::InvalidAuthorizationHeader)?
+            .end()..];
+    }
+    for field in [
         "did",
         "nonce",
         "timestamp",
         "verification_method",
         "signature",
-    ];
-    let mut values = BTreeMap::new();
-    for field in required_fields {
-        let pattern = format!(r#"(?i){field}=\"([^\"]+)\""#);
-        let regex = Regex::new(&pattern).map_err(|_| AuthenticationError::RegexFailure)?;
-        let capture = regex
-            .captures(auth_header)
-            .and_then(|caps| caps.get(1))
-            .map(|matched| matched.as_str().to_string())
-            .ok_or_else(|| AuthenticationError::MissingAuthorizationField(field.to_string()))?;
-        values.insert(field.to_string(), capture);
+    ] {
+        if !values.contains_key(field) {
+            return Err(AuthenticationError::MissingAuthorizationField(
+                field.to_owned(),
+            ));
+        }
     }
-
-    let version_regex =
-        Regex::new(r#"(?i)v=\"([^\"]+)\""#).map_err(|_| AuthenticationError::RegexFailure)?;
-    let version = version_regex
-        .captures(auth_header)
-        .and_then(|caps| caps.get(1))
-        .map(|matched| matched.as_str().to_string())
-        .unwrap_or_else(|| "1.1".to_string());
+    if values.get("nonce").is_some_and(|value| value.len() > 1024) {
+        return Err(AuthenticationError::InvalidAuthorizationHeader);
+    }
+    let version = values.remove("v").unwrap_or_else(|| "1.1".to_owned());
 
     Ok(ParsedAuthHeader {
         did: values.remove("did").unwrap_or_default(),

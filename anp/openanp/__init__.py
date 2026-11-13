@@ -51,7 +51,7 @@ Quick Start - Client:
     )
 
     # Discover agent (fetches ad.json + interface.json)
-    agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth)
+    agent = await RemoteAgent.discover("https://hotel.example.com/ad.json", auth, authenticated_origins=["https://hotel.example.com"])
 
     # Call methods
     result = await agent.search(query="Tokyo")
@@ -67,7 +67,7 @@ Quick Start - P2P (Both):
         async def plan_trip(self, destination: str) -> dict:
             # I'm a server - expose this method
             # I'm also a client - call other agents
-            hotel = await RemoteAgent.discover("https://hotel.example.com/ad.json", self.auth)
+            hotel = await RemoteAgent.discover("https://hotel.example.com/ad.json", self.auth, authenticated_origins=["https://hotel.example.com"])
             return await hotel.search(query=destination)
 
 See README.md for complete documentation.

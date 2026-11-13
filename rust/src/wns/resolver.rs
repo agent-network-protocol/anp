@@ -66,15 +66,41 @@ pub async fn resolve_handle_with_options(
 
     #[cfg(feature = "network")]
     {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(!options.verify_ssl)
-            .timeout(std::time::Duration::from_secs_f64(options.timeout_seconds))
-            .build()
-            .map_err(|_| HandleResolutionError {
-                message: format!("Unexpected error resolving handle '{}'", normalized),
-                status_code: 502,
-            })?;
-        let response = client
+        let fail = || HandleResolutionError {
+            message: "WNS public transport policy rejected the request".into(),
+            status_code: 502,
+        };
+        let _permit =
+            crate::authentication::did_web::public_outbound_permit().map_err(|_| fail())?;
+        if !options.timeout_seconds.is_finite() || options.timeout_seconds <= 0.0 {
+            return Err(fail());
+        }
+        let timeout =
+            std::time::Duration::try_from_secs_f64(options.timeout_seconds).map_err(|_| fail())?;
+        let parsed = url::Url::parse(&url).map_err(|_| fail())?;
+        crate::authentication::http_auth_security::authentication_origin(&url)
+            .map_err(|_| fail())?;
+        let mut builder = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(timeout);
+        if options.base_url_override.is_none() {
+            if !options.verify_ssl || parsed.scheme() != "https" {
+                return Err(fail());
+            }
+            let addresses = crate::authentication::did_web::checked_resolution_addresses(
+                &parsed,
+                crate::authentication::DidResolutionAddressPolicy::PublicOnly,
+                timeout,
+            )
+            .await
+            .map_err(|_| fail())?;
+            builder = builder.resolve_to_addrs(parsed.host_str().ok_or_else(fail)?, &addresses);
+        } else {
+            builder = builder.danger_accept_invalid_certs(!options.verify_ssl);
+        }
+        let client = builder.build().map_err(|_| fail())?;
+        let mut response = client
             .get(url)
             .header("Accept", "application/json")
             .send()
@@ -123,25 +149,29 @@ pub async fn resolve_handle_with_options(
             });
         }
         if status.as_u16() != 200 {
-            let text = response.text().await.unwrap_or_default();
             return Err(HandleResolutionError {
                 message: format!(
-                    "Unexpected status {} resolving '{}': {}",
+                    "Unexpected status {} resolving '{}'",
                     status.as_u16(),
-                    normalized,
-                    text
+                    normalized
                 ),
                 status_code: 502,
             });
         }
 
-        let data: Value = response.json().await.map_err(|err| HandleResolutionError {
-            message: format!(
-                "Unexpected error resolving handle '{}': {}",
-                normalized, err
-            ),
-            status_code: 502,
-        })?;
+        const MAX_BYTES: usize = 1024 * 1024;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_BYTES as u64)
+        {
+            return Err(fail());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| fail())? {
+            crate::authentication::did_web::append_bounded_chunk(&mut bytes, &chunk, MAX_BYTES)
+                .map_err(|_| fail())?;
+        }
+        let data: Value = serde_json::from_slice(&bytes).map_err(|_| fail())?;
         let mut document: HandleResolutionDocument =
             serde_json::from_value(data).map_err(|err| HandleResolutionError {
                 message: format!(

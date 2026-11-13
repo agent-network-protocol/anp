@@ -13,6 +13,7 @@ use crate::keys::PrivateKeyMaterial;
 use super::did_wba::{
     generate_auth_header, generate_auth_header_with_overrides, AuthenticationError,
 };
+use super::http_auth_security::authentication_origin;
 use super::http_signatures::{generate_http_signature_headers, HttpSignatureOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +66,10 @@ impl DIDWbaAuthHeader {
         body: Option<&[u8]>,
     ) -> Result<std::collections::BTreeMap<String, String>, AuthenticationError> {
         let domain = extract_domain(server_url);
+        let origin =
+            authentication_origin(server_url).map_err(|_| AuthenticationError::InvalidDid)?;
         if !force_new {
-            if let Some(token) = self.tokens.get(&domain) {
+            if let Some(token) = self.tokens.get(&origin) {
                 let mut result = std::collections::BTreeMap::new();
                 result.insert("Authorization".to_string(), format!("Bearer {}", token));
                 return Ok(result);
@@ -100,18 +103,35 @@ impl DIDWbaAuthHeader {
         server_url: &str,
         headers: &std::collections::BTreeMap<String, String>,
     ) -> Option<String> {
-        let domain = extract_domain(server_url);
+        // Direct callers must pass the actual authenticated TLS response origin,
+        // never an arbitrary discovery response or cross-origin redirect.
+        let origin = authentication_origin(server_url).ok()?;
+        if !origin.starts_with("https://") {
+            return None;
+        }
         if let Some(value) = get_header_case_insensitive(headers, "Authentication-Info") {
             let parsed = parse_authentication_info(value);
-            if let Some(token) = parsed.get("access_token").filter(|token| !token.is_empty()) {
-                self.tokens.insert(domain, token.clone());
+            if parsed
+                .get("token_type")
+                .is_some_and(|kind| !kind.eq_ignore_ascii_case("Bearer"))
+            {
+                return None;
+            }
+            if let Some(token) = parsed
+                .get("access_token")
+                .filter(|token| valid_bearer_token(token))
+            {
+                self.tokens.insert(origin, token.clone());
                 return Some(token.clone());
             }
         }
         if let Some(value) = get_header_case_insensitive(headers, "Authorization") {
             if let Some(token) = value.strip_prefix("Bearer ") {
+                if !valid_bearer_token(token) {
+                    return None;
+                }
                 let token = token.to_string();
-                self.tokens.insert(domain, token.clone());
+                self.tokens.insert(origin, token.clone());
                 return Some(token);
             }
         }
@@ -119,8 +139,9 @@ impl DIDWbaAuthHeader {
     }
 
     pub fn clear_token(&mut self, server_url: &str) {
-        let domain = extract_domain(server_url);
-        self.tokens.remove(&domain);
+        if let Ok(origin) = authentication_origin(server_url) {
+            self.tokens.remove(&origin);
+        }
     }
 
     pub fn clear_all_tokens(&mut self) {
@@ -257,14 +278,26 @@ fn extract_domain(server_url: &str) -> String {
     }
 }
 
+fn valid_bearer_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 16384
+        && token
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-._~+/=".contains(&c))
+}
+
 fn get_header_case_insensitive<'a>(
     headers: &'a std::collections::BTreeMap<String, String>,
     name: &str,
 ) -> Option<&'a String> {
-    headers
+    let mut found = headers
         .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value)
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+    let (_, value) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    Some(value)
 }
 
 fn parse_authentication_info(value: &str) -> HashMap<String, String> {
@@ -310,7 +343,7 @@ fn parse_accept_signature(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn normalize_covered_components(
+pub(super) fn normalize_covered_components(
     covered_components: Option<&Vec<String>>,
     headers: Option<&BTreeMap<String, String>>,
     body: Option<&[u8]>,
@@ -348,5 +381,13 @@ fn normalize_covered_components(
         }
         result.push(component.clone());
     }
-    (!result.is_empty()).then_some(result)
+    for required in ["@method", "@target-uri"] {
+        if !result.iter().any(|c| c == required) {
+            result.push(required.into());
+        }
+    }
+    if body_present && !result.iter().any(|c| c == "content-digest") {
+        result.push("content-digest".into());
+    }
+    Some(result)
 }

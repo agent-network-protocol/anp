@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	anp "github.com/agent-network-protocol/anp/golang"
 )
@@ -17,6 +18,7 @@ type DIDWbaAuthHeader struct {
 	authMode        AuthMode
 	didDocument     map[string]any
 	tokens          map[string]string
+	mu              sync.Mutex
 }
 
 // NewDIDWbaAuthHeader creates a new auth header helper.
@@ -29,9 +31,15 @@ func NewDIDWbaAuthHeader(didDocumentPath string, privateKeyPath string, authMode
 
 // GetAuthHeader returns the next outbound authentication headers.
 func (h *DIDWbaAuthHeader) GetAuthHeader(serverURL string, forceNew bool, method string, headers map[string]string, body []byte) (map[string]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	origin, err := AuthenticationOrigin(serverURL)
+	if err != nil {
+		return nil, err
+	}
 	domain := extractDomain(serverURL)
 	if !forceNew {
-		if token, ok := h.tokens[domain]; ok {
+		if token, ok := h.tokens[origin]; ok {
 			return map[string]string{"Authorization": "Bearer " + token}, nil
 		}
 	}
@@ -59,17 +67,30 @@ func (h *DIDWbaAuthHeader) GetAuthHeader(serverURL string, forceNew bool, method
 
 // UpdateToken stores a bearer token discovered in response headers.
 func (h *DIDWbaAuthHeader) UpdateToken(serverURL string, headers map[string]string) string {
-	domain := extractDomain(serverURL)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Direct callers own authenticated exchange provenance; never feed discovery
+	// or redirected responses into this method.
+	origin, err := AuthenticationOrigin(serverURL)
+	if err != nil || !strings.HasPrefix(origin, "https://") || rejectDuplicateAuthHeaders(headers) != nil {
+		return ""
+	}
 	if value, ok := getHeaderCaseInsensitive(headers, "Authentication-Info"); ok {
 		parsed := parseAuthenticationInfo(value)
-		if token := parsed["access_token"]; token != "" {
-			h.tokens[domain] = token
+		if kind := parsed["token_type"]; kind != "" && !strings.EqualFold(kind, "Bearer") {
+			return ""
+		}
+		if token := parsed["access_token"]; validBearerToken(token) {
+			h.tokens[origin] = token
 			return token
 		}
 	}
 	if value, ok := getHeaderCaseInsensitive(headers, "Authorization"); ok && strings.HasPrefix(value, "Bearer ") {
 		token := strings.TrimPrefix(value, "Bearer ")
-		h.tokens[domain] = token
+		if !validBearerToken(token) {
+			return ""
+		}
+		h.tokens[origin] = token
 		return token
 	}
 	return ""
@@ -77,11 +98,17 @@ func (h *DIDWbaAuthHeader) UpdateToken(serverURL string, headers map[string]stri
 
 // ClearToken removes a cached bearer token for the given server.
 func (h *DIDWbaAuthHeader) ClearToken(serverURL string) {
-	delete(h.tokens, extractDomain(serverURL))
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if origin, err := AuthenticationOrigin(serverURL); err == nil {
+		delete(h.tokens, origin)
+	}
 }
 
 // ClearAllTokens clears all cached bearer tokens.
 func (h *DIDWbaAuthHeader) ClearAllTokens() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.tokens = map[string]string{}
 }
 
@@ -101,6 +128,8 @@ func (h *DIDWbaAuthHeader) ShouldRetryAfter401(responseHeaders map[string]string
 
 // GetChallengeAuthHeader returns challenge-specific authentication headers.
 func (h *DIDWbaAuthHeader) GetChallengeAuthHeader(serverURL string, responseHeaders map[string]string, method string, headers map[string]string, body []byte) (map[string]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	challenge := map[string]string{}
 	if value, ok := getHeaderCaseInsensitive(responseHeaders, "WWW-Authenticate"); ok {
 		challenge = parseWWWAuthenticate(value)
@@ -201,7 +230,27 @@ func normalizeCoveredComponents(components []string, headers map[string]string, 
 			result = append(result, component)
 		}
 	}
+	for _, required := range []string{"@method", "@target-uri"} {
+		if !containsFolded(result, required) {
+			result = append(result, required)
+		}
+	}
+	if bodyPresent && !containsFolded(result, "content-digest") {
+		result = append(result, "content-digest")
+	}
 	return result
+}
+
+func validBearerToken(token string) bool {
+	if len(token) == 0 || len(token) > 16384 {
+		return false
+	}
+	for _, c := range token {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~+/=", c)) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseDelimitedParams(value string, separator rune) map[string]string {

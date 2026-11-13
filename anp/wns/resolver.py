@@ -6,9 +6,11 @@ Handle Resolution Endpoint defined in WNS spec section 4.2.
 
 import asyncio
 import logging
+import json
 from typing import Optional
 
 import aiohttp
+from anp.authentication.outbound import public_client_session, read_bounded_response, validate_public_url
 from pydantic import ValidationError
 
 from .exceptions import (
@@ -62,8 +64,11 @@ async def resolve_handle(
     logging.info("Resolving handle '%s' via %s", normalized, url)
 
     try:
+        validate_public_url(url)
+        if not verify_ssl:
+            raise ValueError("Public WNS resolution requires TLS verification")
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with public_client_session(timeout) as session:
             async with session.get(
                 url,
                 headers={"Accept": "application/json"},
@@ -85,13 +90,12 @@ async def resolve_handle(
                         f"Handle '{normalized}' has been permanently revoked"
                     )
                 if response.status != 200:
-                    text = await response.text()
                     raise HandleResolutionError(
                         f"Unexpected status {response.status} resolving "
-                        f"'{normalized}': {text}"
+                        f"'{normalized}'"
                     )
 
-                data = await response.json()
+                data = json.loads(await read_bounded_response(response))
 
     except (HandleMovedError, HandleNotFoundError, HandleGoneError, HandleResolutionError):
         raise

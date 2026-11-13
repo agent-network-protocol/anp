@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
+
+use super::http_auth_security::{HttpReplayContext, HttpSignaturePolicy};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Utc;
@@ -197,8 +200,16 @@ pub fn prepare_http_signature_headers(
             covered.push("content-digest".to_string());
         }
     }
+    if !covered.iter().any(|c| c == "@method") || !covered.iter().any(|c| c == "@target-uri") {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     let created = options.created.unwrap_or_else(|| Utc::now().timestamp());
-    let expires = options.expires.or(Some(created + 300));
+    let expires = options.expires.or_else(|| created.checked_add(300));
+    HttpSignaturePolicy {
+        check_time: false,
+        ..Default::default()
+    }
+    .validate(created, expires, created)?;
     let nonce = options
         .nonce
         .or_else(|| Some(base64url_encode(&rand::random::<[u8; 16]>())));
@@ -261,12 +272,15 @@ pub fn extract_signature_metadata(
         .ok_or(HttpSignatureError::MissingSignatureHeaders)?;
     let signature_header = get_header_case_insensitive(headers, "Signature")
         .ok_or(HttpSignatureError::MissingSignatureHeaders)?;
-    let (label_input, components, params) = parse_signature_input(signature_input)?;
+    let (label_input, components, params, _) = parse_signature_input(signature_input)?;
     let (label_signature, _) = parse_signature_header(signature_header)?;
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
     let keyid = required_signature_param(&params, "keyid")?;
+    if !keyid.starts_with("did:") || keyid.matches('#').count() != 1 || keyid.ends_with('#') {
+        return Err(HttpSignatureError::InvalidKeyId);
+    }
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
@@ -290,16 +304,43 @@ pub fn verify_http_message_signature(
     headers: &BTreeMap<String, String>,
     body: Option<&[u8]>,
 ) -> Result<SignatureMetadata, HttpSignatureError> {
+    verify_http_message_signature_with_policy(
+        did_document,
+        request_method,
+        request_url,
+        headers,
+        body,
+        HttpSignaturePolicy::default(),
+        Utc::now().timestamp(),
+    )
+}
+
+/// Verify coverage, time and cryptographic validity without replay I/O.
+/// Offline callers must explicitly select check_time=false. Full authentication
+/// additionally requires a trusted Document/receiver and atomic replay consumption.
+pub fn verify_http_message_signature_with_policy(
+    did_document: &serde_json::Value,
+    request_method: &str,
+    request_url: &str,
+    headers: &BTreeMap<String, String>,
+    body: Option<&[u8]>,
+    policy: HttpSignaturePolicy,
+    now: i64,
+) -> Result<SignatureMetadata, HttpSignatureError> {
     let signature_input = get_header_case_insensitive(headers, "Signature-Input")
         .ok_or(HttpSignatureError::MissingSignatureHeaders)?;
     let signature_header = get_header_case_insensitive(headers, "Signature")
         .ok_or(HttpSignatureError::MissingSignatureHeaders)?;
-    let (label_input, components, params) = parse_signature_input(signature_input)?;
+    let (label_input, components, params, serialized_params) =
+        parse_signature_input(signature_input)?;
     let (label_signature, signature_bytes) = parse_signature_header(signature_header)?;
     if label_input != label_signature {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
     let keyid = required_signature_param(&params, "keyid")?;
+    if !keyid.starts_with("did:") || keyid.matches('#').count() != 1 || keyid.ends_with('#') {
+        return Err(HttpSignatureError::InvalidKeyId);
+    }
     let created = params
         .get("created")
         .and_then(|value| value.parse::<i64>().ok())
@@ -307,7 +348,19 @@ pub fn verify_http_message_signature(
     let expires = parse_optional_i64_param(&params, "expires")?;
     let nonce = params.get("nonce").cloned();
 
+    policy.validate(created, expires, now)?;
+    if nonce
+        .as_ref()
+        .is_some_and(|n| n.is_empty() || n.len() > 1024)
+        || !components.iter().any(|c| c == "@method")
+        || !components.iter().any(|c| c == "@target-uri")
+    {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     let body_bytes = body.unwrap_or_default();
+    if !body_bytes.is_empty() && !components.iter().any(|c| c == "content-digest") {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     if !body_bytes.is_empty()
         || components
             .iter()
@@ -333,20 +386,30 @@ pub fn verify_http_message_signature(
         .ok_or(HttpSignatureError::VerificationMethodNotFound)?;
     let public_key =
         extract_public_key(&method).map_err(|_| HttpSignatureError::VerificationMethodNotFound)?;
-    let signature_base = build_signature_base(
+    let signature_base = build_signature_base_with_params(
         &components,
         request_method,
         request_url,
         headers,
-        created,
-        expires,
-        nonce.as_deref(),
-        &keyid,
+        &serialized_params,
     )
     .map_err(|_| HttpSignatureError::InvalidSignatureInput)?;
-    public_key
-        .verify_message(signature_base.as_bytes(), &signature_bytes)
-        .map_err(|_| HttpSignatureError::VerificationFailed)?;
+    let candidates = authority_candidates(request_url)?;
+    let mut bases = vec![signature_base.clone()];
+    if components.iter().any(|c| c == "@authority") {
+        bases.extend(
+            candidates
+                .iter()
+                .map(|authority| replace_authority(&signature_base, authority)),
+        );
+    }
+    if !bases.iter().any(|base| {
+        public_key
+            .verify_message(base.as_bytes(), &signature_bytes)
+            .is_ok()
+    }) {
+        return Err(HttpSignatureError::VerificationFailed);
+    }
     Ok(SignatureMetadata {
         label: label_input,
         components,
@@ -361,10 +424,17 @@ fn get_header_case_insensitive<'a>(
     headers: &'a BTreeMap<String, String>,
     name: &str,
 ) -> Option<&'a String> {
-    headers
+    let mut matches = headers
         .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value)
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+    let (_, value) = matches.next()?;
+    if matches.next().is_some()
+        || value.len() > 16384
+        || value.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0 | 127))
+    {
+        return None;
+    }
+    Some(value)
 }
 
 fn build_signature_base(
@@ -387,6 +457,114 @@ fn build_signature_base(
         serialize_signature_params(components, created, expires, nonce, keyid)
     ));
     Ok(lines.join("\n"))
+}
+
+fn build_signature_base_with_params(
+    components: &[String],
+    method: &str,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    serialized_params: &str,
+) -> Result<String, HttpSignatureError> {
+    let mut lines = Vec::new();
+    for component in components {
+        lines.push(format!(
+            "\"{}\": {}",
+            component,
+            component_value(component, method, url, headers)?
+        ));
+    }
+    lines.push(format!("\"@signature-params\": {}", serialized_params));
+    Ok(lines.join("\n"))
+}
+
+/// Derive replay facts only AFTER a successful signature/identity/target check.
+/// The scope must be the host-configured logical receiving service, shared by replicas.
+pub fn http_signature_replay_context(
+    metadata: &SignatureMetadata,
+    method: &str,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    scope: &str,
+    policy: HttpSignaturePolicy,
+) -> Result<HttpReplayContext, HttpSignatureError> {
+    if scope.is_empty() || scope.contains('\0') {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
+    let input = get_header_case_insensitive(headers, "Signature-Input")
+        .ok_or(HttpSignatureError::MissingSignatureHeaders)?;
+    let (_, components, _, params) = parse_signature_input(input)?;
+    let base = build_signature_base_with_params(&components, method, url, headers, &params)?;
+    let origin = super::http_auth_security::authentication_origin(url)?;
+    let base = replace_authority(
+        &base,
+        origin
+            .split_once("://")
+            .ok_or(HttpSignatureError::InvalidSignatureInput)?
+            .1,
+    );
+    let did = metadata
+        .keyid
+        .split_once('#')
+        .ok_or(HttpSignatureError::InvalidKeyId)?
+        .0;
+    let material = match &metadata.nonce {
+        Some(nonce) => format!("nonce:{nonce}"),
+        None => format!("base:{:x}", Sha256::digest(base.as_bytes())),
+    };
+    let key = format!("anp.http-auth.replay.v1\0{scope}\0{did}\0{material}");
+    let deadline = policy.validate(metadata.created, metadata.expires, metadata.created)?;
+    Ok(HttpReplayContext {
+        signer_did: did.to_owned(),
+        verifier_scope: scope.to_owned(),
+        replay_key: format!("{:x}", Sha256::digest(key.as_bytes())),
+        valid_until: deadline.saturating_add(policy.future_skew_seconds),
+    })
+}
+
+fn replace_authority(base: &str, authority: &str) -> String {
+    base.lines()
+        .map(|line| {
+            if line.starts_with("\"@authority\": ") {
+                format!("\"@authority\": {authority}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn authority_candidates(url: &str) -> Result<Vec<String>, HttpSignatureError> {
+    let origin = super::http_auth_security::authentication_origin(url)?;
+    let raw = url
+        .split_once("://")
+        .ok_or(HttpSignatureError::InvalidSignatureInput)?
+        .1
+        .split(['/', '?'])
+        .next()
+        .unwrap_or_default();
+    let normalized = origin
+        .split_once("://")
+        .ok_or(HttpSignatureError::InvalidSignatureInput)?
+        .1;
+    let default = if url.starts_with("https://") {
+        ":443"
+    } else {
+        ":80"
+    };
+    let mut result = Vec::new();
+    for authority in [raw, normalized] {
+        for value in [
+            authority,
+            authority.strip_suffix(default).unwrap_or(authority),
+        ] {
+            result.push(value.to_owned());
+            result.push(value.replace(['[', ']'], ""));
+        }
+    }
+    result.sort();
+    result.dedup();
+    Ok(result)
 }
 
 fn component_value(
@@ -449,47 +627,111 @@ fn serialize_signature_params(
         params.push(format!("expires={value}"));
     }
     if let Some(value) = nonce {
-        params.push(format!("nonce=\"{}\"", value));
+        params.push(format!(
+            "nonce=\"{}\"",
+            value.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
     }
-    params.push(format!("keyid=\"{}\"", keyid));
+    params.push(format!(
+        "keyid=\"{}\"",
+        keyid.replace('\\', "\\\\").replace('"', "\\\"")
+    ));
     format!("({quoted});{}", params.join(";"))
 }
 
 fn parse_signature_input(
     signature_input: &str,
-) -> Result<(String, Vec<String>, BTreeMap<String, String>), HttpSignatureError> {
+) -> Result<(String, Vec<String>, BTreeMap<String, String>, String), HttpSignatureError> {
+    static COMPONENTS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r#"^"[a-z0-9@!#$%&'*+.^_`|~-]+"(?: +"[a-z0-9@!#$%&'*+.^_`|~-]+")*$"#)
+            .expect("constant component regex")
+    });
+    static PARAMETER: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+        r#"^;([a-z*][a-z0-9_.*-]*)(?:=("(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\["\\])*"|-?[0-9]{1,15}|\?[01]|[A-Za-z*][A-Za-z0-9!#$%&\'*+.^_`|~:/-]*))?"#
+    ).expect("constant parameter regex")
+    });
+    if signature_input.len() > 16384 {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
     let (label, remainder) = signature_input
+        .trim()
         .split_once('=')
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let open_index = remainder
-        .find('(')
-        .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    let close_index = remainder
+    if label.is_empty()
+        || !label
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        || !remainder.starts_with('(')
+    {
+        return Err(HttpSignatureError::InvalidSignatureInput);
+    }
+    let close = remainder
         .find(')')
         .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-    if close_index <= open_index {
+    let raw_components = &remainder[1..close];
+    if !COMPONENTS.is_match(raw_components) {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
-    let components_raw = &remainder[open_index + 1..close_index];
-    let params_raw = remainder[close_index + 1..].trim_start_matches(';');
-    let components = components_raw
+    let components: Vec<String> = raw_components
         .split_whitespace()
-        .map(|value| value.trim_matches('"').to_string())
-        .collect::<Vec<String>>();
-    if components.is_empty() {
+        .map(|c| c.trim_matches('"').to_owned())
+        .collect();
+    if components.len() > 32 || components.iter().collect::<BTreeSet<_>>().len() != components.len()
+    {
         return Err(HttpSignatureError::InvalidSignatureInput);
     }
+    let mut serialized = format!(
+        "({})",
+        components
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let mut rest = &remainder[close + 1..];
     let mut params = BTreeMap::new();
-    for raw in params_raw.split(';') {
-        if raw.trim().is_empty() {
-            continue;
-        }
-        let (name, value) = raw
-            .split_once('=')
+    while !rest.is_empty() {
+        let captures = PARAMETER
+            .captures(rest)
             .ok_or(HttpSignatureError::InvalidSignatureInput)?;
-        params.insert(name.to_string(), value.trim_matches('"').to_string());
+        let name = &captures[1];
+        let raw = captures.get(2).map(|m| m.as_str());
+        if params.contains_key(name) || params.len() >= 32 {
+            return Err(HttpSignatureError::InvalidSignatureInput);
+        }
+        if matches!(name, "created" | "expires") && raw.is_none_or(|v| v.parse::<i64>().is_err()) {
+            return Err(HttpSignatureError::InvalidSignatureInput);
+        }
+        if matches!(name, "keyid" | "nonce") && raw.is_none_or(|v| !v.starts_with('"')) {
+            return Err(HttpSignatureError::InvalidSignatureInput);
+        }
+        let value = if let Some(quoted) = raw.filter(|v| v.starts_with('"')) {
+            let mut value = String::new();
+            let mut chars = quoted[1..quoted.len() - 1].chars();
+            while let Some(c) = chars.next() {
+                value.push(if c == '\\' {
+                    chars
+                        .next()
+                        .ok_or(HttpSignatureError::InvalidSignatureInput)?
+                } else {
+                    c
+                });
+            }
+            value
+        } else {
+            raw.unwrap_or("true").to_owned()
+        };
+        params.insert(name.to_owned(), value);
+        serialized.push(';');
+        serialized.push_str(name);
+        if let Some(raw) = raw.filter(|v| *v != "?1") {
+            serialized.push('=');
+            serialized.push_str(raw);
+        }
+        rest = &rest[captures.get(0).expect("matched parameter").end()..];
     }
-    Ok((label.to_string(), components, params))
+    Ok((label.to_owned(), components, params, serialized))
 }
 
 fn required_signature_param(

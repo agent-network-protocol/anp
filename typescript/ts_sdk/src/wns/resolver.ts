@@ -1,3 +1,4 @@
+import { publicDocumentRequest } from '../internal/http-security.js';
 import {
   HandleGoneError,
   HandleMovedError,
@@ -21,15 +22,9 @@ export async function resolveHandle(
     ? `${baseUrl}/.well-known/handle/${localPart}`
     : buildResolutionUrl(localPart, domain);
 
-  void options.verifySsl;
-  const timeoutMs = Math.round((options.timeoutSeconds ?? 10) * 1000);
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    redirect: 'manual',
-    signal: AbortSignal.timeout(timeoutMs),
-  }).catch((error) => {
+  const response = await publicDocumentRequest(url, options).catch((error: unknown) => {
     throw new HandleResolutionError(
-      `Network error resolving handle '${normalized}': ${(error as Error).message}`,
+      `Network error resolving handle '${normalized}'`,
       502,
       error as Error
     );

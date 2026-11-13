@@ -398,7 +398,7 @@ auth_config = DidWbaVerifierConfig(
     jwt_private_key=jwt_private_key,
     jwt_public_key=jwt_public_key,
     jwt_algorithm="RS256",
-    allowed_domains=["example.com", "localhost"]  # Optional: domain whitelist
+    allowed_domains=["example.com"]  # Required trusted receiver HTTPS authorities
 )
 
 # Initialize FastANP (auto-enables auth middleware)
@@ -479,3 +479,7 @@ def search_users(query: str) -> dict:
 ## License
 
 Apache License 2.0. See [LICENSE](../../LICENSE).
+
+## Authentication security configuration
+
+Protected middleware requires explicit receiver authorities in `auth_config.allowed_domains`; bare authorities mean HTTPS. RemoteAgent protected discovery/API calls accept an explicit `authenticated_origins` policy. See the [security contract](../../docs/authentication-security.md) for shared stores, approved origins, and compatibility changes.

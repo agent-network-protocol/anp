@@ -7,9 +7,6 @@ package com.agentconnect.authentication;
 
 import com.agentconnect.utils.CryptoTool;
 import com.agentconnect.utils.DIDGenerator;
-import org.asynchttpclient.AsyncHttpClient;
-import org.asynchttpclient.DefaultAsyncHttpClient;
-import org.asynchttpclient.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +23,7 @@ public class DIDAllClient {
     
     private final String didServiceUrl;
     private final String apiKey;
+    private final PublicHttpTransport.Transport transport;
     
     /**
      * Constructor
@@ -34,8 +32,16 @@ public class DIDAllClient {
      * @param apiKey API key for the DID service
      */
     public DIDAllClient(String didServiceUrl, String apiKey) {
-        this.didServiceUrl = didServiceUrl;
-        this.apiKey = apiKey;
+        this(didServiceUrl,apiKey,null);
+    }
+
+    /** The credential issuer endpoint is explicit trusted host configuration. */
+    public DIDAllClient(String didServiceUrl,String apiKey,PublicHttpTransport.Transport transport) {
+        this.didServiceUrl=didServiceUrl.replaceAll("/+$","");
+        this.apiKey=apiKey;
+        java.net.URI base=java.net.URI.create(this.didServiceUrl);
+        PublicNetworkPolicy.validate(base,base);
+        this.transport=transport!=null?transport:new PublicHttpTransport(base,java.time.Duration.ofSeconds(10)).asTransport();
     }
     
     /**
@@ -87,60 +93,8 @@ public class DIDAllClient {
     public CompletableFuture<Object[]> generateRegisterDidDocument(
             String communicationServiceEndpoint, String routerDid) {
         
-        try {
-            if (routerDid == null) {
-                routerDid = "";
-            }
-            
-            // Generate private key, public key, DID and DID document
-            Object[] result = DIDGenerator.didGenerate(communicationServiceEndpoint, routerDid);
-            
-            ECPrivateKey privateKey = (ECPrivateKey) result[0];
-            String did = (String) result[2];
-            String didDocumentJson = (String) result[3];
-            
-            // Convert private key to PEM format
-            String privateKeyPem = CryptoTool.getPemFromPrivateKey(privateKey);
-            
-            // Prepare request headers
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Content-Type", "application/text");
-            headers.put("Authorization", "Bearer " + apiKey);
-            
-            // Ensure correct request URL
-            String requestUrl = didServiceUrl + "/v1/did";
-            
-            // Create HTTP client
-            AsyncHttpClient client = new DefaultAsyncHttpClient();
-            
-            // Send asynchronous POST request
-            return client.preparePost(requestUrl)
-                .setHeader("Content-Type", "application/text")
-                .setHeader("Authorization", "Bearer " + apiKey)
-                .setBody(didDocumentJson)
-                .execute()
-                .toCompletableFuture()
-                .thenApply(response -> {
-                    try {
-                        if (response.getStatusCode() == 200) {
-                            return new Object[] { privateKeyPem, did, didDocumentJson };
-                        } else {
-                            logger.error("Failed to create DID document: {} {}", 
-                                response.getStatusCode(), response.getResponseBody());
-                            return null;
-                        }
-                    } finally {
-                        try {
-                            client.close();
-                        } catch (Exception e) {
-                            logger.warn("Failed to close HTTP client", e);
-                        }
-                    }
-                });
-        } catch (Exception e) {
-            logger.error("Failed to register DID document: {}", e.getMessage(), e);
-            return CompletableFuture.failedFuture(e);
-        }
+        final String router=routerDid;
+        return PublicHttpTransport.async(()->registerDidDocumentSync(communicationServiceEndpoint,router),java.time.Duration.ofSeconds(30));
     }
     
     /**
@@ -160,45 +114,7 @@ public class DIDAllClient {
      * @return CompletableFuture that will complete with the DID document as a string
      */
     public CompletableFuture<String> getDidDocument(String did) {
-        try {
-            // Prepare request headers
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Accept", "application/text");
-            headers.put("Authorization", "Bearer " + apiKey);
-            
-            // Construct complete request URL
-            String requestUrl = didServiceUrl + "/v1/did/" + did;
-            
-            // Create HTTP client
-            AsyncHttpClient client = new DefaultAsyncHttpClient();
-            
-            // Send asynchronous GET request
-            return client.prepareGet(requestUrl)
-                .setHeader("Accept", "application/text")
-                .setHeader("Authorization", "Bearer " + apiKey)
-                .execute()
-                .toCompletableFuture()
-                .thenApply(response -> {
-                    try {
-                        if (response.getStatusCode() == 200) {
-                            return response.getResponseBody();
-                        } else {
-                            logger.error("Failed to retrieve DID document: {} {}", 
-                                response.getStatusCode(), response.getResponseBody());
-                            return null;
-                        }
-                    } finally {
-                        try {
-                            client.close();
-                        } catch (Exception e) {
-                            logger.warn("Failed to close HTTP client", e);
-                        }
-                    }
-                });
-        } catch (Exception e) {
-            logger.error("Failed to get DID document: {}", e.getMessage(), e);
-            return CompletableFuture.failedFuture(e);
-        }
+        return PublicHttpTransport.async(()->getDidDocumentSync(did),java.time.Duration.ofSeconds(30));
     }
     
     /**
@@ -209,48 +125,12 @@ public class DIDAllClient {
      * @return Array containing [privateKeyPem, did, didDocumentJson]
      */
     public Object[] registerDidDocumentSync(String communicationServiceEndpoint, String router) {
-        if (router == null) {
-            router = "";
-        }
-        
+        Object[] generated=generateDidDocument(communicationServiceEndpoint,router);
         try {
-            // Generate private key, public key, DID and DID document
-            Object[] result = DIDGenerator.didGenerate(communicationServiceEndpoint, router);
-            
-            ECPrivateKey privateKey = (ECPrivateKey) result[0];
-            String did = (String) result[2];
-            String didDocumentJson = (String) result[3];
-            
-            // Convert private key to PEM format
-            String privateKeyPem = CryptoTool.getPemFromPrivateKey(privateKey);
-            
-            // Prepare request headers
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Content-Type", "application/text");
-            headers.put("Authorization", "Bearer " + apiKey);
-            
-            // Create HTTP client
-            try (AsyncHttpClient client = new DefaultAsyncHttpClient()) {
-                // Send synchronous POST request
-                Response response = client.preparePost(didServiceUrl + "/v1/did")
-                    .setHeader("Content-Type", "application/text")
-                    .setHeader("Authorization", "Bearer " + apiKey)
-                    .setBody(didDocumentJson)
-                    .execute()
-                    .get();
-                
-                if (response.getStatusCode() == 200) {
-                    return new Object[] { privateKeyPem, did, didDocumentJson };
-                } else {
-                    logger.error("Failed to create DID document: {} {}", 
-                        response.getStatusCode(), response.getResponseBody());
-                    return null;
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Failed to register DID document synchronously: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to register DID document", e);
-        }
+            byte[] body=((String)generated[2]).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var response=transport.request(java.net.URI.create(didServiceUrl+"/v1/did"),"POST",Map.of("Content-Type","application/text","Authorization","Bearer "+apiKey),body);
+            return response.status()==200?generated:null;
+        } catch(java.io.IOException rejected) {throw new java.util.concurrent.CompletionException("DID registration rejected",rejected);}
     }
     
     /**
@@ -270,32 +150,11 @@ public class DIDAllClient {
      * @return DID document as a string
      */
     public String getDidDocumentSync(String did) {
+        if(did==null||did.length()>4096||!did.startsWith("did:"))throw new IllegalArgumentException("Invalid DID lookup");
+        String segment=java.net.URLEncoder.encode(did,java.nio.charset.StandardCharsets.UTF_8).replace("+","%20");
         try {
-            // Prepare request headers
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Accept", "application/text");
-            headers.put("Authorization", "Bearer " + apiKey);
-            
-            // Create HTTP client
-            try (AsyncHttpClient client = new DefaultAsyncHttpClient()) {
-                // Send synchronous GET request
-                Response response = client.prepareGet(didServiceUrl + "/v1/did/" + did)
-                    .setHeader("Accept", "application/text")
-                    .setHeader("Authorization", "Bearer " + apiKey)
-                    .execute()
-                    .get();
-                
-                if (response.getStatusCode() == 200) {
-                    return response.getResponseBody();
-                } else {
-                    logger.error("Failed to retrieve DID document: {} {}", 
-                        response.getStatusCode(), response.getResponseBody());
-                    return null;
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Failed to get DID document synchronously: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to get DID document", e);
-        }
+            var response=transport.request(java.net.URI.create(didServiceUrl+"/v1/did/"+segment),"GET",Map.of("Accept","application/text","Authorization","Bearer "+apiKey),new byte[0]);
+            return response.status()==200?response.text():null;
+        } catch(java.io.IOException rejected) {throw new java.util.concurrent.CompletionException("DID lookup rejected",rejected);}
     }
 } 

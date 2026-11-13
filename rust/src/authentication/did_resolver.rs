@@ -19,10 +19,7 @@ pub fn validate_did_document_method(document: &Value, verify_proof: bool) -> boo
 use crate::proof::{verify_w3c_proof, ProofVerificationOptions};
 
 use super::did_wba::find_verification_method;
-use super::did_wba::{
-    resolve_did_wba_document_sync, resolve_did_wba_document_with_options, AuthenticationError,
-    DidResolutionOptions,
-};
+use super::did_wba::{resolve_did_wba_document_sync, AuthenticationError, DidResolutionOptions};
 use super::verification_methods::extract_public_key;
 
 fn verify_optional_web_proof(document: &Value) -> Result<(), AuthenticationError> {
@@ -78,7 +75,13 @@ pub async fn resolve_did_document_with_address_policy(
     address_policy: DidResolutionAddressPolicy,
 ) -> Result<Value, AuthenticationError> {
     if did.starts_with("did:wba:") {
-        return resolve_did_wba_document_with_options(did, verify_proof, options).await;
+        return super::did_wba::resolve_did_wba_document_with_address_policy(
+            did,
+            verify_proof,
+            options,
+            address_policy,
+        )
+        .await;
     }
     if !did.starts_with("did:web:") {
         return Err(AuthenticationError::InvalidDid);
